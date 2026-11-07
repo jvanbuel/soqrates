@@ -27,8 +27,11 @@ pub enum StatusState {
 
 /// The hidden marker that ties a questions comment to its session.
 pub fn session_marker(key: &SessionKey) -> String {
-    format!("<!-- soqrates:session={} -->", key.0)
+    format!("{MARKER_START}{}{MARKER_END}", key.0)
 }
+
+const MARKER_START: &str = "<!-- soqrates:session=";
+const MARKER_END: &str = " -->";
 
 /// The identity host of a server URL such as `https://github.com` or
 /// `https://ghe.example.com:8443/`: the host name without scheme, user info,
@@ -541,8 +544,6 @@ pub fn render_results(session: &Session, results: &[QuestionResult], passed: boo
 /// questions are collapsed, with options as plain text (the author's answer
 /// marked), so no box can be ticked any more.
 pub fn render_graded_questions(session: &Session, results: &[QuestionResult]) -> String {
-    let questions = session.questions();
-    let total = questions.len();
     let mut out = String::new();
     out.push_str(&session_marker(session.key()));
     out.push_str("\n> [!NOTE]\n");
@@ -551,11 +552,63 @@ pub fn render_graded_questions(session: &Session, results: &[QuestionResult]) ->
          below. The answers for this commit are final; a new push asks new \
          questions.\n\n",
     );
+    push_collapsed_questions(session.questions(), Some(results), &mut out);
+    out
+}
+
+/// The question comment of `key` once a newer push superseded it (ADR-0004
+/// D7): it says its answers no longer count and links the newer question
+/// comment at `newer_url`, if known. The questions of `session`, if still
+/// stored, are collapsed with options as plain text, so no box can be
+/// ticked any more.
+pub fn render_superseded_questions(
+    key: &SessionKey,
+    session: Option<&Session>,
+    newer_url: Option<&str>,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&session_marker(key));
+    out.push_str("\n> [!NOTE]\n");
+    out.push_str(
+        "> **Soqrates learning check: superseded.** A newer commit was pushed, \
+         so answers to these questions no longer count. ",
+    );
+    match newer_url {
+        // The URL comes from the forge, not from the model; it is still
+        // kept out of the markdown if it could break the link.
+        Some(url) if is_plain_url(url) => {
+            out.push_str(&format!(
+                "Please answer the [new questions]({url}) instead.\n\n"
+            ));
+        }
+        _ => out.push_str("Please answer the newer Soqrates comment instead.\n\n"),
+    }
+    if let Some(session) = session {
+        push_collapsed_questions(session.questions(), None, &mut out);
+    }
+    out
+}
+
+/// An `https` URL safe to put in a markdown link target as is.
+fn is_plain_url(url: &str) -> bool {
+    url.starts_with("https://")
+        && url
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-._~:/?#@!$&'*+,;=%".contains(c))
+}
+
+/// The questions in a `<details>` block, options as plain text. With
+/// `results`, the author's answers are marked.
+fn push_collapsed_questions(
+    questions: &[Question],
+    results: Option<&[QuestionResult]>,
+    out: &mut String,
+) {
+    let total = questions.len();
     out.push_str("<details>\n<summary>The questions</summary>\n\n");
     for (i, q) in questions.iter().enumerate() {
         let answer = results
-            .iter()
-            .find(|r| r.question == q.id)
+            .and_then(|rs| rs.iter().find(|r| r.question == q.id))
             .and_then(|r| r.answer.as_ref());
         out.push_str(&format!("**Question {} of {total}**\n\n", i + 1));
         out.push_str(&inline(prompt_of(q)));
@@ -575,13 +628,28 @@ pub fn render_graded_questions(session: &Session, results: &[QuestionResult]) ->
                 }
                 out.push('\n');
             }
-            QuestionBody::Open { .. } => {
+            QuestionBody::Open { .. } if results.is_some() => {
                 out.push_str("_Open question, answered by comment._\n\n");
             }
+            QuestionBody::Open { .. } => out.push_str("_Open question._\n\n"),
         }
     }
     out.push_str("</details>\n");
-    out
+}
+
+/// The session key in the marker a comment body starts with, if any.
+pub fn marker_key(body: &str) -> Option<SessionKey> {
+    let rest = body.trim_start().strip_prefix(MARKER_START)?;
+    let (key, _) = rest.split_once(MARKER_END)?;
+    (!key.is_empty() && !key.contains(char::is_whitespace)).then(|| SessionKey(key.to_string()))
+}
+
+/// Whether a question comment still takes answers: it still has the
+/// "Grade my answers" box, which the graded and superseded renderings drop.
+pub fn takes_answers(body: &str) -> bool {
+    body.lines()
+        .filter_map(task_item)
+        .any(|(_, text)| text == DONE_BOX)
 }
 
 /// The answer comment for a session: the latest comment by `author_id`
@@ -1285,6 +1353,72 @@ mod tests {
         );
     }
 
+    const NEWER: &str = "https://github.com/o/r/pull/1#issuecomment-99";
+
+    // @adr-0004-d7
+    #[test]
+    fn superseded_question_comment_links_the_new_questions_and_has_no_boxes() {
+        let s = render_superseded_questions(session().key(), Some(&session()), Some(NEWER));
+        assert!(s.starts_with(
+            "<!-- soqrates:session=o/r#1@abc -->\n> [!NOTE]\n> **Soqrates learning check: superseded.**"
+        ));
+        assert!(s.contains(&format!("[new questions]({NEWER})")), "{s}");
+        for line in s.lines() {
+            assert!(task_item(line).is_none(), "live box: {line:?}");
+        }
+        assert!(!takes_answers(&s));
+        assert_eq!(marker_key(&s), Some(session().key().clone()));
+        let details = &s[s.find("<details>").unwrap()..];
+        for text in [
+            "Prompt q1?",
+            "- a. first",
+            "- b. SECRET-CORRECT",
+            "Explain q2.",
+        ] {
+            assert!(details.contains(text), "missing {text:?}:\n{s}");
+        }
+        assert!(!s.contains("your answer") && !s.contains("SECRET-EXPLANATION"));
+        assert!(!s.contains("SECRET-RUBRIC"));
+        assert_eq!(
+            parse_checkboxes(&s, &questions()),
+            checkboxes(false, &[Ticked::None; 3])
+        );
+    }
+
+    // @adr-0004-d7
+    #[test]
+    fn superseded_without_session_or_safe_link_still_freezes() {
+        let key = SessionKey("o/r#1@old".into());
+        let s = render_superseded_questions(&key, None, None);
+        assert!(s.contains("superseded.**") && !s.contains("<details>"));
+        assert!(s.contains("newer Soqrates comment"));
+        assert_eq!(marker_key(&s), Some(key.clone()));
+        for bad in ["javascript:alert(1)", "https://x/a)[b](c", "https://x/<b>"] {
+            let s = render_superseded_questions(&key, None, Some(bad));
+            assert!(!s.contains(bad) && !s.contains("]("), "{s}");
+        }
+    }
+
+    // @adr-0004-d7
+    #[test]
+    fn only_live_question_comments_take_answers() {
+        let live = render_questions(&session());
+        assert!(takes_answers(&live));
+        assert!(takes_answers(
+            &live.replace("- [ ] **Grade", "- [x] **Grade")
+        ));
+        assert!(!takes_answers(&render_graded_questions(
+            &session(),
+            &results()
+        )));
+        assert!(!takes_answers("Mentions **Grade my answers** in prose."));
+        assert_eq!(marker_key(&live), Some(session().key().clone()));
+        assert_eq!(marker_key("no marker"), None);
+        assert_eq!(marker_key("text first <!-- soqrates:session=k -->"), None);
+        assert_eq!(marker_key("<!-- soqrates:session= -->"), None);
+        assert_eq!(marker_key("<!-- soqrates:session=a b -->"), None);
+    }
+
     /// The names of every HTML tag in `s`, failing on HTML comments other
     /// than the one marker.
     fn tags(s: &str) -> Vec<String> {
@@ -1370,6 +1504,8 @@ mod tests {
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
             render_results(&nasty, &nasty_results, false),
+            render_superseded_questions(session().key(), Some(&session()), Some(NEWER)),
+            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER)),
         ];
         for s in &rendered {
             let tags = tags(s);
@@ -1394,6 +1530,7 @@ mod tests {
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
             render_results(&nasty, &nasty_results, false),
+            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER)),
         ] {
             assert_eq!(s.matches("<!--").count(), 1, "one marker only:\n{s}");
             assert!(!s.contains("<script") && !s.contains("<img"));
@@ -1409,7 +1546,8 @@ mod tests {
                 .lines()
                 .filter(|l| l.starts_with("### Question 1 of 3"))
                 .count();
-            assert_eq!(headings, usize::from(!s.contains("graded.**")), "{s}");
+            let frozen = s.contains("graded.**") || s.contains("superseded.**");
+            assert_eq!(headings, usize::from(!frozen), "{s}");
         }
         // The question comment has exactly the boxes the renderer made, and
         // none of them is ticked.

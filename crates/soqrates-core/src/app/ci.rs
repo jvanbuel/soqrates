@@ -3,19 +3,25 @@
 use crate::Result;
 use crate::app::engine::{ProfileLocation, SessionOutcome, Soqrates};
 use crate::app::ports::{Clock, Examiner, ScmProvider, StateStore};
-use crate::delivery::{CheckStatus, Mode, PrRef, PullRequest};
+use crate::delivery::{CheckStatus, Mode, PrRef, PullRequest, Session};
 use crate::ids::SessionKey;
 
 /// The session key for a PR at a given head commit. A new push gives a new key.
 pub fn session_key(pr: &PullRequest) -> SessionKey {
-    SessionKey(format!("{}#{}@{}", pr.pr.repo, pr.pr.number, pr.head_sha))
+    SessionKey(format!("{}{}", key_prefix(&pr.pr), pr.head_sha))
+}
+
+/// The start of every session key of `pr`, whatever its head.
+fn key_prefix(pr: &PrRef) -> String {
+    format!("{}#{}@", pr.repo, pr.number)
 }
 
 /// One run of the CI check. Call it on PR open/push and when the author
 /// replies.
 ///
-/// - No session for the current head yet: start one, post the questions and
-///   set `Pending`.
+/// - No session for the current head yet: start one, post the questions,
+///   set `Pending` and freeze the question comments of earlier heads that
+///   were never graded (ADR-0004 D7).
 /// - Session exists but no answers yet: keep `Pending`.
 /// - Answers present: grade them and set `Success`, or `Failure` (`Neutral`
 ///   in `Advisory` mode).
@@ -72,9 +78,13 @@ where
             location_note(&app.profile_location(&pull.author).await?)
         );
         scm.set_check(pr, CheckStatus::Pending, &summary).await?;
+        supersede_earlier(app, scm, pr, &session).await?;
         return Ok(CheckStatus::Pending);
     };
 
+    // Also on later runs, so that a run that failed to freeze the earlier
+    // comments is made good by the next one.
+    supersede_earlier(app, scm, pr, &session).await?;
     match scm.fetch_answers(pr, &session).await? {
         None => {
             let summary = format!(
@@ -90,6 +100,39 @@ where
             finish(app, scm, pr, &outcome).await
         }
     }
+}
+
+/// Freeze the question comments of `pr` that `current` superseded and
+/// discard their sessions, so answers to them can't be mistaken for answers
+/// that count (ADR-0004 D7). Only sessions of this PR are touched, whatever
+/// markers other comments carry.
+async fn supersede_earlier<S, E, C, P>(
+    app: &Soqrates<S, E, C>,
+    scm: &P,
+    pr: &PrRef,
+    current: &Session,
+) -> Result<()>
+where
+    S: StateStore,
+    E: Examiner,
+    C: Clock,
+    P: ScmProvider,
+{
+    let prefix = key_prefix(pr);
+    for key in scm.superseded_questions(pr, current).await? {
+        if key == *current.key() || !key.0.starts_with(&prefix) {
+            continue;
+        }
+        let session = app.pending_session(&key).await?;
+        // Freeze first: if that fails, the session stays and the next run
+        // tries again.
+        scm.supersede_questions(pr, &key, session.as_ref(), current)
+            .await?;
+        if session.is_some() {
+            app.discard_session(&key).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Report a graded session as the final check status (ADR-0001 D8). The

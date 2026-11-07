@@ -279,6 +279,11 @@ pub struct ScmState {
     pub fail_next_post: bool,
     /// Every `post_results` call, in order.
     pub results: Vec<(PrRef, SessionKey, SessionOutcome)>,
+    /// Question comments frozen as superseded: the session key, the session
+    /// shown (if it was still stored) and the key of the newer session.
+    pub superseded: Vec<(PrRef, SessionKey, Option<Session>, SessionKey)>,
+    /// Make the next `supersede_questions` call fail.
+    pub fail_next_supersede: bool,
 }
 
 /// A fake forge. Records what Soqrates posts and lets steps inject the
@@ -335,6 +340,18 @@ impl FakeScm {
             .map(|(_, s)| s.clone())
     }
 
+    /// The question comments frozen as superseded on `pr`, in order.
+    pub fn superseded_on(&self, pr: &PrRef) -> Vec<(SessionKey, Option<Session>, SessionKey)> {
+        self.state
+            .lock()
+            .unwrap()
+            .superseded
+            .iter()
+            .filter(|(p, ..)| p == pr)
+            .map(|(_, k, s, n)| (k.clone(), s.clone(), n.clone()))
+            .collect()
+    }
+
     pub fn reply(&self, session: &SessionKey, answers: Vec<Answer>) {
         self.state
             .lock()
@@ -386,6 +403,49 @@ impl ScmProvider for FakeScm {
             .replies
             .get(session.key())
             .cloned())
+    }
+
+    async fn superseded_questions(&self, pr: &PrRef, current: &Session) -> Result<Vec<SessionKey>> {
+        let state = self.state.lock().unwrap();
+        let posted = |k: &SessionKey| state.posted.iter().any(|(p, s)| p == pr && s.key() == k);
+        if !posted(current.key()) {
+            return Ok(Vec::new());
+        }
+        let frozen = |k: &SessionKey| {
+            state.results.iter().any(|(p, r, _)| p == pr && r == k)
+                || state
+                    .superseded
+                    .iter()
+                    .any(|(p, r, _, _)| p == pr && r == k)
+        };
+        let mut keys: Vec<SessionKey> = Vec::new();
+        for (_, s) in state.posted.iter().filter(|(p, _)| p == pr) {
+            let k = s.key();
+            if k != current.key() && !frozen(k) && !keys.contains(k) {
+                keys.push(k.clone());
+            }
+        }
+        Ok(keys)
+    }
+
+    async fn supersede_questions(
+        &self,
+        pr: &PrRef,
+        superseded: &SessionKey,
+        session: Option<&Session>,
+        current: &Session,
+    ) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        if std::mem::take(&mut state.fail_next_supersede) {
+            return Err(Error::Port("the forge is unavailable".into()));
+        }
+        state.superseded.push((
+            pr.clone(),
+            superseded.clone(),
+            session.cloned(),
+            current.key().clone(),
+        ));
+        Ok(())
     }
 
     async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
