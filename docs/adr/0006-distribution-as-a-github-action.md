@@ -19,8 +19,11 @@ register an app of its own (`docs/github-app.md`).
 There are two ways to offer Soqrates to other teams:
 
 - **A GitHub Action that users run themselves.** It needs no
-  infrastructure. Each user brings their own model key and keeps their own
-  state, and their code and learner data never leave their CI.
+  infrastructure from this project. Each user brings their own model key and
+  keeps their own state. The PR diff still goes to the model provider they
+  choose (Anthropic by default, OpenAI, or a self-hosted Ollama), and learner
+  data lives where they put it: the state branch of their repository, or
+  their own database. This project never sees either.
 - **A hosted public GitHub App.** Installation is one click, and every
   repository gets the same soqrates[bot]. It needs a webhook server and a
   multi-tenant store. The project pays for the LLM calls and holds
@@ -28,7 +31,7 @@ There are two ways to offer Soqrates to other teams:
   policy and an operations commitment.
 
 The action is far cheaper, and teams with private code are more likely to
-adopt it. It also prepares the hosted app: a release pipeline, a stable
+adopt it, because they choose where their diffs and learner data go. It also prepares the hosted app: a release pipeline, a stable
 CLI, and a database store (ADR-0005).
 
 ## Decisions
@@ -61,16 +64,35 @@ test of D1.
 
 The action takes:
 
-- the model key, e.g. `anthropic-api-key`, or a model spec for another
-  provider;
+- `model`, the model spec, which only selects the provider and model
+  (default `anthropic:claude-sonnet-5-5`, or e.g. `openai:gpt-5.2`,
+  `ollama:qwen3`);
+- the credentials of that provider, as separate inputs passed from secrets:
+  `anthropic-api-key` or `openai-api-key`, or for Ollama an optional
+  `ollama-base-url` and `ollama-api-key`. The action exports them under the
+  names the examiner reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `OLLAMA_API_BASE_URL`, `OLLAMA_API_KEY`). The model spec never holds a
+  credential;
 - the mode (`advisory` by default);
 - where state lives: the `soqrates-state` branch of the repository by
   default, or `database-url` for a database (ADR-0005), passed from a
   secret.
 
+State must outlive the job: answering the questions runs a later job,
+which has to find the pending session. The state branch does. A
+`database-url` must therefore name a database that persists between jobs,
+such as a hosted PostgreSQL. A SQLite URL only works on a self-hosted runner
+whose database file stays on disk between jobs. On GitHub-hosted runners the
+file is gone after the job, so the action refuses a `sqlite:` URL there
+(`RUNNER_ENVIRONMENT` is `github-hosted`), and
+says why.
+
+Wherever state lives, the action and the README say what it holds and who
+can read it. Anyone who can read the repository can read the state branch,
+including what each author got wrong.
+
 The action fetches and pushes the state branch with the workflow token, so
-the job needs `contents: write`. The README says what the state branch
-exposes: anyone who can read the repository can read it.
+the job needs `contents: write`.
 
 ### D4: Comments post as github-actions[bot], or as the user's own app
 **Enforcement:** manual. Checked by the fitness test of D1.
