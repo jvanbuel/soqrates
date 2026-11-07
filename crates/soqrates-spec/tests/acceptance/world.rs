@@ -48,6 +48,56 @@ pub struct DomainState {
     pub submit_error: Option<soqrates_core::Error>,
 }
 
+/// State of `learner_identity.feature` (ADR-0003). Usernames and verified
+/// e-mails of forge accounts live only here: they are not part of the domain
+/// on purpose (ADR-0003 D1).
+#[derive(Debug, Default)]
+pub struct IdentityState {
+    /// Learner names used in the scenario -> the learner they resolved to.
+    pub learners: std::collections::HashMap<String, soqrates_core::LearnerId>,
+    /// Learner name -> the identity the scenario first saw it through.
+    pub identity_of: std::collections::HashMap<String, AuthorId>,
+    /// Every learner the scenario has resolved so far.
+    pub seen: Vec<soqrates_core::LearnerId>,
+    /// Identity -> current username (world only).
+    pub usernames: std::collections::HashMap<String, String>,
+    /// Identity -> e-mail the forge has verified (world only).
+    pub verified_emails: std::collections::HashMap<String, String>,
+    /// The identity whose learner was found to be new.
+    pub that_identity: Option<AuthorId>,
+    /// The identities of the two learners to link, in the order given.
+    pub pair: Vec<AuthorId>,
+    /// Reviews given in the scenario: (concept, format, grade, at, via).
+    pub reviews: Vec<(
+        soqrates_core::ConceptId,
+        soqrates_core::QuestionFormat,
+        soqrates_core::Grade,
+        chrono::DateTime<chrono::Utc>,
+        soqrates_core::Identity,
+    )>,
+    pub link_code: Option<soqrates_core::LinkCode>,
+    /// Identities of the code requester's learner just before the latest
+    /// presentation.
+    pub before_presenting: Option<Vec<soqrates_core::Identity>>,
+    pub link_result: Option<soqrates_core::Result<soqrates_core::LearnerId>>,
+    pub declaration: Option<soqrates_core::Result<soqrates_core::LearnerId>>,
+    /// Snapshot of a learner's profile and links in the learner store.
+    pub snapshot: Option<(Option<LearnerProfile>, Vec<soqrates_core::IdentityLink>)>,
+    /// Local repositories: (remote host, commit e-mail, configured identity).
+    pub repos: Vec<(String, String, Option<String>)>,
+    /// The identity and learner each local hook run resolved to.
+    pub hook_learners: Vec<(soqrates_core::Identity, soqrates_core::LearnerId)>,
+    /// Identities listed by the learner.
+    pub listed: Option<Vec<soqrates_core::Identity>>,
+    /// Every session key used in the scenario.
+    pub session_keys: Vec<SessionKey>,
+    /// Every question asked in the scenario.
+    pub questions: Vec<Question>,
+    /// The check output being shown.
+    pub shown: Option<String>,
+    pub counter: usize,
+}
+
 #[derive(World)]
 #[world(init = Self::new)]
 pub struct SpecWorld {
@@ -70,6 +120,7 @@ pub struct SpecWorld {
     pub recompute: Option<(Level, Vec<soqrates_core::GradedAnswer>)>,
     pub recomputed: Option<Level>,
     pub domain: DomainState,
+    pub identity: IdentityState,
     sessions_started: usize,
 }
 
@@ -87,6 +138,7 @@ impl fmt::Debug for SpecWorld {
             .field("status", &self.status)
             .field("hook_runs", &self.hook_runs)
             .field("domain", &self.domain)
+            .field("identity", &self.identity)
             .finish_non_exhaustive()
     }
 }
@@ -118,6 +170,7 @@ impl SpecWorld {
             recompute: None,
             recomputed: None,
             domain: DomainState::default(),
+            identity: IdentityState::default(),
             sessions_started: 0,
         }
     }
@@ -195,7 +248,9 @@ impl SpecWorld {
 
     pub async fn seed_level(&mut self, author: &AuthorId, level: Level) {
         // ADR-0002 D4: a declared starting level is a domain operation.
-        let profile = LearnerProfile::starting_at(author.clone(), level);
+        // ADR-0003 D1: profiles belong to the learner behind the identity.
+        let learner = self.app.learner_of(author).await.expect("learner_of");
+        let profile = LearnerProfile::starting_at(learner, level);
         self.app
             .store
             .save_profile(&profile)

@@ -34,6 +34,8 @@ affected, what is missing, and a proposed fix.
 
 ## G2: "Sustained" is not quantified (D7), spec ambiguity
 
+> **Resolved** by ADR-0002 D4 (6 correct promote, 3 incorrect demote).
+
 - **Scenarios:** `adaptive_questions.feature`, "The level only moves after
   sustained answers", "A novice who keeps answering correctly is promoted...",
   "An expert who keeps answering wrongly is demoted...".
@@ -48,6 +50,8 @@ affected, what is missing, and a proposed fix.
 
 ## G3: "A mix" for intermediates is not defined (D7), spec ambiguity
 
+> **Resolved** by ADR-0002 D5 (multiple choice on even, open on odd indices).
+
 - **Scenarios:** "An intermediate gets a mix of question formats", "The
   format policy per level".
 - **Assumed:** with 4 questions an intermediate gets at least one
@@ -57,6 +61,8 @@ affected, what is missing, and a proposed fix.
 
 ## G4: Tie order of due reviews is unspecified (D6)
 
+> **Resolved** by ADR-0002 D8 (ties broken by concept ID, ascending).
+
 - **Scenario:** "Due reviews can use up the whole budget".
 - **Assumed:** cards that fall due at the same instant may come in any order,
   so this scenario checks the set and the count, not the order. "Most overdue
@@ -64,6 +70,8 @@ affected, what is missing, and a proposed fix.
   falls due before a correct one).
 
 ## G5: FSRS state is opaque (D6)
+
+> **Resolved**: `ReviewCard::reps()` and `stability()` are exposed.
 
 - **Scenarios:** all of `spaced_repetition.feature`.
 - **Missing:** `ReviewCard` wraps `rs_fsrs::Card` privately and only exposes
@@ -81,6 +89,8 @@ affected, what is missing, and a proposed fix.
   touched.
 
 ## G7: Unknown session on submit (D5/D8)
+
+> **Resolved** by ADR-0002 D6 (`NotFound`).
 
 - Not covered: the ADR does not say what `Soqrates::submit` does for a
   `SessionKey` that has no pending session (presumably `Error::NotFound`).
@@ -107,6 +117,8 @@ is tagged `@blocked`. What the scenarios assume but the ADR leaves open:
   in the outcome; then the scenarios can assert the order.
 
 ## G9: Does the review that changes the level count toward the new streak? (D4)
+
+> **Resolved** as assumed: it does not; implemented in `LearnerProfile::record`.
 
 - **Scenario:** "A level change resets the streak".
 - **Assumed:** right after the review that changes the level,

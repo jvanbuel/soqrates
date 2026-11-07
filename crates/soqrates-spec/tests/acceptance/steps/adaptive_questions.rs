@@ -4,7 +4,7 @@ use chrono::Duration;
 use cucumber::{given, then, when};
 use soqrates_core::policy::{format_for, next_level};
 use soqrates_core::ports::Clock;
-use soqrates_core::{ConceptId, Grade, GradedAnswer, Level, QuestionFormat, Session};
+use soqrates_core::{ConceptId, Grade, GradedAnswer, Identity, Level, QuestionFormat, Session};
 
 use super::{author, correctness, format, level};
 use crate::world::SpecWorld;
@@ -85,6 +85,7 @@ fn history_of(w: &mut SpecWorld, lvl: String, n: usize, how: String) {
             format: format_hint(lvl),
             grade: if correct { Grade::Good } else { Grade::Again },
             at: start + Duration::minutes(i as i64),
+            via: Identity::parse("github:1001").expect("identity"),
         })
         .collect();
     w.recompute = Some((lvl, history));

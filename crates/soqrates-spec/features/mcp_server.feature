@@ -4,7 +4,7 @@ Feature: The core is exposed as an MCP server
   start_session, submit_answers, get_learner_profile and due_reviews. Other
   harnesses get the same learner profiles and scheduling as the Soqrates agent.
 
-  @adr-0001-d10 @wip
+  @adr-0001-d10
   Scenario: The MCP server exposes exactly the four core tools
     When I list the MCP tools
     Then the MCP tools are exactly:
@@ -15,7 +15,7 @@ Feature: The core is exposed as an MCP server
       | due_reviews         |
     And no MCP tool is listed twice
 
-  @adr-0001-d10 @wip
+  @adr-0001-d10
   Scenario Outline: Each core operation is reachable as an MCP tool
     When I list the MCP tools
     Then the MCP server exposes the tool "<tool>"

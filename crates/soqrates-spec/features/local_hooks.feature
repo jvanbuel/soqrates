@@ -6,7 +6,7 @@ Feature: Local hooks share one entry point
   always allow. In Blocking mode a failed quiz blocks the commit or push. An
   empty diff never asks any questions.
 
-  @adr-0001-d9 @wip
+  @adr-0001-d9
   Scenario Outline: In the default Advisory mode a failed quiz is reported but allowed
     Given the default configuration
     And the author will answer wrongly at the terminal
@@ -20,7 +20,7 @@ Feature: Local hooks share one entry point
       | pre-commit |
       | pre-push   |
 
-  @adr-0001-d9 @wip
+  @adr-0001-d9
   Scenario Outline: In Blocking mode a failed quiz blocks
     Given Soqrates runs in Blocking mode
     And the author will answer wrongly at the terminal
@@ -33,7 +33,7 @@ Feature: Local hooks share one entry point
       | pre-commit |
       | pre-push   |
 
-  @adr-0001-d9 @wip
+  @adr-0001-d9
   Scenario Outline: In Blocking mode a passed quiz allows
     Given Soqrates runs in Blocking mode
     And the author will answer correctly at the terminal
@@ -46,7 +46,7 @@ Feature: Local hooks share one entry point
       | pre-commit |
       | pre-push   |
 
-  @adr-0001-d9 @wip
+  @adr-0001-d9
   Scenario Outline: An empty change never asks any questions
     Given Soqrates runs in Blocking mode
     And the author will answer wrongly at the terminal
@@ -62,7 +62,7 @@ Feature: Local hooks share one entry point
       | pre-commit | a change with only whitespace     |
       | pre-push   | a change with only whitespace     |
 
-  @adr-0001-d9 @wip
+  @adr-0001-d9
   Scenario Outline: A hook updates the author's learner profile
     Given the author will answer correctly at the terminal
     When "email:jan@example.com" runs the <hook> hook on a change touching "rust.ownership", "rust.traits"
@@ -74,7 +74,7 @@ Feature: Local hooks share one entry point
       | pre-commit |
       | pre-push   |
 
-  @adr-0001-d9 @wip
+  @adr-0001-d9
   Scenario: pre-commit and pre-push behave the same
     Given Soqrates runs in Blocking mode
     And the author will answer wrongly at the terminal
@@ -83,7 +83,7 @@ Feature: Local hooks share one entry point
     Then both hooks made the same decision
     And both hooks asked the same questions
 
-  @adr-0001-d9 @wip
+  @adr-0001-d9
   Scenario: A hook asks due reviews before the concepts of the change
     Given the author will answer correctly at the terminal
     And "email:jan@example.com" ran the pre-commit hook on a change touching "rust.ownership"

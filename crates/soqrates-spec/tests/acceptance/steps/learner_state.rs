@@ -17,7 +17,8 @@ async fn look_up(w: &mut SpecWorld, id: String) {
 #[then(regex = r#"^the profile belongs to "([^"]+)"$"#)]
 async fn profile_belongs_to(w: &mut SpecWorld, id: String) {
     let p = w.profile(&author(&id)).await;
-    assert_eq!(*p.author(), author(&id));
+    let learner = w.app.learner_of(&author(&id)).await.expect("learner_of");
+    assert_eq!(*p.learner(), learner);
 }
 
 #[then(regex = r#"^the profile of "([^"]+)" is at level (\w+)$"#)]
@@ -118,17 +119,45 @@ fn json_documents(dir: &Path) -> Vec<String> {
     docs
 }
 
-#[then(regex = r#"^the state directory holds exactly one JSON document mentioning "([^"]+)"$"#)]
-fn one_document(w: &mut SpecWorld, id: String) {
+/// Profile documents of the file store: `<state dir>/profiles/*.json`.
+fn profile_documents(w: &SpecWorld) -> Vec<std::path::PathBuf> {
     let dir = w
         .state_dir
         .as_ref()
-        .expect("no file store in this scenario");
-    let n = json_documents(dir)
-        .iter()
-        .filter(|d| d.contains(&id))
-        .count();
-    assert_eq!(n, 1, "JSON documents mentioning {id}");
+        .expect("no file store in this scenario")
+        .join("profiles");
+    std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .map(|e| e.expect("dir entry").path())
+                .filter(|p| p.extension().is_some_and(|x| x == "json"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[then(regex = r"^the state directory holds exactly (\d+) learner profile documents$")]
+fn profile_document_count(w: &mut SpecWorld, n: usize) {
+    assert_eq!(profile_documents(w).len(), n, "learner profile documents");
+}
+
+#[then(regex = r#"^no learner profile document's file name reveals "([^"]+)" or "([^"]+)"$"#)]
+fn profile_names_opaque(w: &mut SpecWorld, a: String, b: String) {
+    // File names are hex-encoded learner IDs; decode and check (ADR-0003 D1).
+    for path in profile_documents(w) {
+        let stem = path.file_stem().unwrap().to_string_lossy().to_string();
+        let bytes: Vec<u8> = (0..stem.len())
+            .step_by(2)
+            .filter_map(|i| u8::from_str_radix(stem.get(i..i + 2)?, 16).ok())
+            .collect();
+        let name = String::from_utf8_lossy(&bytes);
+        for id in [&a, &b] {
+            assert!(
+                !name.contains(id.as_str()),
+                "learner ID {name:?} reveals {id}"
+            );
+        }
+    }
 }
 
 #[then(

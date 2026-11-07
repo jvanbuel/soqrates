@@ -14,6 +14,7 @@ soqrates-store.workspace = true
 soqrates-mcp.workspace = true
 chrono.workspace = true
 tokio.workspace = true
+serde_json.workspace = true
 cargo_metadata = "0.23"
 cucumber = "0.23"
 regex = "1"

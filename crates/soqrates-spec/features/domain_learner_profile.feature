@@ -37,7 +37,7 @@ Feature: The learner profile aggregate
       | Intermediate |
       | Expert       |
 
-  @adr-0002-d3 @wip
+  @adr-0002-d3
   Scenario: Recording a review creates the review card and appends to the history
     Given a new learner profile for "github:1001"
     When a review of "rust.borrowing" graded Good is recorded for an open question
@@ -47,7 +47,7 @@ Feature: The learner profile aggregate
     And the learner profile has 1 review in its history
     And the last review in the history is of "rust.borrowing", graded Good, for an open question, recorded now
 
-  @adr-0002-d3 @wip
+  @adr-0002-d3
   Scenario: Recording another review of the same concept reschedules the same review card
     Given a new learner profile for "github:1001"
     And a review of "rust.borrowing" graded Good is recorded
@@ -58,7 +58,7 @@ Feature: The learner profile aggregate
     And the learner profile has 2 reviews in its history
     And the last review in the history is of "rust.borrowing", graded Again, for a multiple-choice question, recorded now
 
-  @adr-0002-d3 @adr-0002-d4 @wip
+  @adr-0002-d3 @adr-0002-d4
   Scenario: The review that completes a streak updates card, history and level at once
     Given a new learner profile for "github:1001"
     And 5 reviews graded Good are recorded
@@ -76,7 +76,7 @@ Feature: The learner profile aggregate
   Scenario: The thresholds are six correct reviews to promote and three incorrect reviews to demote
     Then promotion takes 6 consecutive correct reviews and demotion takes 3 consecutive incorrect reviews
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario Outline: The level moves exactly at the thresholds
     Given a learner profile for "github:1001" starting at <start>
     When <count> reviews graded <grade> are recorded
@@ -111,7 +111,7 @@ Feature: The learner profile aggregate
       | Intermediate | 6     | Hard  | Expert       |
       | Intermediate | 6     | Easy  | Expert       |
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario: Correct grades of different kinds form one streak
     Given a new learner profile for "github:1001"
     When 2 reviews graded Hard are recorded
@@ -119,7 +119,7 @@ Feature: The learner profile aggregate
     And 2 reviews graded Easy are recorded
     Then the learner profile is at level Intermediate
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario: A level change resets the streak
     Given a new learner profile for "github:1001"
     When 6 reviews graded Good are recorded
@@ -131,7 +131,7 @@ Feature: The learner profile aggregate
     When 1 review graded Good is recorded
     Then the learner profile is at level Expert
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario: A demotion resets the streak
     Given a learner profile for "github:1001" starting at Expert
     When 3 reviews graded Again are recorded
@@ -141,7 +141,7 @@ Feature: The learner profile aggregate
     When 1 review graded Again is recorded
     Then the learner profile is at level Novice
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario: An incorrect review breaks a correct streak
     Given a new learner profile for "github:1001"
     When 5 reviews graded Good are recorded
@@ -151,7 +151,7 @@ Feature: The learner profile aggregate
     When 1 review graded Good is recorded
     Then the learner profile is at level Intermediate
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario: A correct review breaks an incorrect streak
     Given a learner profile for "github:1001" starting at Expert
     When 2 reviews graded Again are recorded
@@ -159,7 +159,7 @@ Feature: The learner profile aggregate
     And 2 reviews graded Again are recorded
     Then the learner profile is at level Expert
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario Outline: The level policy looks only at the trailing streak of the reviews since the last level change
     Then the next level of a <current> author after <reviews> is <expected>
 
@@ -183,7 +183,7 @@ Feature: The learner profile aggregate
   # -------------------------------------------------------------------------
   # D5: format rule
 
-  @adr-0002-d5 @wip
+  @adr-0002-d5
   Scenario Outline: The format of each question follows the level
     Then the question at index <index> for a <level> author is <format>
 
@@ -204,14 +204,14 @@ Feature: The learner profile aggregate
       | Expert       | 2     | open            |
       | Expert       | 7     | open            |
 
-  @adr-0002-d5 @wip
+  @adr-0002-d5
   Scenario: An intermediate gets alternating formats, starting with multiple choice
     Then the questions at indices 0 to 5 for an Intermediate author are multiple-choice, open, multiple-choice, open, multiple-choice, open, in that order
 
   # -------------------------------------------------------------------------
   # D7: domain events emitted by the learner profile
 
-  @adr-0002-d7 @wip
+  @adr-0002-d7
   Scenario: Recording a review emits ReviewRecorded and ReviewScheduled
     Given a new learner profile for "github:1001"
     When a review of "rust.borrowing" graded Good is recorded
@@ -219,7 +219,7 @@ Feature: The learner profile aggregate
     And the ReviewRecorded event names "github:1001" and the review of "rust.borrowing" graded Good
     And the ReviewScheduled event for "rust.borrowing" is due when its review card is due
 
-  @adr-0002-d7 @wip
+  @adr-0002-d7
   Scenario Outline: Every review emits ReviewScheduled with the new due date, whatever the grade
     Given a new learner profile for "github:1001"
     When a review of "rust.borrowing" graded <grade> is recorded
@@ -233,13 +233,13 @@ Feature: The learner profile aggregate
       | Good  |
       | Easy  |
 
-  @adr-0002-d7 @wip
+  @adr-0002-d7
   Scenario: A review that does not change the level emits no LevelChanged
     Given a new learner profile for "github:1001"
     When 5 reviews graded Good are recorded
     Then no recorded review emitted LevelChanged
 
-  @adr-0002-d7 @adr-0002-d4 @wip
+  @adr-0002-d7 @adr-0002-d4
   Scenario: The review that promotes the author also emits LevelChanged
     Given a new learner profile for "github:1001"
     And 5 reviews graded Good are recorded
@@ -248,7 +248,7 @@ Feature: The learner profile aggregate
     And the LevelChanged event names "github:1001" and goes from Novice to Intermediate
     And the ReviewScheduled event for "rust.borrowing" is due when its review card is due
 
-  @adr-0002-d7 @adr-0002-d4 @wip
+  @adr-0002-d7 @adr-0002-d4
   Scenario: The review that demotes the author also emits LevelChanged
     Given a learner profile for "github:1001" starting at Expert
     And 2 reviews graded Again are recorded
@@ -256,7 +256,7 @@ Feature: The learner profile aggregate
     Then the last recorded review emitted exactly ReviewRecorded, ReviewScheduled, LevelChanged
     And the LevelChanged event names "github:1001" and goes from Expert to Intermediate
 
-  @adr-0002-d7 @adr-0002-d4 @wip
+  @adr-0002-d7 @adr-0002-d4
   Scenario Outline: No LevelChanged at the edges of the level range
     Given a learner profile for "github:1001" starting at <level>
     When <count> reviews graded <grade> are recorded
@@ -271,13 +271,13 @@ Feature: The learner profile aggregate
   # -------------------------------------------------------------------------
   # D8: order of due reviews
 
-  @adr-0002-d8 @wip
+  @adr-0002-d8
   Scenario: Nothing is due right after the reviews
     Given a new learner profile for "github:1001"
     And a review of "rust.borrowing" graded Good is recorded
     Then the learner profile has no due reviews
 
-  @adr-0002-d8 @wip
+  @adr-0002-d8
   Scenario: Due reviews come earliest due first, even when the concept ID is later
     Given a new learner profile for "github:1001"
     And a review of "alpha.concept" graded Good is recorded
@@ -285,7 +285,7 @@ Feature: The learner profile aggregate
     When 30 days pass
     Then the due reviews are "zeta.concept", "alpha.concept", in that order
 
-  @adr-0002-d8 @wip
+  @adr-0002-d8
   Scenario: An earlier review falls due earlier
     Given a new learner profile for "github:1001"
     And a review of "zeta.concept" graded Good is recorded
@@ -294,7 +294,7 @@ Feature: The learner profile aggregate
     When 30 days pass
     Then the due reviews are "zeta.concept", "alpha.concept", in that order
 
-  @adr-0002-d8 @wip
+  @adr-0002-d8
   Scenario: Reviews due at the same time are ordered by concept ID
     Given a new learner profile for "github:1001"
     And a review of "tokio.select" graded Good is recorded
@@ -304,7 +304,7 @@ Feature: The learner profile aggregate
     When 30 days pass
     Then the due reviews are "serde.derive", "rust.borrowing", "rust.traits", "tokio.select", in that order
 
-  @adr-0002-d8 @wip
+  @adr-0002-d8
   Scenario: Only concepts whose review card is due are due reviews
     Given a new learner profile for "github:1001"
     And a review of "rust.traits" graded Good is recorded

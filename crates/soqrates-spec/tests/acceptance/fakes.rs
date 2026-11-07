@@ -8,11 +8,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use soqrates_core::ports::{Clock, Examiner, Prompter, ScmProvider, StateStore};
+use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, CheckStatus, Concept, ConceptId, Diff, Error, Grade,
-    LearnerProfile, PrRef, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result,
-    Session, SessionKey, SessionOutcome,
+    Answer, AnswerBody, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error, Grade,
+    Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PullRequest, Question,
+    QuestionBody, QuestionFormat, QuestionId, Result, Session, SessionKey, SessionOutcome,
 };
 use soqrates_store::{FileStore, InMemoryStore};
 
@@ -57,15 +57,19 @@ pub const WRONG_TEXT: &str = "I don't know";
 /// - Grading (the answer key): the correct choice, or an open answer starting
 ///   with `correct`, gets the configurable `correct_grade` (default `Good`);
 ///   anything else gets `Again`.
+/// - Scope (ADR-0003 D5): `General` unless a scenario classifies the concept
+///   otherwise with [`FakeExaminer::classify`].
 #[derive(Debug, Clone)]
 pub struct FakeExaminer {
     correct_grade: Arc<Mutex<Grade>>,
+    scopes: Arc<Mutex<HashMap<ConceptId, ConceptScope>>>,
 }
 
 impl Default for FakeExaminer {
     fn default() -> Self {
         Self {
             correct_grade: Arc::new(Mutex::new(Grade::Good)),
+            scopes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -73,6 +77,26 @@ impl Default for FakeExaminer {
 impl FakeExaminer {
     pub fn set_correct_grade(&self, grade: Grade) {
         *self.correct_grade.lock().unwrap() = grade;
+    }
+
+    /// The grade the answer key gives a correct answer.
+    pub fn correct_grade(&self) -> Grade {
+        *self.correct_grade.lock().unwrap()
+    }
+
+    /// Classify `concept` as `scope` from now on (ADR-0003 D5).
+    pub fn classify(&self, concept: &ConceptId, scope: ConceptScope) {
+        self.scopes.lock().unwrap().insert(concept.clone(), scope);
+    }
+
+    /// The scope this examiner gives `concept`: `General` by default.
+    pub fn scope_of(&self, concept: &ConceptId) -> ConceptScope {
+        self.scopes
+            .lock()
+            .unwrap()
+            .get(concept)
+            .copied()
+            .unwrap_or(ConceptScope::General)
     }
 
     pub fn question_id(concept: &ConceptId, format: QuestionFormat) -> QuestionId {
@@ -114,10 +138,14 @@ impl Examiner for FakeExaminer {
             .0
             .lines()
             .filter_map(|l| l.strip_prefix(CONCEPT_MARKER))
-            .map(|id| Concept {
-                id: ConceptId(id.trim().to_string()),
-                title: id.trim().to_string(),
-                summary: format!("What the change does with {}", id.trim()),
+            .map(|id| {
+                let cid = ConceptId(id.trim().to_string());
+                Concept {
+                    scope: self.scope_of(&cid),
+                    id: cid,
+                    title: id.trim().to_string(),
+                    summary: format!("What the change does with {}", id.trim()),
+                }
             })
             .collect())
     }
@@ -143,6 +171,7 @@ impl Examiner for FakeExaminer {
         Ok(Question {
             id,
             concept: concept.id.clone(),
+            scope: concept.scope,
             body,
         })
     }
@@ -191,6 +220,13 @@ impl FakeClock {
     pub fn advance(&self, by: Duration) {
         *self.now.lock().unwrap() += by;
     }
+
+    /// Move the clock to `at`, which must not be in its past.
+    pub fn set(&self, at: DateTime<Utc>) {
+        let mut now = self.now.lock().unwrap();
+        assert!(at >= *now, "the clock cannot go back from {now} to {at}");
+        *now = at;
+    }
 }
 
 impl Clock for FakeClock {
@@ -210,6 +246,8 @@ pub struct ScmState {
     pub posted: Vec<(PrRef, Session)>,
     /// Every `set_check` call, in order.
     pub checks: Vec<(PrRef, CheckStatus)>,
+    /// The summary of every `set_check` call, in the same order as `checks`.
+    pub summaries: Vec<(PrRef, String)>,
     /// Replies by the author, keyed by the session they answer.
     pub replies: HashMap<SessionKey, Vec<Answer>>,
 }
@@ -256,6 +294,18 @@ impl FakeScm {
             .map(|(_, s)| *s)
     }
 
+    /// The summary of the latest check set on `pr`.
+    pub fn last_summary_on(&self, pr: &PrRef) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .summaries
+            .iter()
+            .rev()
+            .find(|(p, _)| p == pr)
+            .map(|(_, s)| s.clone())
+    }
+
     pub fn reply(&self, session: &SessionKey, answers: Vec<Answer>) {
         self.state
             .lock()
@@ -295,8 +345,10 @@ impl ScmProvider for FakeScm {
             .cloned())
     }
 
-    async fn set_check(&self, pr: &PrRef, status: CheckStatus) -> Result<()> {
-        self.state.lock().unwrap().checks.push((pr.clone(), status));
+    async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        state.checks.push((pr.clone(), status));
+        state.summaries.push((pr.clone(), summary.to_string()));
         Ok(())
     }
 }
@@ -330,48 +382,94 @@ impl Prompter for ScriptedPrompter {
 // ---------------------------------------------------------------------------
 
 /// Either of the real `soqrates-store` adapters, so one world type can use
-/// both.
+/// both, or a store that cannot be reached.
 #[derive(Debug)]
 pub enum AnyStore {
     Memory(InMemoryStore),
     File(FileStore),
+    /// The wrapped store, as seen from a forge that cannot reach it: every
+    /// call fails with `Error::Port` (ADR-0003 D4). Steps can still inspect
+    /// the wrapped store with [`AnyStore::inner`].
+    Unreachable(Box<AnyStore>),
 }
 
 impl AnyStore {
     pub fn file(root: &Path) -> Self {
         AnyStore::File(FileStore::new(root))
     }
+
+    pub fn memory() -> Self {
+        AnyStore::Memory(InMemoryStore::new())
+    }
+
+    /// The store behind any `Unreachable` wrapper.
+    pub fn inner(&self) -> &AnyStore {
+        match self {
+            AnyStore::Unreachable(s) => s.inner(),
+            s => s,
+        }
+    }
+
+    /// Make this store unreachable (or keep it so).
+    pub fn into_unreachable(self) -> Self {
+        match self {
+            s @ AnyStore::Unreachable(_) => s,
+            s => AnyStore::Unreachable(Box::new(s)),
+        }
+    }
+}
+
+fn unreachable() -> Error {
+    Error::Port("the learner store cannot be reached".into())
+}
+
+macro_rules! delegate {
+    ($self:ident, $method:ident($($arg:expr),*)) => {
+        match $self {
+            AnyStore::Memory(s) => s.$method($($arg),*).await,
+            AnyStore::File(s) => s.$method($($arg),*).await,
+            AnyStore::Unreachable(_) => Err(unreachable()),
+        }
+    };
 }
 
 impl StateStore for AnyStore {
-    async fn load_profile(&self, author: &AuthorId) -> Result<Option<LearnerProfile>> {
-        match self {
-            AnyStore::Memory(s) => s.load_profile(author).await,
-            AnyStore::File(s) => s.load_profile(author).await,
-        }
+    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
+        delegate!(self, load_profile(learner))
     }
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        match self {
-            AnyStore::Memory(s) => s.save_profile(profile).await,
-            AnyStore::File(s) => s.save_profile(profile).await,
-        }
+        delegate!(self, save_profile(profile))
+    }
+    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
+        delegate!(self, delete_learner(learner))
+    }
+    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
+        delegate!(self, learner_of(identity))
+    }
+    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
+        delegate!(self, save_link(link))
+    }
+    async fn delete_link(&self, identity: &Identity) -> Result<()> {
+        delegate!(self, delete_link(identity))
+    }
+    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
+        delegate!(self, links_of(learner))
+    }
+    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
+        delegate!(self, save_link_code(code))
+    }
+    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
+        delegate!(self, load_link_code(code))
     }
     async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        match self {
-            AnyStore::Memory(s) => s.load_session(key).await,
-            AnyStore::File(s) => s.load_session(key).await,
-        }
+        delegate!(self, load_session(key))
     }
     async fn save_session(&self, session: &Session) -> Result<()> {
-        match self {
-            AnyStore::Memory(s) => s.save_session(session).await,
-            AnyStore::File(s) => s.save_session(session).await,
-        }
+        delegate!(self, save_session(session))
     }
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        match self {
-            AnyStore::Memory(s) => s.delete_session(key).await,
-            AnyStore::File(s) => s.delete_session(key).await,
-        }
+        delegate!(self, delete_session(key))
     }
 }
+
+impl LearnerStore for AnyStore {}

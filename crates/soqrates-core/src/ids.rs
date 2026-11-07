@@ -34,6 +34,7 @@ pub enum Verification {
 /// One way a learner shows up (ADR-0003 D1). Usernames are never identities:
 /// they can be renamed and reused.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub enum Identity {
     /// An account on one forge: the forge's host and its immutable account
     /// ID, written `github.com:1001`.
@@ -80,6 +81,19 @@ impl std::fmt::Display for Identity {
             Identity::Forge { host, account } => write!(f, "{host}:{account}"),
             Identity::Email(address) => write!(f, "email:{address}"),
         }
+    }
+}
+
+impl TryFrom<String> for Identity {
+    type Error = crate::Error;
+    fn try_from(text: String) -> crate::Result<Self> {
+        Identity::parse(&text)
+    }
+}
+
+impl From<Identity> for String {
+    fn from(identity: Identity) -> String {
+        identity.to_string()
     }
 }
 

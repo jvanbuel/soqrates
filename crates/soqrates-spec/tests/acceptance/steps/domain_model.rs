@@ -14,9 +14,9 @@ use cucumber::{given, then, when};
 use soqrates_core::policy::{DEMOTE_AFTER, PROMOTE_AFTER, format_for, next_level};
 use soqrates_core::ports::Clock;
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, ConceptId, DomainEvent, Error, Grade, GradedAnswer, LearnerEvent,
-    LearnerProfile, Level, Question, QuestionBody, QuestionFormat, QuestionId, Session,
-    SessionEvent, SessionKey, SessionOutcome, SessionResult,
+    Answer, AnswerBody, AuthorId, ConceptId, ConceptScope, DomainEvent, Error, Grade, GradedAnswer,
+    Identity, LearnerEvent, LearnerId, LearnerProfile, Level, Question, QuestionBody,
+    QuestionFormat, QuestionId, Session, SessionEvent, SessionKey, SessionOutcome, SessionResult,
 };
 
 use super::{author, concepts, format, grade, level};
@@ -40,9 +40,25 @@ fn record(w: &mut SpecWorld, concept: ConceptId, fmt: QuestionFormat, g: Grade) 
         .profile
         .as_mut()
         .expect("no learner profile in this scenario");
-    let events = p.record(&concept, fmt, g, now);
+    let via = via_of(p);
+    let events = p.record(&concept, fmt, g, now, &via);
     w.domain.all_events.extend(events.iter().cloned());
     w.domain.last_events = events;
+}
+
+/// In these scenarios the learner ID has the same text as the one identity
+/// every review comes through, e.g. `github:1001` (ADR-0003 D3).
+fn learner(id: &str) -> LearnerId {
+    LearnerId(id.to_string())
+}
+
+fn via_of(p: &LearnerProfile) -> Identity {
+    Identity::parse(&p.learner().0).expect("the learner ID of these scenarios is an identity")
+}
+
+/// The learner behind `who`, as the engine resolves it (ADR-0003 D1).
+async fn learner_of(w: &SpecWorld, who: &AuthorId) -> LearnerId {
+    w.app.learner_of(who).await.expect("learner_of")
 }
 
 fn event_name(e: &LearnerEvent) -> &'static str {
@@ -71,6 +87,7 @@ fn mc_question(concept: &ConceptId) -> Question {
     Question {
         id: FakeExaminer::question_id(concept, QuestionFormat::MultipleChoice),
         concept: concept.clone(),
+        scope: ConceptScope::General,
         body: QuestionBody::MultipleChoice {
             prompt: format!("Which statement about {} is true?", concept.0),
             options: vec!["right".into(), "wrong".into(), "also wrong".into()],
@@ -83,6 +100,7 @@ fn open_question(concept: &ConceptId) -> Question {
     Question {
         id: FakeExaminer::question_id(concept, QuestionFormat::Open),
         concept: concept.clone(),
+        scope: ConceptScope::General,
         body: QuestionBody::Open {
             prompt: format!("Explain {} in this change.", concept.0),
             rubric: format!("Covers {}", concept.0),
@@ -162,12 +180,12 @@ async fn submit_expecting_error(w: &mut SpecWorld, key: &SessionKey, answers: &[
 
 #[given(regex = r#"^a new learner profile for "([^"]+)"$"#)]
 fn new_profile(w: &mut SpecWorld, id: String) {
-    w.domain.profile = Some(LearnerProfile::new(author(&id)));
+    w.domain.profile = Some(LearnerProfile::new(learner(&id)));
 }
 
 #[given(regex = r#"^a learner profile for "([^"]+)" starting at (\w+)$"#)]
 fn profile_starting_at(w: &mut SpecWorld, id: String, lvl: String) {
-    w.domain.profile = Some(LearnerProfile::starting_at(author(&id), level(&lvl)));
+    w.domain.profile = Some(LearnerProfile::starting_at(learner(&id), level(&lvl)));
 }
 
 #[given(
@@ -198,7 +216,7 @@ fn reviews_recorded(w: &mut SpecWorld, n: usize, g: String) {
 
 #[then(regex = r#"^the learner profile belongs to "([^"]+)"$"#)]
 fn profile_belongs_to(w: &mut SpecWorld, id: String) {
-    assert_eq!(*profile(w).author(), author(&id));
+    assert_eq!(*profile(w).learner(), learner(&id));
 }
 
 #[then(regex = r"^the learner profile is at level (\w+)$")]
@@ -253,6 +271,7 @@ fn last_review(w: &mut SpecWorld, concept: String, g: String, fmt: String) {
         format: format(&fmt),
         grade: grade(&g),
         at: w.clock.now(),
+        via: via_of(profile(w)),
     };
     assert_eq!(profile(w).history().last(), Some(&want), "last review");
 }
@@ -282,6 +301,7 @@ fn policy_next_level(w: &mut SpecWorld, current: String, reviews: String, expect
                 format: QuestionFormat::MultipleChoice,
                 grade: g,
                 at: start + chrono::Duration::minutes(i as i64),
+                via: Identity::parse("github:1001").expect("identity"),
             });
         }
     }
@@ -351,11 +371,11 @@ fn review_recorded_event(w: &mut SpecWorld, id: String, concept: String, g: Stri
         .last_events
         .iter()
         .find_map(|e| match e {
-            LearnerEvent::ReviewRecorded { author, review } => Some((author, review)),
+            LearnerEvent::ReviewRecorded { learner, review } => Some((learner, review)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("no ReviewRecorded in {:?}", w.domain.last_events));
-    assert_eq!(*who, author(&id));
+    assert_eq!(*who, learner(&id));
     assert_eq!(review.concept, ConceptId(concept));
     assert_eq!(review.grade, grade(&g));
     assert_eq!(review.at, w.clock.now());
@@ -376,14 +396,14 @@ fn review_scheduled_event(w: &mut SpecWorld, concept: String) {
         .iter()
         .find_map(|e| match e {
             LearnerEvent::ReviewScheduled {
-                author,
+                learner,
                 concept,
                 due,
-            } => Some((author, concept, *due)),
+            } => Some((learner, concept, *due)),
             _ => None,
         })
         .unwrap_or_else(|| panic!("no ReviewScheduled in {:?}", w.domain.last_events));
-    assert_eq!(who, p.author());
+    assert_eq!(who, p.learner());
     assert_eq!(*c, concept);
     let card = p
         .card(&concept)
@@ -394,7 +414,7 @@ fn review_scheduled_event(w: &mut SpecWorld, concept: String) {
 #[then(regex = r#"^the LevelChanged event names "([^"]+)" and goes from (\w+) to (\w+)$"#)]
 fn level_changed_event(w: &mut SpecWorld, id: String, from: String, to: String) {
     let want = LearnerEvent::LevelChanged {
-        author: author(&id),
+        learner: learner(&id),
         from: level(&from),
         to: level(&to),
         at: w.clock.now(),
@@ -668,22 +688,23 @@ fn outcome_event_count(w: &mut SpecWorld, n: usize, name: String) {
 }
 
 #[then(regex = r"^the outcome events record a review of each of (.+)$")]
-fn outcome_reviews_each(w: &mut SpecWorld, list: String) {
-    let events = &outcome(w).events;
+async fn outcome_reviews_each(w: &mut SpecWorld, list: String) {
     let session = engine_session(w);
+    let who = learner_of(w, session.author()).await;
+    let events = &outcome(w).events;
     for c in concepts(&list) {
         let recorded = events
             .iter()
             .filter(|e| {
-                matches!(e, DomainEvent::Learner(LearnerEvent::ReviewRecorded { author, review })
-                    if author == session.author() && review.concept == c)
+                matches!(e, DomainEvent::Learner(LearnerEvent::ReviewRecorded { learner, review })
+                    if *learner == who && review.concept == c)
             })
             .count();
         let scheduled = events
             .iter()
             .filter(|e| {
-                matches!(e, DomainEvent::Learner(LearnerEvent::ReviewScheduled { author, concept, .. })
-                    if author == session.author() && *concept == c)
+                matches!(e, DomainEvent::Learner(LearnerEvent::ReviewScheduled { learner, concept, .. })
+                    if *learner == who && *concept == c)
             })
             .count();
         assert_eq!(
@@ -714,13 +735,14 @@ async fn outcome_scheduled_match_cards(w: &mut SpecWorld, id: String) {
 }
 
 #[then(regex = r"^the outcome events hold a LevelChanged event from (\w+) to (\w+)$")]
-fn outcome_level_changed(w: &mut SpecWorld, from: String, to: String) {
+async fn outcome_level_changed(w: &mut SpecWorld, from: String, to: String) {
     let (from, to) = (level(&from), level(&to));
-    let o = outcome(w);
     let session = engine_session(w);
+    let who = learner_of(w, session.author()).await;
+    let o = outcome(w);
     let found = o.events.iter().any(|e| {
-        matches!(e, DomainEvent::Learner(LearnerEvent::LevelChanged { author, from: f, to: t, .. })
-            if author == session.author() && *f == from && *t == to)
+        matches!(e, DomainEvent::Learner(LearnerEvent::LevelChanged { learner, from: f, to: t, .. })
+            if *learner == who && *f == from && *t == to)
     });
     assert!(
         found,

@@ -132,14 +132,16 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             .unwrap_or(&self.store))
     }
 
-    /// A learner ID for `identity` that `store` does not use yet.
+    /// An opaque learner ID, derived from `identity` but not revealing it
+    /// (ADR-0003 D1), that `store` does not use yet.
     async fn fresh_learner_id(&self, identity: &Identity, store: &S) -> Result<LearnerId> {
+        let base = opaque_id(&identity.to_string());
         let mut n = 1;
         loop {
             let id = if n == 1 {
-                LearnerId(format!("learner:{identity}"))
+                LearnerId(format!("learner-{base}"))
             } else {
-                LearnerId(format!("learner:{identity}#{n}"))
+                LearnerId(format!("learner-{base}-{n}"))
             };
             if store.load_profile(&id).await?.is_none() && store.links_of(&id).await?.is_empty() {
                 return Ok(id);
@@ -313,8 +315,13 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// The pending session `key` and the store it lives in.
     async fn find_session(&self, key: &SessionKey) -> Result<Option<(Session, &S)>> {
-        if let Some(s) = self.store.load_session(key).await? {
-            return Ok(Some((s, &self.store)));
+        // An unreachable learner store must not hide sessions kept in the
+        // organisation stores (ADR-0003 D4).
+        match self.store.load_session(key).await {
+            Ok(Some(s)) => return Ok(Some((s, &self.store))),
+            Ok(None) => {}
+            Err(Error::Port(_)) if !self.org_stores.is_empty() => {}
+            Err(e) => return Err(e),
         }
         for store in self.org_stores.values() {
             if let Some(s) = store.load_session(key).await? {
@@ -393,6 +400,11 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// Every store that may hold data about learners.
     fn all_stores(&self) -> impl Iterator<Item = &S> {
         std::iter::once(&self.store).chain(self.org_stores.values())
+    }
+
+    /// Where `author`'s profile lives right now (ADR-0003 D4).
+    pub async fn profile_location(&self, author: &AuthorId) -> Result<ProfileLocation> {
+        Ok(self.place(author).await?.location)
     }
 
     /// The learner behind `author`'s identity. The first time an identity is
@@ -534,4 +546,15 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         }
         Ok(())
     }
+}
+
+/// A stable, non-reversible-at-a-glance ID: 64-bit FNV-1a of `text`. Not a
+/// secret; it only keeps identities out of profile documents.
+fn opaque_id(text: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }

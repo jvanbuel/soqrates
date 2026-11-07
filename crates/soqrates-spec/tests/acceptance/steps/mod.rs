@@ -4,6 +4,7 @@ mod adaptive_questions;
 mod ci_check;
 mod common;
 mod domain_model;
+mod learner_identity;
 mod learner_state;
 mod local_hooks;
 mod mcp_server;

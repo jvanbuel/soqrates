@@ -11,7 +11,7 @@ Feature: The CI check is an asynchronous round trip
   Background:
     Given a pull request "jvanbuel/soqrates#7" by "github:1001" at head "abc123" touching "rust.ownership", "rust.traits"
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario: The first run posts the questions and leaves the check pending
     When the Soqrates check runs
     Then the check is Pending
@@ -20,7 +20,7 @@ Feature: The CI check is an asynchronous round trip
     And the latest posted session is for the current head
     And a pending session is stored for the current head
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario: A run before the author replies keeps the check pending and does not post again
     Given the Soqrates check has run
     When the Soqrates check runs
@@ -28,7 +28,7 @@ Feature: The CI check is an asynchronous round trip
     And the questions were posted 1 time
     And a pending session is stored for the current head
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario: A run after the author replies grades the answers and updates the profile
     Given the Soqrates check has run
     And the author replies with correct answers
@@ -38,7 +38,7 @@ Feature: The CI check is an asynchronous round trip
     And the history of "github:1001" has 2 graded answers
     And no pending session is stored for the current head
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario Outline: The final status depends on the answers and the mode
     Given Soqrates runs in <mode> mode
     And the Soqrates check has run
@@ -53,7 +53,7 @@ Feature: The CI check is an asynchronous round trip
       | Advisory | correct | Success |
       | Advisory | wrong   | Neutral |
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario Outline: The pass threshold decides between passing and failing
     Given Soqrates runs in Blocking mode
     And the pass threshold is 0.6
@@ -74,7 +74,7 @@ Feature: The CI check is an asynchronous round trip
       | correct | wrong   | wrong   | Failure |
       | wrong   | wrong   | wrong   | Failure |
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario: Advisory is the default mode for the check
     Given the default configuration
     And the Soqrates check has run
@@ -82,7 +82,7 @@ Feature: The CI check is an asynchronous round trip
     When the Soqrates check runs
     Then the check is Neutral
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario: A new push starts a new session for the new head
     Given the Soqrates check has run
     When the author pushes head "def456" touching "tokio.select"
@@ -93,7 +93,7 @@ Feature: The CI check is an asynchronous round trip
     And the posted questions are about "tokio.select"
     And a pending session is stored for the current head
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario: Answers to an earlier head do not complete the session for a new head
     Given the Soqrates check has run
     And the author replies with correct answers
@@ -101,13 +101,13 @@ Feature: The CI check is an asynchronous round trip
     And the Soqrates check runs
     Then the check is Pending
 
-  @adr-0001-d8 @wip
+  @adr-0001-d8
   Scenario: The session key is tied to the pull request and its head commit
     Then the session key is the same each time it is derived for the current head
     And the session key for head "abc123" differs from the session key for head "def456"
     And the session key for pull request "jvanbuel/soqrates#7" differs from the one for "jvanbuel/soqrates#9" at the same head
 
-  @adr-0001-d8 @adr-0001-d4 @wip
+  @adr-0001-d8 @adr-0001-d4
   Scenario: Pull requests by different authors are graded independently
     Given Soqrates runs in Blocking mode
     And the Soqrates check has run

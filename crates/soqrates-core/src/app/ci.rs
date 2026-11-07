@@ -46,8 +46,9 @@ where
         }
         scm.post_questions(pr, &session).await?;
         let summary = format!(
-            "Soqrates asked {} question(s) about this change. Reply to answer them.",
-            session.questions().len()
+            "Soqrates asked {} question(s) about this change. Reply to answer them.{}",
+            session.questions().len(),
+            location_note(&app.profile_location(&pull.author).await?)
         );
         scm.set_check(pr, CheckStatus::Pending, &summary).await?;
         return Ok(CheckStatus::Pending);
@@ -55,8 +56,11 @@ where
 
     match scm.fetch_answers(pr, &session).await? {
         None => {
-            scm.set_check(pr, CheckStatus::Pending, "Waiting for answers.")
-                .await?;
+            let summary = format!(
+                "Waiting for answers.{}",
+                location_note(&app.profile_location(&pull.author).await?)
+            );
+            scm.set_check(pr, CheckStatus::Pending, &summary).await?;
             Ok(CheckStatus::Pending)
         }
         Some(answers) => {
@@ -99,11 +103,17 @@ where
             "not passed"
         }
     );
-    if let ProfileLocation::Local { host } = &outcome.profile_location {
-        summary.push_str(&format!(
-            " The learner store was unreachable; this learner profile is local to {host}."
-        ));
-    }
+    summary.push_str(&location_note(&outcome.profile_location));
     scm.set_check(pr, status, &summary).await?;
     Ok(status)
+}
+
+/// Tells the learner when the learner store was unreachable (ADR-0003 D4).
+fn location_note(location: &ProfileLocation) -> String {
+    match location {
+        ProfileLocation::LearnerStore => String::new(),
+        ProfileLocation::Local { host } => {
+            format!(" The learner store was unreachable; this learner profile is local to {host}.")
+        }
+    }
 }
