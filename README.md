@@ -60,6 +60,10 @@ correct option and an explanation. It shows this session only; your level
 and review schedule stay private, shown only in the terminal and the MCP
 client.
 
+To post as **soqrates[bot]** with the Soqrates logo instead of
+github-actions[bot], set up the Soqrates GitHub App
+([docs/github-app.md](docs/github-app.md)).
+
 It needs an `ANTHROPIC_API_KEY` repository secret, and keeps learner state
 on the `soqrates-state` branch. Anyone who can read the repository can read
 that branch, including what each author got wrong.

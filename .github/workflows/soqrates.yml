@@ -9,6 +9,9 @@
 # - Learner state is kept on the `soqrates-state` branch (one JSON document
 #   per profile/link/session, see soqrates-store's FileStore).
 # - Needs the repository secret ANTHROPIC_API_KEY; without it the job skips.
+# - Posts as soqrates[bot] when the Soqrates GitHub App is configured
+#   (repository variable SOQRATES_APP_ID and secret SOQRATES_APP_PRIVATE_KEY,
+#   see docs/github-app.md); otherwise as github-actions[bot].
 #
 # Note: GitHub runs `issue_comment` workflows from the default branch, so
 # answering by comment works once this file is on the default branch.
@@ -35,7 +38,7 @@ jobs:
       (github.event.issue.pull_request && (
         (github.event.action == 'created' && startsWith(github.event.comment.body, '/soqrates')) ||
         (github.event.action == 'edited' &&
-          github.event.comment.user.login == 'github-actions[bot]' &&
+          endsWith(github.event.comment.user.login, '[bot]') &&
           contains(github.event.comment.body, 'soqrates:session=') &&
           contains(github.event.comment.body, '- [x] **Grade my answers**'))
       ))
@@ -88,11 +91,20 @@ jobs:
             git worktree add --orphan -b soqrates-state .soqrates-state
           fi
 
+      # Post as soqrates[bot] (the Soqrates GitHub App) when it is configured.
+      - name: Get the Soqrates app token
+        id: app
+        if: steps.key.outputs.skip != 'true' && vars.SOQRATES_APP_ID != ''
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.SOQRATES_APP_ID }}
+          private-key: ${{ secrets.SOQRATES_APP_PRIVATE_KEY }}
+
       - name: Run Soqrates
         if: steps.key.outputs.skip != 'true'
         run: ./target/release/soqrates ci --mode advisory --state-dir .soqrates-state
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
 
       - name: Save learner state
         if: always() && steps.key.outputs.skip != 'true'
