@@ -85,3 +85,38 @@ affected, what is missing, and a proposed fix.
 - Not covered: the ADR does not say what `Soqrates::submit` does for a
   `SessionKey` that has no pending session (presumably `Error::NotFound`).
   Worth adding to the ADR, then a scenario.
+
+# ADR-0002
+
+No ADR-0002 rule is blocked: every scenario in `domain_learner_profile.feature`
+and `domain_session.feature` can be written against the public API, so none
+is tagged `@blocked`. What the scenarios assume but the ADR leaves open:
+
+## G8: Order of events is not fully specified (D7), spec ambiguity
+
+- **Scenarios:** "Recording a review emits ReviewRecorded and
+  ReviewScheduled", "The review that promotes the author also emits
+  LevelChanged", "The session outcome carries the events of every review and
+  one SessionGraded".
+- **Assumed, not asserted:** the order of the events returned by one
+  `LearnerProfile::record`, and the position of `SessionGraded` in
+  `SessionOutcome::events` ("in order" is not defined). The scenarios
+  compare the events as a set and count them per kind.
+- **Proposed:** say in the ADR that `record` returns `ReviewRecorded`,
+  `ReviewScheduled`, then `LevelChanged`, and that `SessionGraded` comes last
+  in the outcome; then the scenarios can assert the order.
+
+## G9: Does the review that changes the level count toward the new streak? (D4)
+
+- **Scenario:** "A level change resets the streak".
+- **Assumed:** right after the review that changes the level,
+  `reviews_since_level_change()` is empty (that review does not count toward
+  the next streak), so after 6 correct reviews a Novice is Intermediate with
+  0 reviews since the change, and 6 more are needed to reach Expert.
+
+## Not a scenario: "graded at most once" on the aggregate (D3, D6)
+
+`Session::conclude(self, ...)` consumes the session, so concluding it twice
+does not compile; that is a type-level guarantee, not something a scenario
+can exercise. The engine-level rule (a second `Soqrates::submit` fails with
+`NotFound`) is covered by "A session is graded at most once".

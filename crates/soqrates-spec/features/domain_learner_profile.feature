@@ -15,7 +15,7 @@ Feature: The learner profile aggregate
   # -------------------------------------------------------------------------
   # D3: recording a review changes card, history and level together
 
-  @adr-0002-d3 @wip
+  @adr-0002-d3
   Scenario: A new learner profile is empty and at level Novice
     Given a new learner profile for "github:1001"
     Then the learner profile belongs to "github:1001"
@@ -23,7 +23,7 @@ Feature: The learner profile aggregate
     And the learner profile has 0 review cards
     And the learner profile has 0 reviews in its history
 
-  @adr-0002-d3 @adr-0002-d4 @wip
+  @adr-0002-d3 @adr-0002-d4
   Scenario Outline: An author may declare a starting level
     Given a learner profile for "github:1001" starting at <level>
     Then the learner profile belongs to "github:1001"
@@ -72,7 +72,7 @@ Feature: The learner profile aggregate
   # -------------------------------------------------------------------------
   # D4: level rules
 
-  @adr-0002-d4 @wip
+  @adr-0002-d4
   Scenario: The thresholds are six correct reviews to promote and three incorrect reviews to demote
     Then promotion takes 6 consecutive correct reviews and demotion takes 3 consecutive incorrect reviews
 

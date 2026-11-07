@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use cucumber::World;
 use soqrates_core::ports::StateStore;
 use soqrates_core::{
-    AuthorId, CheckStatus, Config, Diff, HookDecision, HookKind, LearnerProfile, Level, PrRef,
-    Question, Session, SessionKey, SessionOutcome, Soqrates,
+    AuthorId, CheckStatus, Config, Diff, HookDecision, HookKind, LearnerEvent, LearnerProfile,
+    Level, PrRef, Question, Session, SessionKey, SessionOutcome, SessionResult, Soqrates,
 };
 
 use crate::fakes::{AnyStore, FakeClock, FakeExaminer, FakeScm, ScriptedPrompter, diff_touching};
@@ -22,6 +22,30 @@ pub struct HookRun {
     pub decision: HookDecision,
     pub asked: Vec<Question>,
     pub reported: Vec<SessionOutcome>,
+}
+
+/// State of the scenarios that exercise the aggregates directly (ADR-0002),
+/// without the engine.
+#[derive(Debug, Default)]
+pub struct DomainState {
+    /// The learner profile under test.
+    pub profile: Option<LearnerProfile>,
+    /// Events returned by the most recent `LearnerProfile::record`.
+    pub last_events: Vec<LearnerEvent>,
+    /// Events returned by every `LearnerProfile::record`, in order.
+    pub all_events: Vec<LearnerEvent>,
+    /// Counter for generated concept IDs.
+    pub generated: usize,
+    /// Questions to open a session with.
+    pub questions: Vec<Question>,
+    /// The result of `Session::open`.
+    pub opened: Option<soqrates_core::Result<Session>>,
+    /// The result of `Session::validate_answers`.
+    pub validated: Option<soqrates_core::Result<()>>,
+    /// The result of `Session::conclude`.
+    pub concluded: Option<SessionResult>,
+    /// The error of the most recent failed `Soqrates::submit`.
+    pub submit_error: Option<soqrates_core::Error>,
 }
 
 #[derive(World)]
@@ -45,6 +69,7 @@ pub struct SpecWorld {
     pub tools: Vec<String>,
     pub recompute: Option<(Level, Vec<soqrates_core::GradedAnswer>)>,
     pub recomputed: Option<Level>,
+    pub domain: DomainState,
     sessions_started: usize,
 }
 
@@ -61,6 +86,7 @@ impl fmt::Debug for SpecWorld {
             .field("pr", &self.pr)
             .field("status", &self.status)
             .field("hook_runs", &self.hook_runs)
+            .field("domain", &self.domain)
             .finish_non_exhaustive()
     }
 }
@@ -91,6 +117,7 @@ impl SpecWorld {
             tools: Vec::new(),
             recompute: None,
             recomputed: None,
+            domain: DomainState::default(),
             sessions_started: 0,
         }
     }
