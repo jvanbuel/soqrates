@@ -62,7 +62,7 @@ flowchart LR
 
     subgraph driven["Driven side"]
         store["soqrates-store"]
-        llm["soqrates-llm<br/>(Rig)"]
+        examiner["soqrates-examiner<br/>(Rig)"]
         gh["soqrates-scm-github<br/>(octocrab)"]
     end
 
@@ -70,7 +70,7 @@ flowchart LR
     cli --> mcp
     mcp --> core
     store -. StateStore .-> core
-    llm -. Examiner .-> core
+    examiner -. Examiner .-> core
     gh -. ScmProvider .-> core
 ```
 
@@ -161,13 +161,25 @@ the CI and hook workflows) and defines the *ports* `StateStore`, `Examiner`,
 and only on this allowlist: `rs-fsrs`, `chrono`, `serde`, `serde_json`,
 `thiserror`. Adapters live in their own crates.
 
-### D3: LLM access through Rig, confined to `soqrates-llm`
+### D3: LLM access through Rig, confined to `soqrates-examiner`
 **Enforcement:** automated
 
-`soqrates-llm` implements `Examiner` on top of [Rig](https://github.com/0xPlaygrounds/rig)
-(`rig-core`), which gives us many providers (Anthropic, OpenAI, Gemini,
-Ollama, ...). It is the only crate that may depend on `rig-core`, so Rig can be
-swapped out by replacing one crate.
+[Rig](https://github.com/0xPlaygrounds/rig) (`rig-core`) is the provider
+layer: it already abstracts Anthropic, OpenAI, Gemini, Ollama and others.
+Soqrates does not add a provider abstraction of its own.
+
+`soqrates-examiner` implements the `Examiner` port on top of Rig. It holds
+Soqrates's own LLM logic: the prompts and output schemas for extracting
+concepts, writing questions and grading answers; parsing and validating
+model replies; and picking a model from configuration (e.g.
+`anthropic:claude-sonnet-5-5`). It is a separate crate, rather than a module
+in the binary, so that:
+
+- the core and its tests never compile Rig, and confinement is checkable;
+- the evals (D13) can exercise the examiner on its own;
+- Rig can be swapped out by replacing one crate.
+
+It is the only crate that may depend on `rig-core`.
 
 ### D4: SCM/CI providers behind `ScmProvider`; GitHub first
 **Enforcement:** automated
@@ -243,7 +255,7 @@ depend on any particular harness.
 
 Acceptance and architecture tests use fakes for `Examiner`, `ScmProvider`,
 `Clock` and `Prompter`, and never call a real model or forge. The spec crate
-must not depend on `soqrates-llm` or `soqrates-scm-github`.
+must not depend on `soqrates-examiner` or `soqrates-scm-github`.
 
 ### D13: Evals and benchmarks live in `evals/` and treat Soqrates as a black box
 **Enforcement:** manual. Nothing can run until there is a working binary.

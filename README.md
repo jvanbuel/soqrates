@@ -22,7 +22,7 @@ flowchart LR
     mcp["soqrates-mcp"] --> core
     core["soqrates-core<br/>domain + ports"]
     store["soqrates-store"] -. StateStore .-> core
-    llm["soqrates-llm (Rig)"] -. Examiner .-> core
+    examiner["soqrates-examiner (Rig)"] -. Examiner .-> core
     gh["soqrates-scm-github"] -. ScmProvider .-> core
 ```
 
@@ -33,7 +33,7 @@ flowchart LR
 | `docs/adr/` | Architecture decision records. Every decision is numbered and has an enforcement mode. |
 | `crates/soqrates-core` | Domain and ports (`StateStore`, `Examiner`, `ScmProvider`, `Clock`, `Prompter`). No I/O. |
 | `crates/soqrates-store` | State adapters (in-memory, JSON files). |
-| `crates/soqrates-llm` | `Examiner` on top of Rig: any LLM provider. |
+| `crates/soqrates-examiner` | `Examiner` on top of Rig: any LLM provider. |
 | `crates/soqrates-scm-github` | `ScmProvider` for GitHub. |
 | `crates/soqrates-mcp` | MCP server exposing the core. |
 | `crates/soqrates-cli` | The `soqrates` binary. |
@@ -47,7 +47,7 @@ ADRs in this repo are enforced by tests:
 
 - **Architecture fitness tests** (`crates/soqrates-spec/tests/architecture.rs`)
   check structural decisions against `cargo metadata`, for example that only
-  `soqrates-llm` may depend on Rig.
+  `soqrates-examiner` may depend on Rig.
 - **BDD acceptance tests** (`crates/soqrates-spec/features/*.feature`)
   specify behaviour in Gherkin, are tagged with the decision they enforce
   (`@adr-0001-d7`), and are written *before* the implementation.

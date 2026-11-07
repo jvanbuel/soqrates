@@ -26,7 +26,7 @@ pub trait StateStore: Send + Sync {
 }
 
 /// The LLM-backed part of Soqrates: understands diffs, writes and grades
-/// questions (D3). Implemented by `soqrates-llm` on top of Rig.
+/// questions (D3). Implemented by `soqrates-examiner` on top of Rig.
 pub trait Examiner: Send + Sync {
     fn extract_concepts(&self, diff: &Diff) -> impl Future<Output = Result<Vec<Concept>>> + Send;
     fn write_question(

@@ -12,7 +12,7 @@ rust-version = "1.97.1"
 [workspace.dependencies]
 soqrates-core = { path = "crates/soqrates-core" }
 soqrates-store = { path = "crates/soqrates-store" }
-soqrates-llm = { path = "crates/soqrates-llm" }
+soqrates-examiner = { path = "crates/soqrates-examiner" }
 soqrates-scm-github = { path = "crates/soqrates-scm-github" }
 soqrates-mcp = { path = "crates/soqrates-mcp" }
 chrono = { version = "0.4", features = ["serde"] }

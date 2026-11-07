@@ -2629,7 +2629,7 @@ name = "soqrates-cli"
 version = "0.1.0"
 dependencies = [
  "soqrates-core",
- "soqrates-llm",
+ "soqrates-examiner",
  "soqrates-mcp",
  "soqrates-scm-github",
  "soqrates-store",
@@ -2648,7 +2648,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "soqrates-llm"
+name = "soqrates-examiner"
 version = "0.1.0"
 dependencies = [
  "rig-core",

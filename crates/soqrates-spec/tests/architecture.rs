@@ -85,7 +85,7 @@ fn workspace_has_the_crates_of_adr_0001() {
     let expected = set(&[
         "soqrates-cli",
         "soqrates-core",
-        "soqrates-llm",
+        "soqrates-examiner",
         "soqrates-mcp",
         "soqrates-scm-github",
         "soqrates-spec",
@@ -163,7 +163,7 @@ fn core_defines_the_ports() {
 fn adapters_depend_on_core() {
     for adapter in [
         "soqrates-store",
-        "soqrates-llm",
+        "soqrates-examiner",
         "soqrates-scm-github",
         "soqrates-mcp",
     ] {
@@ -187,8 +187,8 @@ fn assert_confined(dep: &str, owner: &str, decision: &str) {
 
 // @adr-0001-d3
 #[test]
-fn rig_is_confined_to_soqrates_llm() {
-    assert_confined("rig-core", "soqrates-llm", "D3");
+fn rig_is_confined_to_soqrates_examiner() {
+    assert_confined("rig-core", "soqrates-examiner", "D3");
 }
 
 // @adr-0001-d4
@@ -279,7 +279,7 @@ fn skills_have_valid_frontmatter() {
 fn spec_does_not_depend_on_networked_adapters() {
     let spec = deps(package("soqrates-spec"));
     for adapter in [
-        "soqrates-llm",
+        "soqrates-examiner",
         "soqrates-scm-github",
         "soqrates-cli",
         "rig-core",

@@ -1,5 +1,5 @@
 [package]
-name = "soqrates-llm"
+name = "soqrates-examiner"
 description = "Examiner adapter on top of Rig (ADR-0001 D3)."
 edition.workspace = true
 version.workspace = true
