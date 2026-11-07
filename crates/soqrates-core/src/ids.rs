@@ -75,6 +75,16 @@ impl Identity {
     }
 }
 
+/// `"github.com:1001".parse::<Identity>()`, the idiomatic counterpart of
+/// [`Identity::parse`].
+impl std::str::FromStr for Identity {
+    type Err = crate::Error;
+
+    fn from_str(text: &str) -> crate::Result<Self> {
+        Identity::parse(text)
+    }
+}
+
 impl std::fmt::Display for Identity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -101,5 +111,29 @@ impl AuthorId {
     /// The identity this author string denotes (ADR-0003).
     pub fn identity(&self) -> crate::Result<Identity> {
         Identity::parse(&self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identities_round_trip_through_from_str_and_display() {
+        for text in [
+            "github.com:1001",
+            "gitlab.client.example:678",
+            "email:a+b@example.com",
+        ] {
+            let identity: Identity = text.parse().unwrap();
+            assert_eq!(identity.to_string(), text);
+        }
+    }
+
+    #[test]
+    fn malformed_identities_are_rejected() {
+        for text in ["", "github.com", "github.com:", ":1001", "email:"] {
+            assert!(text.parse::<Identity>().is_err(), "{text:?}");
+        }
     }
 }

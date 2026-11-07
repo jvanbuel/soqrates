@@ -240,7 +240,9 @@ async fn run_ci(cli: &Cli, repo: &str, pr: Option<u64>) -> Result<ExitCode, Stri
 async fn run_identity(cli: &Cli, command: &IdentityCommand) -> Result<ExitCode, String> {
     let vcs = Vcs::Git;
     if let IdentityCommand::Use { identity } = command {
-        let parsed = Identity::parse(identity).map_err(|e| e.to_string())?;
+        let parsed: Identity = identity
+            .parse()
+            .map_err(|e: soqrates_core::Error| e.to_string())?;
         let host = parsed
             .host()
             .ok_or("only forge identities (host:account) can be configured")?
