@@ -7,4 +7,10 @@ license.workspace = true
 
 [dependencies]
 soqrates-core.workspace = true
-rig-core = "0.46"
+rig-core = { version = "0.46", features = ["reqwest"] }
+schemars = "1"
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
