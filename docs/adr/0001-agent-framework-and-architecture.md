@@ -80,30 +80,9 @@ and each third-party framework lives in exactly one adapter (D3, D4, D10).
 
 ### Level 3: inside the core
 
-```mermaid
-flowchart LR
-    subgraph wf["Workflows"]
-        hook["hook (D9)"]
-        ci["CI check (D8)"]
-    end
-    engine["engine<br/>sessions, grading"]
-    subgraph logic["Pure domain logic"]
-        policy["question policy (D7)"]
-        sched["FSRS schedule (D6)"]
-    end
-    subgraph ports["Ports (implemented by adapters)"]
-        p["StateStore · Examiner · Clock<br/>ScmProvider · Prompter"]
-    end
-
-    wf --> engine
-    engine --> logic
-    engine --> ports
-    wf --> ports
-```
-
-The workflows decide *when* to ask, the engine decides *what* to ask, and
-the policy and schedule decide *how* and *how often*. All I/O goes through
-ports.
+[ADR-0002](0002-domain-model.md#contexts) structures the core into the
+contexts `assessment`, `learner` and `delivery`, plus an `app` layer, and
+defines the domain language.
 
 ### CI check flow
 
@@ -155,7 +134,7 @@ named `soqrates` (crate `soqrates-cli`) with the subcommands `hook`, `ci` and
 ### D2: Hexagonal core with no I/O dependencies
 **Enforcement:** automated
 
-`soqrates-core` holds the domain (learner model, question policy, scheduling,
+`soqrates-core` holds the domain (learner profiles, question policy, scheduling,
 the CI and hook workflows) and defines the *ports* `StateStore`, `Examiner`,
 `ScmProvider`, `Clock` and `Prompter`. It depends on no other workspace crate
 and only on this allowlist: `rs-fsrs`, `chrono`, `serde`, `serde_json`,
@@ -214,7 +193,8 @@ new concepts and within the session's question budget.
 Each profile has a `Level` (`Novice`, `Intermediate`, `Expert`). New authors
 start as `Novice`. Novices get multiple-choice questions, experts get open
 questions, and intermediates get a mix. The level goes up after sustained
-correct answers and down after sustained wrong ones.
+correct answers and down after sustained wrong ones. ADR-0002 D4 and D5 make
+"sustained" and "mix" precise.
 
 ### D8: CI check is an asynchronous round trip
 **Enforcement:** automated

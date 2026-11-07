@@ -17,13 +17,13 @@ async fn look_up(w: &mut SpecWorld, id: String) {
 #[then(regex = r#"^the profile belongs to "([^"]+)"$"#)]
 async fn profile_belongs_to(w: &mut SpecWorld, id: String) {
     let p = w.profile(&author(&id)).await;
-    assert_eq!(p.author, author(&id));
+    assert_eq!(*p.author(), author(&id));
 }
 
 #[then(regex = r#"^the profile of "([^"]+)" is at level (\w+)$"#)]
 async fn at_level(w: &mut SpecWorld, id: String, lvl: String) {
     let p = w.profile(&author(&id)).await;
-    assert_eq!(p.level, level(&lvl), "level of {id}");
+    assert_eq!(p.level(), level(&lvl), "level of {id}");
 }
 
 #[then(regex = r#"^the profile of "([^"]+)" is at a level (higher|lower) than (\w+)$"#)]
@@ -32,14 +32,14 @@ async fn at_level_relative(w: &mut SpecWorld, id: String, dir: String, lvl: Stri
     let reference = level(&lvl);
     match dir.as_str() {
         "higher" => assert!(
-            p.level > reference,
+            p.level() > reference,
             "{id} is {:?}, not above {reference:?}",
-            p.level
+            p.level()
         ),
         _ => assert!(
-            p.level < reference,
+            p.level() < reference,
             "{id} is {:?}, not below {reference:?}",
-            p.level
+            p.level()
         ),
     }
 }
@@ -47,13 +47,17 @@ async fn at_level_relative(w: &mut SpecWorld, id: String, dir: String, lvl: Stri
 #[then(regex = r#"^"([^"]+)" has no review cards$"#)]
 async fn no_cards(w: &mut SpecWorld, id: String) {
     let p = w.profile(&author(&id)).await;
-    assert!(p.cards.is_empty(), "{id} has cards: {:?}", p.cards.keys());
+    assert!(
+        p.cards().is_empty(),
+        "{id} has cards: {:?}",
+        p.cards().keys()
+    );
 }
 
 #[then(regex = r#"^"([^"]+)" has review cards for exactly (.+)$"#)]
 async fn cards_exactly(w: &mut SpecWorld, id: String, list: String) {
     let p = w.profile(&author(&id)).await;
-    let have: BTreeSet<_> = p.cards.keys().cloned().collect();
+    let have: BTreeSet<_> = p.cards().keys().cloned().collect();
     let want: BTreeSet<_> = concepts(&list).into_iter().collect();
     assert_eq!(have, want, "review cards of {id}");
 }
@@ -61,19 +65,29 @@ async fn cards_exactly(w: &mut SpecWorld, id: String, list: String) {
 #[then(regex = r#"^the history of "([^"]+)" has (\d+) graded answers?$"#)]
 async fn history_len(w: &mut SpecWorld, id: String, n: usize) {
     let p = w.profile(&author(&id)).await;
-    assert_eq!(p.history.len(), n, "history of {id}: {:?}", p.history);
+    assert_eq!(p.history().len(), n, "history of {id}: {:?}", p.history());
 }
 
 #[then("the session is stored as pending")]
 async fn session_pending(w: &mut SpecWorld) {
-    let key = w.session.as_ref().expect("no session started").key.clone();
+    let key = w
+        .session
+        .as_ref()
+        .expect("no session started")
+        .key()
+        .clone();
     let stored = w.app.store.load_session(&key).await.expect("load_session");
     assert_eq!(stored.as_ref(), w.session.as_ref(), "stored session");
 }
 
 #[then("the session is no longer stored as pending")]
 async fn session_not_pending(w: &mut SpecWorld) {
-    let key = w.session.as_ref().expect("no session started").key.clone();
+    let key = w
+        .session
+        .as_ref()
+        .expect("no session started")
+        .key()
+        .clone();
     let stored = w.app.store.load_session(&key).await.expect("load_session");
     assert!(stored.is_none(), "session {key:?} is still pending");
 }

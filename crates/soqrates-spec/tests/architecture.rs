@@ -75,6 +75,10 @@ fn read(path: impl AsRef<Path>) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()))
 }
 
+// ===========================================================================
+// ADR-0001
+// ===========================================================================
+
 // ---------------------------------------------------------------------------
 // D1: Rust workspace that ships one binary
 
@@ -149,11 +153,11 @@ fn core_depends_on_no_workspace_crate() {
 // @adr-0001-d2 @adr-0001-d4 @adr-0001-d5
 #[test]
 fn core_defines_the_ports() {
-    let ports = read(workspace_root().join("crates/soqrates-core/src/ports.rs"));
+    let ports = read(workspace_root().join("crates/soqrates-core/src/app/ports.rs"));
     for port in ["StateStore", "Examiner", "ScmProvider", "Clock", "Prompter"] {
         assert!(
             ports.contains(&format!("pub trait {port}")),
-            "ADR-0001 D2: port `{port}` must be defined in soqrates-core/src/ports.rs"
+            "ADR-0001 D2: port `{port}` must be defined in soqrates-core/src/app/ports.rs"
         );
     }
 }
@@ -290,6 +294,311 @@ fn spec_does_not_depend_on_networked_adapters() {
             "ADR-0001 D12: soqrates-spec must not depend on `{adapter}`"
         );
     }
+}
+
+// ===========================================================================
+// ADR-0002: domain model
+// ===========================================================================
+
+fn core_src() -> PathBuf {
+    workspace_root().join("crates/soqrates-core/src")
+}
+
+/// All `.rs` files under `dir`, recursively, sorted.
+fn rust_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The ADR-0002 context a core source file belongs to, or `None` for lib.rs.
+fn context_of(file: &Path) -> Option<String> {
+    let rel = file.strip_prefix(core_src()).unwrap();
+    let first = rel
+        .components()
+        .next()?
+        .as_os_str()
+        .to_string_lossy()
+        .to_string();
+    match first.as_str() {
+        "lib.rs" => None,
+        other => Some(other.trim_end_matches(".rs").to_string()),
+    }
+}
+
+/// Rust source with comments stripped (line comments and doc comments), so
+/// that prose doesn't count as a dependency.
+fn code_only(text: &str) -> String {
+    text.lines()
+        .map(|l| match l.find("//") {
+            Some(i) => &l[..i],
+            None => l,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+struct GlossaryEntry {
+    term: String,
+    code: String,
+    context: String,
+    avoid: Vec<String>,
+}
+
+fn glossary() -> Vec<GlossaryEntry> {
+    let text = read(workspace_root().join("docs/adr/0002-domain-model.md"));
+    let section = text
+        .split("## Glossary")
+        .nth(1)
+        .and_then(|s| s.split("\n## ").next())
+        .expect("ADR-0002 has a ## Glossary section");
+    let row =
+        Regex::new(r"^\|\s*([^|]+?)\s*\|\s*`(\w+)`\s*\|\s*(\w+)\s*\|[^|]*\|\s*([^|]*?)\s*\|$")
+            .unwrap();
+    let entries: Vec<_> = section
+        .lines()
+        .filter_map(|l| row.captures(l))
+        .map(|c| GlossaryEntry {
+            term: c[1].to_string(),
+            code: c[2].to_string(),
+            context: c[3].to_string(),
+            avoid: c[4]
+                .split(',')
+                .map(|w| w.trim().to_lowercase())
+                .filter(|w| !w.is_empty())
+                .collect(),
+        })
+        .collect();
+    assert!(
+        entries.len() > 5,
+        "ADR-0002 glossary table could not be parsed"
+    );
+    entries
+}
+
+// @adr-0002-d1
+#[test]
+fn every_glossary_term_exists_in_its_context() {
+    let files = rust_files(&core_src());
+    let ctx_dir = |ctx: &str| {
+        if ctx == "shared" {
+            "ids".to_string()
+        } else {
+            ctx.to_string()
+        }
+    };
+    let mut problems = Vec::new();
+    for e in glossary() {
+        let def = Regex::new(&format!(
+            r"pub\s+(async\s+)?(struct|enum|trait|fn|type)\s+{}\b",
+            regex::escape(&e.code)
+        ))
+        .unwrap();
+        let found: Vec<String> = files
+            .iter()
+            .filter(|f| def.is_match(&code_only(&read(f))))
+            .filter_map(|f| context_of(f))
+            .collect();
+        let home = ctx_dir(&e.context);
+        // Ports are defined in the app layer, whatever their context.
+        let is_port = found.iter().any(|c| c == "app")
+            && read(core_src().join("app/ports.rs")).contains(&format!("pub trait {}", e.code));
+        if found.is_empty() {
+            problems.push(format!(
+                "`{}` ({}) is not defined in soqrates-core",
+                e.code, e.term
+            ));
+        } else if !found.contains(&home) && !is_port {
+            problems.push(format!(
+                "`{}` ({}) belongs to context `{}` but is defined in {:?}",
+                e.code, e.term, e.context, found
+            ));
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "ADR-0002 D1:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+// @adr-0002-d1
+#[test]
+fn feature_files_avoid_non_glossary_synonyms() {
+    let features = Path::new(env!("CARGO_MANIFEST_DIR")).join("features");
+    let mut problems = Vec::new();
+    for e in glossary() {
+        for word in &e.avoid {
+            let re = Regex::new(&format!(r"(?i)\b{}\b", regex::escape(word))).unwrap();
+            for entry in fs::read_dir(&features).unwrap() {
+                let path = entry.unwrap().path();
+                for (n, line) in read(&path).lines().enumerate() {
+                    if re.is_match(line) {
+                        problems.push(format!(
+                            "{}:{}: \"{word}\" (say \"{}\")",
+                            path.file_name().unwrap().to_string_lossy(),
+                            n + 1,
+                            e.term.to_lowercase()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "ADR-0002 D1:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+// @adr-0002-d2
+#[test]
+fn contexts_respect_the_dependency_direction() {
+    let allowed: BTreeMap<&str, &[&str]> = BTreeMap::from([
+        ("ids", &[][..]),
+        ("assessment", &["ids"][..]),
+        ("learner", &["ids", "assessment"][..]),
+        ("delivery", &["ids", "assessment", "learner"][..]),
+        (
+            "app",
+            &["ids", "assessment", "learner", "delivery", "app"][..],
+        ),
+    ]);
+    // Items defined in lib.rs itself are usable by everyone.
+    let root_items = ["Result", "Error"];
+    let path = Regex::new(r"crate::(\w+)").unwrap();
+    let group = Regex::new(r"crate::\{([^}]*)\}").unwrap();
+
+    let mut problems = Vec::new();
+    for file in rust_files(&core_src()) {
+        let Some(ctx) = context_of(&file) else {
+            continue;
+        };
+        let Some(ok) = allowed.get(ctx.as_str()) else {
+            problems.push(format!(
+                "{}: module `{ctx}` is not an ADR-0002 context",
+                file.display()
+            ));
+            continue;
+        };
+        let code = code_only(&read(&file));
+        let mut used: BTreeSet<String> = path
+            .captures_iter(&code)
+            .map(|c| c[1].to_string())
+            .collect();
+        for g in group.captures_iter(&code) {
+            used.extend(
+                g[1].split(',')
+                    .filter_map(|p| p.trim().split("::").next())
+                    .map(str::to_string),
+            );
+        }
+        for u in used {
+            if u != ctx && !ok.contains(&u.as_str()) && !root_items.contains(&u.as_str()) {
+                let rel = file.strip_prefix(core_src()).unwrap().display();
+                problems.push(format!("{rel}: `{ctx}` must not use `{u}`"));
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "ADR-0002 D2:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+// @adr-0002-d2
+#[test]
+fn domain_contexts_are_synchronous() {
+    let asynchronous = Regex::new(r"\basync\b|\bFuture\b|\.await\b").unwrap();
+    let mut problems = Vec::new();
+    for file in rust_files(&core_src()) {
+        let Some(ctx) = context_of(&file) else {
+            continue;
+        };
+        if ctx == "app" {
+            continue;
+        }
+        for (n, line) in code_only(&read(&file)).lines().enumerate() {
+            if asynchronous.is_match(line) {
+                let rel = file.strip_prefix(core_src()).unwrap().display();
+                problems.push(format!("{rel}:{}: {}", n + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "ADR-0002 D2: domain contexts must be synchronous:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+/// The text between the braces following the first match of `header`.
+fn braced_block<'a>(text: &'a str, header: &str) -> &'a str {
+    let start = text
+        .find(header)
+        .unwrap_or_else(|| panic!("`{header}` not found"));
+    let open = start + text[start..].find('{').unwrap();
+    let mut depth = 0;
+    for (i, ch) in text[open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &text[open + 1..open + i];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unbalanced braces after `{header}`")
+}
+
+// @adr-0002-d3
+#[test]
+fn aggregates_protect_their_state() {
+    // (aggregate, file, pub methods allowed to take `&mut self`)
+    let aggregates = [
+        ("LearnerProfile", "learner/mod.rs", &["record"][..]),
+        ("Session", "delivery/mod.rs", &[][..]),
+    ];
+    let pub_field = Regex::new(r"^\s*pub(\([^)]*\))?\s+\w+\s*:").unwrap();
+    let mut_method = Regex::new(r"pub\s+fn\s+(\w+)[^{]*&mut\s+self").unwrap();
+    let mut problems = Vec::new();
+    for (name, file, mutators) in aggregates {
+        let code = code_only(&read(core_src().join(file)));
+        for line in braced_block(&code, &format!("pub struct {name} ")).lines() {
+            if pub_field.is_match(line) {
+                problems.push(format!("{name}: public field `{}`", line.trim()));
+            }
+        }
+        for c in mut_method.captures_iter(braced_block(&code, &format!("impl {name} "))) {
+            if !mutators.contains(&&c[1]) {
+                problems.push(format!(
+                    "{name}::{} takes `&mut self`; allowed: {mutators:?}",
+                    &c[1]
+                ));
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "ADR-0002 D3:\n  {}",
+        problems.join("\n  ")
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -11,7 +11,8 @@ agent harness through its skills and MCP server.
 ## Architecture
 
 See [ADR-0001](docs/adr/0001-agent-framework-and-architecture.md#architecture-overview)
-for the decisions and the full diagrams.
+for the architecture and [ADR-0002](docs/adr/0002-domain-model.md) for the
+domain model (glossary, contexts, aggregates, events).
 
 ```mermaid
 flowchart LR
@@ -31,7 +32,7 @@ flowchart LR
 | Path | What |
 |---|---|
 | `docs/adr/` | Architecture decision records. Every decision is numbered and has an enforcement mode. |
-| `crates/soqrates-core` | Domain and ports (`StateStore`, `Examiner`, `ScmProvider`, `Clock`, `Prompter`). No I/O. |
+| `crates/soqrates-core` | Domain contexts (`assessment`, `learner`, `delivery`) and the `app` layer with the ports. No I/O. |
 | `crates/soqrates-store` | State adapters (in-memory, JSON files). |
 | `crates/soqrates-examiner` | `Examiner` on top of Rig: any LLM provider. |
 | `crates/soqrates-scm-github` | `ScmProvider` for GitHub. |

@@ -3,9 +3,9 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::model::Grade;
+use crate::assessment::Grade;
 
-/// The FSRS state of one concept for one author.
+/// A review card: the FSRS schedule state of one concept for one author.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReviewCard {
     card: rs_fsrs::Card,
@@ -25,6 +25,16 @@ impl ReviewCard {
 
     pub fn is_due(&self, now: DateTime<Utc>) -> bool {
         self.due() <= now
+    }
+
+    /// How many times this card has been reviewed.
+    pub fn reps(&self) -> u32 {
+        self.card.reps as u32
+    }
+
+    /// FSRS memory stability in days: grows with successful reviews.
+    pub fn stability(&self) -> f64 {
+        self.card.stability
     }
 
     /// Record a review with `grade` at `now` and reschedule.

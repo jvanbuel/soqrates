@@ -8,7 +8,11 @@ use std::future::Future;
 use chrono::{DateTime, Utc};
 
 use crate::Result;
-use crate::model::*;
+use crate::app::engine::SessionOutcome;
+use crate::assessment::{Answer, Concept, Diff, Grade, Question, QuestionFormat};
+use crate::delivery::{CheckStatus, PrRef, PullRequest, Session};
+use crate::ids::{AuthorId, SessionKey};
+use crate::learner::LearnerProfile;
 
 /// Persists learner profiles and pending sessions (D5).
 pub trait StateStore: Send + Sync {

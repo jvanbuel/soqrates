@@ -58,11 +58,11 @@ async fn check_runs(w: &mut SpecWorld) {
 fn replies(w: &mut SpecWorld, how: String) {
     let s = latest_posted(w);
     let answers = s
-        .questions
+        .questions()
         .iter()
         .map(|q| FakeExaminer::answer(q, correctness(&how)))
         .collect();
-    w.scm.reply(&s.key, answers);
+    w.scm.reply(s.key(), answers);
 }
 
 #[given("the author replies with answers:")]
@@ -70,7 +70,7 @@ fn replies_table(w: &mut SpecWorld, step: &Step) {
     let key = answer_table(step);
     let s = latest_posted(w);
     let answers = s
-        .questions
+        .questions()
         .iter()
         .map(|q| {
             let correct = *key
@@ -79,7 +79,7 @@ fn replies_table(w: &mut SpecWorld, step: &Step) {
             FakeExaminer::answer(q, correct)
         })
         .collect();
-    w.scm.reply(&s.key, answers);
+    w.scm.reply(s.key(), answers);
 }
 
 #[when(regex = r#"^the author pushes head "([^"]+)" touching (.+)$"#)]
@@ -109,7 +109,7 @@ fn posted_times(w: &mut SpecWorld, n: usize) {
 #[then(regex = r"^the posted questions are about (.+)$")]
 fn posted_about(w: &mut SpecWorld, list: String) {
     let asked: Vec<ConceptId> = latest_posted(w)
-        .questions
+        .questions()
         .iter()
         .map(|q| q.concept.clone())
         .collect();
@@ -120,8 +120,8 @@ fn posted_about(w: &mut SpecWorld, list: String) {
 fn posted_for_head(w: &mut SpecWorld) {
     let pr = w.scm.pull_request_now(w.current_pr());
     let s = latest_posted(w);
-    assert_eq!(s.key, session_key(&pr));
-    assert_eq!(s.author, pr.author);
+    assert_eq!(*s.key(), session_key(&pr));
+    assert_eq!(*s.author(), pr.author);
 }
 
 async fn pending_for_head(w: &SpecWorld) -> Option<Session> {

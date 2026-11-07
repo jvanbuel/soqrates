@@ -149,13 +149,13 @@ impl SpecWorld {
 
     pub async fn submit_all(&mut self, session: &Session, correct: bool) -> SessionOutcome {
         let answers: Vec<_> = session
-            .questions
+            .questions()
             .iter()
             .map(|q| FakeExaminer::answer(q, correct))
             .collect();
         let outcome = self
             .app
-            .submit(&session.key, &answers)
+            .submit(session.key(), &answers)
             .await
             .expect("submit");
         self.outcome = Some(outcome.clone());
@@ -167,8 +167,8 @@ impl SpecWorld {
     }
 
     pub async fn seed_level(&mut self, author: &AuthorId, level: Level) {
-        let mut profile = LearnerProfile::new(author.clone());
-        profile.level = level;
+        // ADR-0002 D4: a declared starting level is a domain operation.
+        let profile = LearnerProfile::starting_at(author.clone(), level);
         self.app
             .store
             .save_profile(&profile)

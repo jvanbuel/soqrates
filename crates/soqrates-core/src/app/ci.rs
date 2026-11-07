@@ -1,9 +1,10 @@
 //! The CI check workflow (ADR-0001 D8).
 
 use crate::Result;
-use crate::engine::Soqrates;
-use crate::model::*;
-use crate::ports::{Clock, Examiner, ScmProvider, StateStore};
+use crate::app::engine::Soqrates;
+use crate::app::ports::{Clock, Examiner, ScmProvider, StateStore};
+use crate::delivery::{CheckStatus, PrRef, PullRequest};
+use crate::ids::SessionKey;
 
 /// The session key for a PR at a given head commit. A new push gives a new key.
 pub fn session_key(pr: &PullRequest) -> SessionKey {

@@ -1,19 +1,25 @@
-//! The Soqrates engine: starts and grades sessions.
+//! The Soqrates engine: orchestrates the aggregates (load, call, save,
+//! emit events). Holds no domain rules (ADR-0002 D3).
 
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
-use crate::model::*;
-use crate::ports::{Clock, Examiner, StateStore};
+use crate::app::events::DomainEvent;
+use crate::app::ports::{Clock, Examiner, StateStore};
+use crate::assessment::{Answer, Diff, Grade};
+use crate::delivery::{Mode, Session};
+use crate::ids::{AuthorId, ConceptId, QuestionId, SessionKey};
+use crate::learner::{LearnerProfile, Level};
 
-/// Whether a failed quiz blocks (D8, D9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Mode {
-    /// Report the result, never block.
-    #[default]
-    Advisory,
-    /// A failed quiz blocks the commit/push or fails the check.
-    Blocking,
+/// The result of grading a session, as returned by [`Soqrates::submit`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionOutcome {
+    /// One grade per question, in question order.
+    pub grades: Vec<(QuestionId, Grade)>,
+    pub passed: bool,
+    pub level_after: Level,
+    /// What happened, in order (ADR-0002 D7).
+    pub events: Vec<DomainEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,7 +64,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         todo!("ADR-0001 D5")
     }
 
-    /// Concepts whose review is due for `author`, most overdue first (D6).
+    /// Concepts whose review is due for `author` (ADR-0001 D6, ADR-0002 D8).
     pub async fn due_reviews(&self, author: &AuthorId) -> Result<Vec<ConceptId>> {
         let _ = author;
         todo!("ADR-0001 D6")
@@ -77,8 +83,10 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         todo!("ADR-0001 D6/D7")
     }
 
-    /// Grade `answers` for the session `key`, update the author's cards and
-    /// level, persist the profile and remove the session (D5, D6, D7).
+    /// Grade `answers` for the session `key`, record each review on the
+    /// author's profile, persist it and remove the session. Fails with
+    /// `NotFound` for an unknown or already graded session and `Invalid`
+    /// for answers that don't fit the session (ADR-0002 D6).
     pub async fn submit(&self, key: &SessionKey, answers: &[Answer]) -> Result<SessionOutcome> {
         let _ = (key, answers);
         todo!("ADR-0001 D5/D6/D7")

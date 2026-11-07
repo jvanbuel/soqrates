@@ -71,12 +71,12 @@ async fn answers_as_follows(w: &mut SpecWorld, id: String, step: &Step) {
     let key = answer_table(step);
     let session = w.session.clone().expect("no session started");
     assert_eq!(
-        session.author,
+        *session.author(),
         author(&id),
         "the session belongs to someone else"
     );
     let answers: Vec<_> = session
-        .questions
+        .questions()
         .iter()
         .map(|q| {
             let correct = *key
@@ -85,7 +85,7 @@ async fn answers_as_follows(w: &mut SpecWorld, id: String, step: &Step) {
             FakeExaminer::answer(q, correct)
         })
         .collect();
-    let outcome = w.app.submit(&session.key, &answers).await.expect("submit");
+    let outcome = w.app.submit(session.key(), &answers).await.expect("submit");
     w.outcome = Some(outcome);
 }
 
@@ -93,7 +93,7 @@ async fn answers_as_follows(w: &mut SpecWorld, id: String, step: &Step) {
 async fn answers_every_question(w: &mut SpecWorld, id: String, how: String) {
     let session = w.session.clone().expect("no session started");
     assert_eq!(
-        session.author,
+        *session.author(),
         author(&id),
         "the session belongs to someone else"
     );
@@ -108,7 +108,7 @@ async fn answers_many_sessions(w: &mut SpecWorld, id: String, n: usize, per: usi
         let list: Vec<String> = (0..per).map(|c| format!("drill.s{s}.c{c}")).collect();
         let session = w.start_touching(&who, &list).await;
         assert_eq!(
-            session.questions.len(),
+            session.questions().len(),
             per,
             "session {s} should ask about its {per} new concepts"
         );

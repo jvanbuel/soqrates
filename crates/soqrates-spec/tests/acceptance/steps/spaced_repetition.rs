@@ -15,13 +15,13 @@ fn session(w: &SpecWorld) -> &Session {
 #[then(regex = r#"^the session asks (\d+) questions?$"#)]
 fn asks_n(w: &mut SpecWorld, n: usize) {
     let s = session(w);
-    assert_eq!(s.questions.len(), n, "questions: {:?}", s.questions);
+    assert_eq!(s.questions().len(), n, "questions: {:?}", s.questions());
 }
 
 #[then(regex = r#"^the session asks about (.+), in (that|any) order$"#)]
 fn asks_about(w: &mut SpecWorld, list: String, order: String) {
     let asked: Vec<ConceptId> = session(w)
-        .questions
+        .questions()
         .iter()
         .map(|q| q.concept.clone())
         .collect();
@@ -63,7 +63,7 @@ async fn due_in_order(w: &mut SpecWorld, id: String, list: String) {
 async fn later_than(w: &mut SpecWorld, a: String, id: String, b: String) {
     let p = w.profile(&author(&id)).await;
     let due = |c: &str| {
-        p.cards
+        p.cards()
             .get(&ConceptId(c.to_string()))
             .unwrap_or_else(|| panic!("{id} has no review card for {c}"))
             .due()

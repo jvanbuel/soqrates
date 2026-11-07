@@ -291,7 +291,7 @@ impl ScmProvider for FakeScm {
             .lock()
             .unwrap()
             .replies
-            .get(&session.key)
+            .get(session.key())
             .cloned())
     }
 

@@ -1,19 +1,32 @@
 //! Domain core of Soqrates.
 //!
-//! This crate is the hexagon of ADR-0001 D2. It holds the domain model and
-//! workflows and defines the ports ([`ports`]) that adapters implement. It must
-//! not do I/O and must not depend on any adapter crate.
+//! ADR-0001 D2 makes this crate the hexagon. ADR-0002 structures it into
+//! contexts, with this dependency direction (D2):
+//!
+//! - [`ids`]: shared kernel, uses nothing
+//! - [`assessment`]: concepts, questions, answers, grades
+//! - [`learner`]: learner profiles, levels, FSRS scheduling
+//! - [`delivery`]: sessions, checks, hooks
+//! - [`app`]: engine, CI and hook workflows, ports, events; uses everything
+//!
+//! The domain contexts are synchronous and pure. All I/O goes through the
+//! ports in [`app::ports`].
 
-pub mod ci;
-pub mod engine;
-pub mod hook;
-pub mod model;
-pub mod policy;
-pub mod ports;
-pub mod schedule;
+pub mod app;
+pub mod assessment;
+pub mod delivery;
+pub mod ids;
+pub mod learner;
 
-pub use engine::{Config, Mode, Soqrates};
-pub use model::*;
+// Short paths for the most used items.
+pub use app::events::DomainEvent;
+pub use app::{Config, SessionOutcome, Soqrates, ci, engine, hook, ports};
+pub use assessment::*;
+pub use delivery::*;
+pub use ids::*;
+pub use learner::{
+    GradedAnswer, LearnerEvent, LearnerProfile, Level, ReviewCard, policy, schedule,
+};
 
 /// Errors surfaced by the core and by port implementations.
 #[derive(Debug, thiserror::Error)]

@@ -14,13 +14,13 @@ fn session(w: &SpecWorld) -> &Session {
 }
 
 fn formats(s: &Session) -> Vec<QuestionFormat> {
-    s.questions.iter().map(|q| q.body.format()).collect()
+    s.questions().iter().map(|q| q.body.format()).collect()
 }
 
 #[then(regex = r"^every question in the session is (multiple-choice|open)$")]
 fn every_question(w: &mut SpecWorld, f: String) {
     let s = session(w);
-    assert!(!s.questions.is_empty(), "the session asks nothing");
+    assert!(!s.questions().is_empty(), "the session asks nothing");
     let want = format(&f);
     assert!(
         formats(s).iter().all(|g| *g == want),
@@ -52,8 +52,10 @@ fn mixes(w: &mut SpecWorld) {
 fn follow_policy(w: &mut SpecWorld, lvl: String) {
     let lvl = level(&lvl);
     let s = session(w);
-    assert!(!s.questions.is_empty(), "the session asks nothing");
-    let want: Vec<_> = (0..s.questions.len()).map(|i| format_for(lvl, i)).collect();
+    assert!(!s.questions().is_empty(), "the session asks nothing");
+    let want: Vec<_> = (0..s.questions().len())
+        .map(|i| format_for(lvl, i))
+        .collect();
     assert_eq!(formats(s), want, "formats for a {lvl:?} author");
 }
 
@@ -119,5 +121,5 @@ fn recomputed(w: &mut SpecWorld, expect: String) {
 async fn outcome_level(w: &mut SpecWorld, id: String) {
     let p = w.profile(&author(&id)).await;
     let outcome = w.outcome.as_ref().expect("no session submitted");
-    assert_eq!(outcome.level_after, p.level);
+    assert_eq!(outcome.level_after, p.level());
 }
