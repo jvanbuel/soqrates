@@ -15,8 +15,12 @@ pub const DEMOTE_AFTER: usize = 3;
 /// author at `level` (ADR-0002 D5): Novice always multiple choice; Expert
 /// always open; Intermediate multiple choice on even and open on odd indices.
 pub fn format_for(level: Level, index: usize) -> QuestionFormat {
-    let _ = (level, index);
-    todo!("ADR-0002 D5")
+    match level {
+        Level::Novice => QuestionFormat::MultipleChoice,
+        Level::Intermediate if index.is_multiple_of(2) => QuestionFormat::MultipleChoice,
+        Level::Intermediate => QuestionFormat::Open,
+        Level::Expert => QuestionFormat::Open,
+    }
 }
 
 /// The level after `recent` (the reviews since the last level change,
@@ -25,6 +29,24 @@ pub fn format_for(level: Level, index: usize) -> QuestionFormat {
 /// [`DEMOTE_AFTER`] trailing incorrect ones, and stays within
 /// Novice..=Expert.
 pub fn next_level(current: Level, recent: &[GradedAnswer]) -> Level {
-    let _ = (current, recent);
-    todo!("ADR-0002 D4")
+    let trailing = |correct: bool| {
+        recent
+            .iter()
+            .rev()
+            .take_while(|r| r.grade.is_correct() == correct)
+            .count()
+    };
+    if trailing(true) >= PROMOTE_AFTER {
+        match current {
+            Level::Novice => Level::Intermediate,
+            Level::Intermediate | Level::Expert => Level::Expert,
+        }
+    } else if trailing(false) >= DEMOTE_AFTER {
+        match current {
+            Level::Expert => Level::Intermediate,
+            Level::Intermediate | Level::Novice => Level::Novice,
+        }
+    } else {
+        current
+    }
 }

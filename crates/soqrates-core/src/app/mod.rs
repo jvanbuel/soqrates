@@ -7,4 +7,4 @@ pub mod events;
 pub mod hook;
 pub mod ports;
 
-pub use engine::{Config, SessionOutcome, Soqrates};
+pub use engine::{Config, ProfileLocation, SessionOutcome, Soqrates};

@@ -15,12 +15,26 @@ impl Diff {
     }
 }
 
+/// Whether a concept is general technology knowledge or specific to one
+/// organisation's code (ADR-0003 D5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum ConceptScope {
+    /// e.g. `rust.async.cancellation`. May be stored in a learner store
+    /// shared across organisations.
+    General,
+    /// Specific to one organisation's code. Never leaves that organisation,
+    /// and never becomes `General`. The safe default.
+    #[default]
+    Project,
+}
+
 /// One idea that a change exercises. The unit of learning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Concept {
     pub id: ConceptId,
     pub title: String,
     pub summary: String,
+    pub scope: ConceptScope,
 }
 
 /// The shape of a question (ADR-0001 D7, ADR-0002 D5).
@@ -59,6 +73,9 @@ impl QuestionBody {
 pub struct Question {
     pub id: QuestionId,
     pub concept: ConceptId,
+    /// The scope of `concept`, which decides where its review is stored
+    /// (ADR-0003 D5).
+    pub scope: ConceptScope,
     pub body: QuestionBody,
 }
 

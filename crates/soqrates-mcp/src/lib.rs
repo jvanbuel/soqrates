@@ -2,7 +2,12 @@
 
 /// Names of the MCP tools this server exposes. ADR-0001 D10 fixes this set.
 pub fn tool_names() -> Vec<&'static str> {
-    todo!("ADR-0001 D10")
+    vec![
+        "start_session",
+        "submit_answers",
+        "get_learner_profile",
+        "due_reviews",
+    ]
 }
 
 /// Serve MCP over stdio.

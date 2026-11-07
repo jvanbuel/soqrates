@@ -5,9 +5,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::Result;
-use crate::assessment::{Diff, Grade, Question};
-use crate::ids::{AuthorId, QuestionId, SessionKey};
+use crate::assessment::{Answer, Diff, Grade, Question};
+use crate::{Error, Result};
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::ids::{AuthorId, Identity, QuestionId, SessionKey};
 
 /// Whether a failed session blocks (ADR-0001 D8, D9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -63,8 +65,27 @@ impl Session {
         max_questions: usize,
         at: DateTime<Utc>,
     ) -> Result<Self> {
-        let _ = (key, author, questions, max_questions, at);
-        todo!("ADR-0002 D6")
+        if questions.len() > max_questions {
+            return Err(Error::Invalid(format!(
+                "a session holds at most {max_questions} questions, got {}",
+                questions.len()
+            )));
+        }
+        let mut concepts = BTreeSet::new();
+        for q in &questions {
+            if !concepts.insert(&q.concept) {
+                return Err(Error::Invalid(format!(
+                    "two questions about concept {:?}",
+                    q.concept.0
+                )));
+            }
+        }
+        Ok(Self {
+            key,
+            author,
+            questions,
+            created_at: at,
+        })
     }
 
     pub fn key(&self) -> &SessionKey {
@@ -85,9 +106,23 @@ impl Session {
 
     /// Check that `answers` refer to questions in this session, at most one
     /// per question. Fails with `Invalid` otherwise (ADR-0002 D6).
-    pub fn validate_answers(&self, answers: &[crate::assessment::Answer]) -> Result<()> {
-        let _ = answers;
-        todo!("ADR-0002 D6")
+    pub fn validate_answers(&self, answers: &[Answer]) -> Result<()> {
+        let mut seen = BTreeSet::new();
+        for a in answers {
+            if !self.questions.iter().any(|q| q.id == a.question) {
+                return Err(Error::Invalid(format!(
+                    "answer to unknown question {:?}",
+                    a.question.0
+                )));
+            }
+            if !seen.insert(&a.question) {
+                return Err(Error::Invalid(format!(
+                    "two answers to question {:?}",
+                    a.question.0
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Grade the session with the examiner's `grades`. Questions missing from
@@ -100,8 +135,32 @@ impl Session {
         pass_threshold: f64,
         at: DateTime<Utc>,
     ) -> SessionResult {
-        let _ = (grades, pass_threshold, at);
-        todo!("ADR-0002 D6/D7")
+        let grades: Vec<(QuestionId, Grade)> = self
+            .questions
+            .iter()
+            .map(|q| {
+                let grade = grades
+                    .iter()
+                    .find(|(id, _)| id == &q.id)
+                    .map_or(Grade::Again, |(_, g)| *g);
+                (q.id.clone(), grade)
+            })
+            .collect();
+        let total = grades.len();
+        let correct = grades.iter().filter(|(_, g)| g.is_correct()).count();
+        let passed = total == 0 || correct as f64 >= pass_threshold * total as f64;
+        SessionResult {
+            grades,
+            passed,
+            event: SessionEvent::SessionGraded {
+                key: self.key,
+                author: self.author,
+                correct,
+                total,
+                passed,
+                at,
+            },
+        }
     }
 }
 
@@ -145,4 +204,18 @@ pub enum HookKind {
 pub enum HookDecision {
     Allow,
     Block,
+}
+
+/// The identity a local hook acts as (ADR-0003 D7): the identity configured
+/// for the repository's remote host if there is one, otherwise the commit
+/// e-mail as an unverified identity.
+pub fn local_identity(
+    remote_host: Option<&str>,
+    commit_email: &str,
+    configured: &BTreeMap<String, Identity>,
+) -> Identity {
+    remote_host
+        .and_then(|host| configured.get(host))
+        .cloned()
+        .unwrap_or_else(|| Identity::Email(commit_email.to_string()))
 }

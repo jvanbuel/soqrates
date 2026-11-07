@@ -26,15 +26,22 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 
 | Term | Code | Context | Meaning | Avoid |
 |---|---|---|---|---|
-| Author | `AuthorId` | shared | The person who made a change and is being quizzed. Identified by a forge user ID or e-mail. | user, student, developer |
+| Author | `AuthorId` | shared | The identity behind a change (ADR-0003). Its text form is an identity, e.g. `github.com:1001`. | student, developer |
+| Learner | `LearnerId` | shared | The person behind one or more identities. Owns exactly one learner profile (ADR-0003). | user |
+| Identity | `Identity` | shared | One way a learner shows up: an account on one forge (host plus immutable account ID, e.g. `github.com:1001`) or an e-mail address (`email:<address>`). Usernames are not identities. | alias, login |
+| Verification | `Verification` | shared | Whether the forge vouches for an identity. Forge accounts are verified; a commit e-mail on its own is not. | |
+| Link | `IdentityLink` | learner | The fact that an identity belongs to a learner. Every identity has at most one link. | alias |
+| Link code | `LinkCode` | learner | A short-lived, single-use code that proves one person controls two identities. | token, OTP |
+| Learner store | `LearnerStore` | app | The store holding the profiles of linked learners, reachable from several forges. Owned by the learner or by an organisation. | |
 | Change | `Diff` | assessment | The unified diff Soqrates asks about. | |
 | Concept | `Concept` | assessment | One idea that a change exercises, e.g. Rust borrowing. The unit of learning. | topic, skill |
+| Concept scope | `ConceptScope` | assessment | `General` (a technology concept, e.g. `rust.async.cancellation`) or `Project` (specific to one organisation's code, ADR-0003). | |
 | Question | `Question` | assessment | A question about one concept, in one format. | exercise |
 | Format | `QuestionFormat` | assessment | Multiple choice or open. | |
 | Answer | `Answer` | assessment | The author's response to a question. | reply |
 | Grade | `Grade` | assessment | Again (wrong), Hard, Good or Easy. Only Again is incorrect. | score, mark |
 | Examiner | `Examiner` | assessment | Extracts concepts, writes questions and grades answers. An LLM in production. | grader, model |
-| Learner profile | `LearnerProfile` | learner | Everything Soqrates knows about one author. An aggregate. | learner model, account |
+| Learner profile | `LearnerProfile` | learner | Everything Soqrates knows about one learner. An aggregate. | learner model, account |
 | Level | `Level` | learner | Novice, Intermediate or Expert. Drives the format. | rank, skill level |
 | Review card | `ReviewCard` | learner | The FSRS schedule state of one concept for one author. | flashcard |
 | Review | `GradedAnswer` | learner | One graded answer recorded on a profile; it reschedules the card. | attempt |

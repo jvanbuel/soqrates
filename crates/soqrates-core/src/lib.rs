@@ -20,12 +20,13 @@ pub mod learner;
 
 // Short paths for the most used items.
 pub use app::events::DomainEvent;
-pub use app::{Config, SessionOutcome, Soqrates, ci, engine, hook, ports};
+pub use app::{Config, ProfileLocation, SessionOutcome, Soqrates, ci, engine, hook, ports};
 pub use assessment::*;
 pub use delivery::*;
 pub use ids::*;
 pub use learner::{
-    GradedAnswer, LearnerEvent, LearnerProfile, Level, ReviewCard, policy, schedule,
+    GradedAnswer, IdentityLink, LINK_CODE_TTL, LearnerEvent, LearnerProfile, Level, LinkCode,
+    LinkRejection, ReviewCard, identity, policy, schedule,
 };
 
 /// Errors surfaced by the core and by port implementations.
@@ -37,6 +38,9 @@ pub enum Error {
     Invalid(String),
     #[error("port failure: {0}")]
     Port(String),
+    /// A link between identities was refused (ADR-0003 D2).
+    #[error("link rejected: {0}")]
+    Link(#[from] learner::LinkRejection),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

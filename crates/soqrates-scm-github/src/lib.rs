@@ -28,8 +28,8 @@ impl ScmProvider for GitHubProvider {
         let _ = (pr, session);
         todo!("ADR-0001 D4")
     }
-    async fn set_check(&self, pr: &PrRef, status: CheckStatus) -> Result<()> {
-        let _ = (pr, status);
+    async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
+        let _ = (pr, status, summary);
         todo!("ADR-0001 D4")
     }
 }

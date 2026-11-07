@@ -2679,6 +2679,7 @@ dependencies = [
  "chrono",
  "cucumber",
  "regex",
+ "serde_json",
  "soqrates-core",
  "soqrates-mcp",
  "soqrates-store",
@@ -2689,6 +2690,7 @@ dependencies = [
 name = "soqrates-store"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "soqrates-core",
 ]

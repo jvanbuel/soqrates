@@ -11,16 +11,36 @@ use crate::Result;
 use crate::app::engine::SessionOutcome;
 use crate::assessment::{Answer, Concept, Diff, Grade, Question, QuestionFormat};
 use crate::delivery::{CheckStatus, PrRef, PullRequest, Session};
-use crate::ids::{AuthorId, SessionKey};
-use crate::learner::LearnerProfile;
+use crate::ids::{Identity, LearnerId, SessionKey};
+use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 
-/// Persists learner profiles and pending sessions (D5).
+/// Persists learner profiles, identity links, link codes and pending
+/// sessions (ADR-0001 D5, ADR-0003).
 pub trait StateStore: Send + Sync {
     fn load_profile(
         &self,
-        author: &AuthorId,
+        learner: &LearnerId,
     ) -> impl Future<Output = Result<Option<LearnerProfile>>> + Send;
     fn save_profile(&self, profile: &LearnerProfile) -> impl Future<Output = Result<()>> + Send;
+    /// Remove the profile and every link of `learner` (ADR-0003 D6).
+    fn delete_learner(&self, learner: &LearnerId) -> impl Future<Output = Result<()>> + Send;
+
+    /// The learner an identity is linked to, if any (ADR-0003 D1).
+    fn learner_of(
+        &self,
+        identity: &Identity,
+    ) -> impl Future<Output = Result<Option<LearnerId>>> + Send;
+    /// Create or replace the link of `link.identity` (at most one per identity).
+    fn save_link(&self, link: &IdentityLink) -> impl Future<Output = Result<()>> + Send;
+    fn delete_link(&self, identity: &Identity) -> impl Future<Output = Result<()>> + Send;
+    fn links_of(
+        &self,
+        learner: &LearnerId,
+    ) -> impl Future<Output = Result<Vec<IdentityLink>>> + Send;
+
+    fn save_link_code(&self, code: &LinkCode) -> impl Future<Output = Result<()>> + Send;
+    fn load_link_code(&self, code: &str) -> impl Future<Output = Result<Option<LinkCode>>> + Send;
+
     fn load_session(
         &self,
         key: &SessionKey,
@@ -28,6 +48,11 @@ pub trait StateStore: Send + Sync {
     fn save_session(&self, session: &Session) -> impl Future<Output = Result<()>> + Send;
     fn delete_session(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
 }
+
+/// The store holding the profiles of linked learners, reachable from several
+/// forges and owned by the learner or by an organisation (ADR-0003 D4). It
+/// stores only general concepts (D5). A port failure means "unreachable".
+pub trait LearnerStore: StateStore {}
 
 /// The LLM-backed part of Soqrates: understands diffs, writes and grades
 /// questions (D3). Implemented by `soqrates-examiner` on top of Rig.
@@ -60,8 +85,14 @@ pub trait ScmProvider: Send + Sync {
         pr: &PrRef,
         session: &Session,
     ) -> impl Future<Output = Result<Option<Vec<Answer>>>> + Send;
-    fn set_check(&self, pr: &PrRef, status: CheckStatus)
-    -> impl Future<Output = Result<()>> + Send;
+    /// Set the check status with a human-readable `summary`. The summary
+    /// never mentions the learner's other identities (ADR-0003 D6).
+    fn set_check(
+        &self,
+        pr: &PrRef,
+        status: CheckStatus,
+        summary: &str,
+    ) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Source of time, so that scheduling is testable (D6, D12).

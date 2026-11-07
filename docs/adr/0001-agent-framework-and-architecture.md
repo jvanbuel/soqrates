@@ -187,6 +187,9 @@ correct answer pushes the next review further out than a wrong one. Concepts
 whose reviews are due are asked again in the author's next session, before
 new concepts and within the session's question budget.
 
+Soqrates uses FSRS's long-term scheduler, without same-day learning steps,
+because reviews happen once per change, not in drills.
+
 ### D7: Question format adapts to the author's level
 **Enforcement:** automated
 

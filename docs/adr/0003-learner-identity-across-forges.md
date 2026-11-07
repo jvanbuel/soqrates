@@ -1,6 +1,6 @@
 # ADR-0003: Learner identity across forges
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-07
 - **Refines:** ADR-0001 D5 (state keyed by author), ADR-0002 (glossary,
   `LearnerProfile`)
@@ -40,18 +40,9 @@ Three forces make this more than a lookup table:
 
 ## Glossary additions
 
-When this ADR is accepted, these rows move into the ADR-0002 glossary, and
-"Author" is narrowed to the identity behind a change.
-
-| Term | Code | Context | Meaning | Avoid |
-|---|---|---|---|---|
-| Learner | `LearnerId` | shared | The person behind one or more identities. Owns exactly one learner profile. | user, person |
-| Identity | `Identity` | shared | One way a learner shows up: an account on one forge, identified by the forge's host and its immutable account ID, or an e-mail address. | alias, login, username |
-| Verified identity | `Identity::is_verified` | shared | An identity the forge vouches for (a forge account, or an e-mail the forge has verified). A commit e-mail on its own is unverified. | |
-| Link | `IdentityLink` | learner | The fact that an identity belongs to a learner. Every identity has at most one link. | merge, alias |
-| Link code | `LinkCode` | learner | A short-lived, single-use code that proves one person controls two identities. | token, OTP |
-| Learner store | `LearnerStore` | app | A `StateStore` reachable from several forges, which holds the profiles of linked learners. | |
-| Concept scope | `ConceptScope` | assessment | `General` (a technology concept, e.g. `rust.async.cancellation`) or `Project` (specific to one organisation's code). | |
+This ADR adds the terms Learner, Identity, Verification, Link, Link code,
+Learner store and Concept scope to the [ADR-0002 glossary](0002-domain-model.md#glossary),
+and narrows "Author" to the identity behind a change.
 
 ## Decisions
 
@@ -86,14 +77,20 @@ usernames or display names never links them. An unverified identity can be
 the second half of a learner-initiated link only, because presenting the
 code from it is the proof.
 
-An identity has at most one link. Linking an identity that already belongs
-to another learner is rejected; the learner must unlink it first.
+An identity has at most one link. Because every identity gets a learner
+when it is first seen (D1), linking works like this:
+
+- If the identity is the only identity of its learner, that learner is
+  merged into the other one (D3).
+- If its learner has other identities too, the link is rejected. The
+  identity must be unlinked first.
 
 ### D3: Linking merges by replaying reviews
 **Enforcement:** automated
 
 When two learners are linked into one, their reviews are merged in time
-order and replayed through `LearnerProfile::record` (ADR-0002 D3). The
+order and replayed through `LearnerProfile::record` (ADR-0002 D3),
+starting from the lower of the two declared starting levels. The
 resulting review cards and level are exactly what they would have been if
 every review had happened on one profile. This decision reuses the domain
 rules; it does not add merge rules of its own.
@@ -107,8 +104,15 @@ link.
 
 Identities are resolved through the `StateStore`. Profiles of linked
 learners live in a learner store that the CI of each linked forge (and the
-local hooks) are configured to use, for example a hosted store or a
-repository owned by the learner. Where a forge's CI cannot reach the
+local hooks) are configured to use. Who owns the learner store is a
+deployment choice, and Soqrates supports both:
+
+- **Per learner:** the learner owns it, for example a private repository
+  or a personal hosted space, and keeps it when they change employer.
+- **Per organisation:** an organisation, such as a consultancy, runs one
+  learner store for its people.
+
+The domain does not depend on the choice. Where a forge's CI cannot reach the
 learner store, Soqrates falls back to a profile local to that forge, says
 so in the check output, and never fails the check because of it.
 
@@ -122,6 +126,9 @@ the organisation whose code they came from. The learner store never
 contains repository names, diffs, question text, answers or PR references.
 It holds concept IDs, grades, formats, timestamps and the identity each
 review came through, and nothing else.
+
+A `Project` concept is never reclassified as `General`, not even when an
+engagement ends.
 
 ### D6: The learner is in control
 **Enforcement:** automated
@@ -156,11 +163,9 @@ their configured identities are linked.
 - Supersedes ADR-0001 D5's "keyed by a stable `AuthorId`": the key is now
   `LearnerId`, and `AuthorId` becomes an `Identity`.
 
-## Open questions
+## Resolved questions
 
-- Which hosted option serves as the learner store for consultancies: one
-  per consultancy, or one per learner, with the learner able to take it
-  with them when they leave? The decisions above work for either.
-- Should a learner be able to keep a project concept when the engagement
-  ends, by having it reclassified as general? That would need the
-  organisation's consent.
+- *Who owns the learner store?* Either the learner or an organisation,
+  configurable per deployment (D4).
+- *Can a project concept be kept after an engagement by reclassifying it?*
+  No, never (D5).
