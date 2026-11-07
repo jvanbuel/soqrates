@@ -89,7 +89,9 @@ pub trait Examiner: Send + Sync {
 /// A forge/CI provider (D4). Implemented by `soqrates-scm-github` and friends.
 pub trait ScmProvider: Send + Sync {
     fn pull_request(&self, pr: &PrRef) -> impl Future<Output = Result<PullRequest>> + Send;
-    /// Post the session's questions on the PR, e.g. as a comment.
+    /// Post the session's questions on the PR, e.g. as a comment. A session
+    /// without questions is posted too, saying there is nothing to answer
+    /// (ADR-0004 D7).
     fn post_questions(
         &self,
         pr: &PrRef,
@@ -109,6 +111,27 @@ pub trait ScmProvider: Send + Sync {
         pr: &PrRef,
         session: &Session,
         outcome: &SessionOutcome,
+    ) -> impl Future<Output = Result<()>> + Send;
+    /// The sessions whose question comments on `pr` still take answers
+    /// although a newer push superseded them: posted by the same account as
+    /// `current`'s question comment, for another session, and neither graded
+    /// nor superseded yet (ADR-0004 D7). Empty when `current` has no question
+    /// comment.
+    fn superseded_questions(
+        &self,
+        pr: &PrRef,
+        current: &Session,
+    ) -> impl Future<Output = Result<Vec<SessionKey>>> + Send;
+    /// Freeze the question comment of `superseded`: say a newer push
+    /// superseded it, point to `current`'s question comment, and show
+    /// `session`'s questions collapsed, without boxes (ADR-0004 D7).
+    /// `session` is `None` when the superseded session is no longer stored.
+    fn supersede_questions(
+        &self,
+        pr: &PrRef,
+        superseded: &SessionKey,
+        session: Option<&Session>,
+        current: &Session,
     ) -> impl Future<Output = Result<()>> + Send;
     /// Set the check status with a human-readable `summary`. The summary
     /// never mentions the learner's other identities (ADR-0003 D6).

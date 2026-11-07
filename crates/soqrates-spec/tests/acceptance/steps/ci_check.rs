@@ -128,11 +128,16 @@ fn replies_table(w: &mut SpecWorld, step: &Step) {
     w.scm.reply(s.key(), answers);
 }
 
+#[given(regex = r#"^the author pushes head "([^"]+)" touching (.+)$"#)]
 #[when(regex = r#"^the author pushes head "([^"]+)" touching (.+)$"#)]
 fn pushes(w: &mut SpecWorld, head: String, list: String) {
     let mut pr = w.scm.pull_request_now(w.current_pr());
     pr.head_sha = head;
-    pr.diff = diff_touching(&quoted(&list));
+    pr.diff = if list == "nothing" {
+        diff_touching(&[])
+    } else {
+        diff_touching(&quoted(&list))
+    };
     w.scm.open(pr);
 }
 
@@ -217,4 +222,89 @@ fn key_per_pr(w: &mut SpecWorld, repo_a: String, a: u64, repo_b: String, b: u64)
         ..pr.clone()
     };
     assert_ne!(session_key(&on(&repo_a, a)), session_key(&on(&repo_b, b)));
+}
+
+// --- superseded question comments (ADR-0004 D7) ---------------------------
+
+fn key_at(w: &SpecWorld, head: &str) -> soqrates_core::SessionKey {
+    let mut pr = w.scm.pull_request_now(w.current_pr());
+    pr.head_sha = head.to_string();
+    session_key(&pr)
+}
+
+#[given("freezing superseded question comments fails once")]
+fn supersede_fails_once(w: &mut SpecWorld) {
+    w.scm.state.lock().unwrap().fail_next_supersede = true;
+}
+
+#[when(regex = r#"^the author answers the questions for head "([^"]+)" correctly$"#)]
+fn answers_old_head(w: &mut SpecWorld, head: String) {
+    let key = key_at(w, &head);
+    let s = w
+        .scm
+        .posted_on(w.current_pr())
+        .into_iter()
+        .find(|s| *s.key() == key)
+        .unwrap_or_else(|| panic!("no questions were posted for head {head:?}"));
+    let answers = s
+        .questions()
+        .iter()
+        .map(|q| FakeExaminer::answer(q, true))
+        .collect();
+    w.scm.reply(&key, answers);
+}
+
+#[then(regex = r#"^the question comment for head "([^"]+)" was marked superseded (\d+) times?$"#)]
+fn superseded_times(w: &mut SpecWorld, head: String, n: usize) {
+    let key = key_at(w, &head);
+    let marked = w
+        .scm
+        .superseded_on(w.current_pr())
+        .into_iter()
+        .filter(|(k, ..)| *k == key)
+        .count();
+    assert_eq!(marked, n);
+}
+
+#[then("it points to the question comment for the current head and shows its own questions")]
+fn superseded_points_to_current(w: &mut SpecWorld) {
+    let pr = w.scm.pull_request_now(w.current_pr());
+    let (old, shown, newer) = w
+        .scm
+        .superseded_on(w.current_pr())
+        .pop()
+        .expect("no question comment was marked superseded");
+    assert_eq!(newer, session_key(&pr));
+    let posted = w
+        .scm
+        .posted_on(w.current_pr())
+        .into_iter()
+        .find(|s| *s.key() == old)
+        .expect("the superseded session was posted");
+    let shown = shown.expect("the superseded session's questions are shown");
+    assert_eq!(shown.questions(), posted.questions());
+}
+
+#[then("no question comment was marked superseded")]
+fn none_superseded(w: &mut SpecWorld) {
+    assert_eq!(w.scm.superseded_on(w.current_pr()), vec![]);
+}
+
+#[then(regex = r#"^(a|no) pending session is stored for head "([^"]+)"$"#)]
+async fn pending_at_head(w: &mut SpecWorld, which: String, head: String) {
+    let key = key_at(w, &head);
+    let stored = w
+        .app
+        .store
+        .load_session(&key)
+        .await
+        .expect("load_session")
+        .is_some();
+    assert_eq!(stored, which == "a", "pending session for head {head:?}");
+}
+
+#[then("the latest posted session is for the current head and asks nothing")]
+fn posted_empty_for_head(w: &mut SpecWorld) {
+    posted_for_head(w);
+    assert_eq!(latest_posted(w).questions(), &[]);
 }

@@ -95,12 +95,33 @@ After a local hook session, the terminal shows:
 - when each concept is next due for review;
 - the learner's level.
 
+### D7: A newer push freezes earlier question comments
+**Enforcement:** automated
+
+Each push starts a new session with its own question comment (ADR-0001
+D8), and only the newest one counts. When the check runs for a head, every
+earlier question comment on the PR that was never graded is edited to say
+a newer commit superseded it. It links the new question comment and shows
+its own questions collapsed, without boxes, as a graded comment does (D5). The
+superseded sessions are discarded, so answers to them are never graded.
+Graded comments stay as they are.
+
+Only comments posted by the same account as the current question comment,
+and only sessions of the same PR, are touched, so copying a marker into
+another comment can't make Soqrates rewrite it. A failed edit is retried by
+the next run.
+
+A push that asks no questions still gets a short comment, with no boxes,
+saying there is nothing to answer, and the earlier comments link to it.
+Otherwise an earlier comment would stay live, and answers to it would be
+silently ignored.
+
 ## Consequences
 
 - The examiner's output grows: an explanation per multiple-choice
   question, and feedback per graded open answer.
 - `Examiner::grade` returns a grade with feedback, and `ScmProvider`
-  gains `post_results`.
+  gains `post_results`, `superseded_questions` and `supersede_questions`.
 - The dogfooding workflow also runs on `issue_comment.edited` for comments
   that carry a Soqrates marker.
 - Authors without write access answer every question by comment.

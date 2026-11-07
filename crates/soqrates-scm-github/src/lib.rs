@@ -6,7 +6,8 @@
 //! ticking "Grade my answers", or answers with a `/soqrates answer` comment
 //! (ADR-0001 D8, ADR-0004 D3). Boxes count only when GraphQL reports the PR
 //! author as the comment's last editor. Results are posted as a new comment
-//! and the question comment is frozen (ADR-0004 D5). The
+//! and the question comment is frozen (ADR-0004 D5). A newer push freezes
+//! the earlier question comments that were never graded (D7). The
 //! check is reported as a commit status with context `soqrates`, which works
 //! with the Actions `GITHUB_TOKEN` given `statuses: write`. Authors are
 //! identified by host and numeric user id, never by login (ADR-0003 D1).
@@ -20,13 +21,15 @@ use octocrab::Octocrab;
 use octocrab::models::issues::Comment;
 use soqrates_core::ports::ScmProvider;
 use soqrates_core::{
-    Answer, AuthorId, CheckStatus, Diff, Error, PrRef, PullRequest, Result, Session, SessionOutcome,
+    Answer, AuthorId, CheckStatus, Diff, Error, PrRef, PullRequest, Result, Session, SessionKey,
+    SessionOutcome,
 };
 
 use crate::format::{
     EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, commit_status, editor_database_id,
-    graphql_base, host_of, merge_answers, parse_answers, parse_checkboxes, render_graded_questions,
-    render_questions, render_results, select_answer_comment, session_marker, split_repo,
+    graphql_base, host_of, marker_key, merge_answers, parse_answers, parse_checkboxes,
+    render_graded_questions, render_questions, render_results, render_superseded_questions,
+    select_answer_comment, session_marker, split_repo, takes_answers,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -166,6 +169,18 @@ impl GitHubProvider {
             .map_err(port("query comment editor"))?;
         Ok(editor_database_id(&data).map(|id| self.author(id)))
     }
+
+    /// Replace the body of the comment `id`.
+    async fn edit_comment(&self, pr: &PrRef, id: u64, body: String, what: &str) -> Result<()> {
+        let (owner, name) = repo(pr)?;
+        let route = format!("/repos/{owner}/{name}/issues/comments/{id}");
+        let _: Comment = self
+            .client()?
+            .patch(route, Some(&serde_json::json!({ "body": body })))
+            .await
+            .map_err(port(what))?;
+        Ok(())
+    }
 }
 
 /// The question comment of a session: the first comment carrying its marker.
@@ -282,14 +297,70 @@ impl ScmProvider for GitHubProvider {
         // Then freeze the question comment, so its boxes can't be ticked.
         let comments = self.comments(pr).await?;
         if let Some(question) = question_comment(&comments, &session_marker(session.key())) {
-            let route = format!("/repos/{owner}/{name}/issues/comments/{}", question.id);
-            let body = serde_json::json!({
-                "body": render_graded_questions(session, &outcome.results),
-            });
-            let _: Comment = client
-                .patch(route, Some(&body))
-                .await
-                .map_err(port("mark question comment graded"))?;
+            self.edit_comment(
+                pr,
+                question.id.into_inner(),
+                render_graded_questions(session, &outcome.results),
+                "mark question comment graded",
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn superseded_questions(&self, pr: &PrRef, current: &Session) -> Result<Vec<SessionKey>> {
+        let comments = self.comments(pr).await?;
+        let Some(ours) = question_comment(&comments, &session_marker(current.key())) else {
+            return Ok(Vec::new());
+        };
+        // Only comments posted by the account that posts Soqrates' questions,
+        // so nobody can have another comment rewritten by copying a marker.
+        let poster = ours.user.id;
+        let mut keys: Vec<SessionKey> = Vec::new();
+        for c in comments.iter().filter(|c| c.user.id == poster) {
+            let body = c.body.as_deref().unwrap_or_default();
+            if let Some(key) = marker_key(body)
+                && key != *current.key()
+                && takes_answers(body)
+                && !keys.contains(&key)
+            {
+                keys.push(key);
+            }
+        }
+        Ok(keys)
+    }
+
+    async fn supersede_questions(
+        &self,
+        pr: &PrRef,
+        superseded: &SessionKey,
+        session: Option<&Session>,
+        current: &Session,
+    ) -> Result<()> {
+        let comments = self.comments(pr).await?;
+        let Some(ours) = question_comment(&comments, &session_marker(current.key())) else {
+            return Ok(());
+        };
+        let old = comments.iter().filter(|c| {
+            c.user.id == ours.user.id
+                && c.body
+                    .as_deref()
+                    .is_some_and(|b| marker_key(b).as_ref() == Some(superseded) && takes_answers(b))
+        });
+        let body = render_superseded_questions(
+            superseded,
+            session,
+            Some(ours.html_url.as_str()),
+            !current.questions().is_empty(),
+        );
+        for c in old {
+            self.edit_comment(
+                pr,
+                c.id.into_inner(),
+                body.clone(),
+                "mark question comment superseded",
+            )
+            .await?;
         }
         Ok(())
     }
