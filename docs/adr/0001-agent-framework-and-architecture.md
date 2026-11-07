@@ -252,10 +252,12 @@ retention over repeated sessions. Evals run on every PR that touches prompts
 or the core.
 
 ### D14: Soqrates is dogfooded
-**Enforcement:** manual. This needs D8 to be implemented first.
+**Enforcement:** automated
 
-Soqrates runs as a PR check on its own repository, in `Advisory` mode at
-first.
+Soqrates runs as a PR check on its own repository
+(`.github/workflows/soqrates.yml`), in `Advisory` mode at first. Learner
+state is kept on the `soqrates-state` branch, and runs are serialised so
+that state updates never race.
 
 ### D15: ADRs are executable
 **Enforcement:** automated

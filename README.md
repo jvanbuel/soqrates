@@ -6,7 +6,47 @@ repetition, so that changes don't pile up cognitive debt. It runs as a PR
 check in CI, as a git `pre-commit` / jj `pre-push` hook, or inside your own
 agent harness through its skills and MCP server.
 
-> Status: architecture skeleton. Behaviour is specified, not yet implemented.
+> Status: early. The domain is implemented and specified by 200+ executable
+> scenarios. Soqrates checks its own pull requests (advisory).
+
+## Using it
+
+```sh
+cargo install --path crates/soqrates-cli      # installs `soqrates`
+export ANTHROPIC_API_KEY=...                  # or SOQRATES_MODEL=ollama:<model>
+
+soqrates install-hook                         # git: quiz yourself on each commit
+soqrates hook pre-push                        # jj: run before `jj git push`
+soqrates identity use github.com:<your id>    # identity for repos on that forge
+soqrates mcp                                  # MCP server for other harnesses
+```
+
+Configuration lives in `~/.config/soqrates/config.toml`, overlaid by
+`.soqrates.toml` in the repository:
+
+```toml
+model = "anthropic:claude-sonnet-5-5"
+mode = "advisory"          # or "blocking"
+max_questions = 3
+[identities]
+"github.com" = "github.com:1001"
+```
+
+### As a PR check
+
+[`.github/workflows/soqrates.yml`](.github/workflows/soqrates.yml) runs
+`soqrates ci` on every PR. It posts questions as a PR comment, and the PR
+author answers with a comment:
+
+```
+/soqrates answer
+1. b
+2. Your answer in your own words
+```
+
+It needs an `ANTHROPIC_API_KEY` repository secret, and keeps learner state
+on the `soqrates-state` branch. Anyone who can read the repository can read
+that branch, including what each author got wrong.
 
 ## Architecture
 

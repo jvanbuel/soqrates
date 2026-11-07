@@ -602,6 +602,38 @@ fn aggregates_protect_their_state() {
 }
 
 // ---------------------------------------------------------------------------
+// D14: dogfooding
+
+// @adr-0001-d14
+#[test]
+fn soqrates_checks_its_own_pull_requests_in_advisory_mode() {
+    let workflow = read(workspace_root().join(".github/workflows/soqrates.yml"));
+    for (needle, why) in [
+        ("pull_request:", "runs on pull requests"),
+        ("soqrates ci", "runs the CI check"),
+        ("--mode advisory", "starts in advisory mode"),
+        (
+            "soqrates-state",
+            "keeps learner state on the soqrates-state branch",
+        ),
+        (
+            "cancel-in-progress: false",
+            "serialises runs so state updates never race",
+        ),
+    ] {
+        assert!(
+            workflow.contains(needle),
+            "ADR-0001 D14: the workflow {why} (`{needle}`)"
+        );
+    }
+    let project = read(workspace_root().join(".soqrates.toml"));
+    assert!(
+        project.contains(r#"mode = "advisory""#),
+        "ADR-0001 D14: .soqrates.toml keeps dogfooding advisory"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // D15: ADRs are executable (traceability)
 
 #[derive(Debug)]
