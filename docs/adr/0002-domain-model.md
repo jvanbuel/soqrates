@@ -153,6 +153,18 @@ This defines the "mix" from ADR-0001 D7 (gap G3). The `i`-th question
 - A session passes if the fraction of correct grades is at least
   `pass_threshold`. An empty session passes.
 
+How "at most once" is achieved: submitting claims the session atomically
+(`StateStore::take_session`), so of concurrent submissions exactly one
+grades it. Grading writes the graded record and the profiles; if any write
+fails, all of them are rolled back and the session is given back.
+
+**Known limitation.** The rollback is best effort. A store failure during
+rollback, or a crash between the writes, can leave partial state: a lost
+session, or a graded record without its reviews. Closing this needs
+durable multi-write atomicity, such as a write-ahead grading journal
+recovered at the start of each run. It is deferred: CI runs are serialised,
+and the stores have no transactions.
+
 ### D7: Domain events
 **Enforcement:** automated
 
