@@ -1,0 +1,62 @@
+{
+  "key": "jvanbuel/soqrates#10@5fceab20da0d5ea2d0c25d48fa4057cb837a242b",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github.actions.composite-action/mc",
+      "concept": "github.actions.composite-action",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A team packages its code-review tool as a composite GitHub Action (an action.yml with inputs and steps) and wants it to run on every pull request in repositories that adopt it. What must the adopting repositories do for this to work?",
+          "options": [
+            "Add a `triggers:` input to the action so callers can pass the event names it should listen to",
+            "Nothing more is needed, because publishing the action to the repository makes GitHub run it on every push automatically",
+            "Add a workflow file in each consuming repo that declares the triggers (and any job-level `if:`) and calls the action with `uses:`",
+            "Add an `on: pull_request` block to action.yml so the action runs automatically whenever it is installed in a repository"
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "A composite action only defines inputs and steps, so it has no way to declare triggers or job-level conditions. Consumers must keep a workflow file with an `on:` section and call the action via `uses:`. The tempting belief that action.yml can carry its own `on:` triggers is wrong, since triggers belong only to workflow files."
+    },
+    {
+      "id": "github.actions.token-permissions-and-app-identity/mc",
+      "concept": "github.actions.token-permissions-and-app-identity",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow uses the default workflow token (GITHUB_TOKEN) to create a branch with generated changes and push it, then posts a comment about it. The repository's default token permissions are read-only and the workflow file has no `permissions:` block. What is the most likely outcome, and why?",
+          "options": [
+            "The push succeeds, because the workflow token always has write access to the repository contents, and only the comment would fail",
+            "The push is rejected with a permission error, because the token lacks contents write unless the workflow or repository settings grant it",
+            "The push fails because the workflow token cannot push at all; a personal access token is the only way to push from a workflow",
+            "The push succeeds but is silently queued until a maintainer approves it in the Actions tab"
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "The default workflow token only gets the permissions the workflow grants it, and pushing a branch requires contents write. Without that explicit grant the push is rejected, and adding more secrets or swapping to an app identity does not address a missing permission on the token itself."
+    },
+    {
+      "id": "security.ci.untrusted-code-and-secrets/mc",
+      "concept": "security.ci.untrusted-code-and-secrets",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow holds an API secret and needs to analyze the contents of pull requests, including those from forks. The author chose to read the diff through the platform API rather than checking out the PR branch and running tooling on it. What is the main security reason for this design?",
+          "options": [
+            "A malicious fork could modify build scripts, tests, or dependencies in its branch, and checking out and running that code would execute it in a job that has access to the secrets.",
+            "Secrets are automatically masked in logs, so checking out PR code would only be a problem if the workflow printed them in plain text.",
+            "The API returns a more compact diff than git, so the workflow finishes faster and uses less runner time.",
+            "Checking out a fork's code is blocked by the CI platform, so reading via the API is the only way to access PR content.",
+            "Checking out the PR branch would cause the workflow's secrets to be written into the repository history of the fork."
+          ],
+          "correct": 0
+        }
+      },
+      "explanation": "If the workflow checked out and ran the PR head, the attacker's code would execute in a job that has access to secrets and could exfiltrate them. Fetching the diff through the API treats the PR as inert data, so nothing the contributor wrote ever runs with those secrets; limiting log output or requiring review does not remove that execution path."
+    }
+  ],
+  "created_at": "2026-11-07T17:22:20.870034325Z"
+}
