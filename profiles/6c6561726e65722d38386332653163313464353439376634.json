@@ -3,6 +3,32 @@
   "starting_level": "Novice",
   "level": "Novice",
   "cards": {
+    "github.actions.bot-identity-and-tokens": {
+      "card": {
+        "due": "2026-11-10T21:59:16.462401418Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-07T21:59:16.462401418Z"
+      }
+    },
+    "github.actions.composite-action": {
+      "card": {
+        "due": "2026-11-10T21:59:16.462401418Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-07T21:59:16.462401418Z"
+      }
+    },
     "rust.async.enum-dispatch-trait": {
       "card": {
         "due": "2026-11-10T15:40:54.957182562Z",
@@ -79,6 +105,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-07T12:25:42.551353684Z"
+      }
+    },
+    "security.ci.untrusted-pr-code-and-secrets": {
+      "card": {
+        "due": "2026-11-10T21:59:16.462401418Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-07T21:59:16.462401418Z"
       }
     },
     "soqrates.ci.idempotent-retry-ordering": {
@@ -183,6 +222,27 @@
       "format": "MultipleChoice",
       "grade": "Again",
       "at": "2026-11-07T15:40:54.957182562Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "github.actions.composite-action",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-07T21:59:16.462401418Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "security.ci.untrusted-pr-code-and-secrets",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-07T21:59:16.462401418Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "github.actions.bot-identity-and-tokens",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-07T21:59:16.462401418Z",
       "via": "github.com:16427728"
     }
   ],
