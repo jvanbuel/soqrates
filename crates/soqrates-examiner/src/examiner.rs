@@ -8,8 +8,8 @@ use std::future::Future;
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use soqrates_core::{
-    Answer, AnswerBody, Concept, Diff, Error, Grade, Question, QuestionBody, QuestionFormat,
-    QuestionId, Result,
+    Answer, AnswerBody, Concept, Diff, Error, Grade, Grading, Question, QuestionBody,
+    QuestionFormat, QuestionId, Result,
 };
 
 use crate::output::{self, ConceptsOutput, GradeOutput, MultipleChoiceOutput, OpenOutput};
@@ -91,7 +91,7 @@ impl<L: Llm> Core<L> {
         concept: &Concept,
         format: QuestionFormat,
     ) -> Result<Question> {
-        let body = match format {
+        let (body, explanation) = match format {
             QuestionFormat::MultipleChoice => {
                 let mc = self
                     .structured(
@@ -101,15 +101,18 @@ impl<L: Llm> Core<L> {
                         |out: MultipleChoiceOutput| output::validate_multiple_choice(out),
                     )
                     .await?;
+                // The explanation names options by content, so it survives
+                // the shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
-                QuestionBody::MultipleChoice {
+                let body = QuestionBody::MultipleChoice {
                     prompt: mc.prompt,
                     options: mc.options,
                     correct: mc.correct,
-                }
+                };
+                (body, mc.explanation)
             }
             QuestionFormat::Open => {
-                let (prompt, rubric) = self
+                let open = self
                     .structured(
                         "an open question",
                         prompts::WRITE_OPEN_SYSTEM,
@@ -117,7 +120,11 @@ impl<L: Llm> Core<L> {
                         |out: OpenOutput| output::validate_open(out),
                     )
                     .await?;
-                QuestionBody::Open { prompt, rubric }
+                let body = QuestionBody::Open {
+                    prompt: open.prompt,
+                    rubric: open.rubric,
+                };
+                (body, open.explanation)
             }
         };
         Ok(Question {
@@ -125,26 +132,39 @@ impl<L: Llm> Core<L> {
             concept: concept.id.clone(),
             scope: concept.scope,
             body,
+            explanation,
         })
     }
 
-    pub async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grade> {
+    /// Grade `answer`. Multiple choice is graded without the model and with
+    /// empty feedback, so that the engine shows the question's explanation
+    /// (the presenters show the correct option). An open answer is graded by
+    /// the model, whose rationale becomes the feedback. The question's
+    /// explanation is never sent to the model.
+    pub async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
+        let choice = |grade| Grading {
+            grade,
+            feedback: String::new(),
+        };
         match (&question.body, &answer.body) {
-            (QuestionBody::MultipleChoice { correct, .. }, AnswerBody::Choice(choice)) => {
-                Ok(grade_choice(*choice, *correct))
+            (QuestionBody::MultipleChoice { correct, .. }, AnswerBody::Choice(picked)) => {
+                Ok(choice(grade_choice(*picked, *correct)))
             }
             (
                 QuestionBody::MultipleChoice {
                     options, correct, ..
                 },
                 AnswerBody::Text(text),
-            ) => Ok(match output::parse_letter(text) {
-                Some(choice) if choice < options.len() => grade_choice(choice, *correct),
+            ) => Ok(choice(match output::parse_letter(text) {
+                Some(picked) if picked < options.len() => grade_choice(picked, *correct),
                 _ => Grade::Again,
-            }),
+            })),
             (QuestionBody::Open { prompt, rubric }, AnswerBody::Text(text)) => {
                 if text.trim().is_empty() {
-                    return Ok(Grade::Again);
+                    return Ok(Grading {
+                        grade: Grade::Again,
+                        feedback: NO_ANSWER_FEEDBACK.to_owned(),
+                    });
                 }
                 self.structured(
                     "grading",
@@ -154,10 +174,19 @@ impl<L: Llm> Core<L> {
                 )
                 .await
             }
-            (QuestionBody::Open { .. }, AnswerBody::Choice(_)) => Ok(Grade::Again),
+            (QuestionBody::Open { .. }, AnswerBody::Choice(_)) => Ok(Grading {
+                grade: Grade::Again,
+                feedback: CHOICE_FOR_OPEN_FEEDBACK.to_owned(),
+            }),
         }
     }
 }
+
+/// Feedback for an empty answer to an open question.
+pub(crate) const NO_ANSWER_FEEDBACK: &str = "No answer was given.";
+
+/// Feedback for an option picked in answer to an open question.
+pub(crate) const CHOICE_FOR_OPEN_FEEDBACK: &str = "This question needs a written answer.";
 
 /// `"{concept_id}/{mc|open}"`.
 pub(crate) fn question_id(concept: &Concept, format: QuestionFormat) -> QuestionId {

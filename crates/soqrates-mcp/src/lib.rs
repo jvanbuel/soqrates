@@ -40,8 +40,10 @@
 //! index into the question's `options`) or `text`.
 //!
 //! Result: `{passed: bool, level_after, grades: [{question, grade}],
-//! feedback: [{question, correct_option?}]}`. After grading, the correct
-//! option of each multiple-choice question is revealed in `feedback`.
+//! feedback: [{question, correct, explanation, correct_option?, next_review?}]}`.
+//! After grading, each answer is explained, the correct option of each
+//! multiple-choice question is revealed, and the next review is given
+//! (ADR-0004 D1, D2).
 //!
 //! ## `get_learner_profile`
 //!
@@ -255,28 +257,31 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        // Read the questions before grading removes the session; an unknown
-        // session is reported by `submit` itself.
-        let questions = self
-            .app
-            .pending_session(&key)
-            .await?
-            .map(|s| s.questions().to_vec())
-            .unwrap_or_default();
         let outcome = self.app.submit(&key, &answers).await?;
         let grades: Vec<Value> = outcome
             .grades
             .iter()
             .map(|(q, g)| json!({"question": q.0, "grade": g}))
             .collect();
-        let feedback: Vec<Value> = questions
+        // After grading, explain every answer (ADR-0004 D1). The MCP client
+        // is the learner's own harness, so the next review is included
+        // (ADR-0004 D2).
+        let feedback: Vec<Value> = outcome
+            .results
             .iter()
-            .filter(|q| outcome.grades.iter().any(|(id, _)| id == &q.id))
-            .map(|q| match &q.body {
-                QuestionBody::MultipleChoice { correct, .. } => {
-                    json!({"question": q.id.0, "correct_option": correct})
+            .map(|r| {
+                let mut f = json!({
+                    "question": r.question.0,
+                    "correct": r.is_correct(),
+                    "explanation": r.feedback,
+                });
+                if let Some(correct) = r.correct_option {
+                    f["correct_option"] = json!(correct);
                 }
-                QuestionBody::Open { .. } => json!({"question": q.id.0}),
+                if let Some(due) = r.next_review {
+                    f["next_review"] = json!(due.to_rfc3339());
+                }
+                f
             })
             .collect();
         Ok(json!({
@@ -503,7 +508,7 @@ mod wire {
     //! JSON-RPC, as an MCP client would.
 
     use super::*;
-    use soqrates_core::{Answer, Concept, Grade, Question, QuestionFormat};
+    use soqrates_core::{Answer, Concept, Question, QuestionFormat};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     struct NoExaminer;
@@ -514,7 +519,7 @@ mod wire {
         async fn write_question(&self, _: &Concept, _: QuestionFormat) -> Result<Question> {
             Err(Error::Invalid("no questions".into()))
         }
-        async fn grade(&self, _: &Question, _: &Answer) -> Result<Grade> {
+        async fn grade(&self, _: &Question, _: &Answer) -> Result<soqrates_core::Grading> {
             Err(Error::Invalid("no grading".into()))
         }
     }

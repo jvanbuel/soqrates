@@ -35,14 +35,23 @@ max_questions = 3
 ### As a PR check
 
 [`.github/workflows/soqrates.yml`](.github/workflows/soqrates.yml) runs
-`soqrates ci` on every PR. It posts questions as a PR comment, and the PR
-author answers with a comment:
+`soqrates ci` on every PR and posts the questions as a PR comment
+(ADR-0004):
 
-```
-/soqrates answer
-1. b
-2. Your answer in your own words
-```
+- **Multiple choice:** tick one option per question, then tick
+  **Grade my answers**.
+- **Open questions** (and authors who can't tick boxes) answer with a comment:
+
+  ```
+  /soqrates answer
+  1. b
+  2. Your answer in your own words
+  ```
+
+After grading, Soqrates posts a results comment: ✅/❌ per question, the
+correct option and an explanation. It shows this session only; your level
+and review schedule stay private, shown only in the terminal and the MCP
+client.
 
 It needs an `ANTHROPIC_API_KEY` repository secret, and keeps learner state
 on the `soqrates-state` branch. Anyone who can read the repository can read

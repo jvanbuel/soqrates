@@ -106,27 +106,126 @@ impl Prompter for TtyPrompter {
     }
 
     fn report(&mut self, outcome: &SessionOutcome) {
-        let correct = outcome
-            .grades
-            .iter()
-            .filter(|(_, g)| g.is_correct())
-            .count();
-        let _ = self.say(&format!(
-            "\nSoqrates: {correct} of {} correct, {}. Level: {:?}.\n\n",
-            outcome.grades.len(),
-            if outcome.passed {
-                "passed"
-            } else {
-                "not passed"
-            },
-            outcome.level_after
-        ));
+        let text = render_results(outcome, chrono::Utc::now());
+        let _ = self.say(&text);
     }
+}
+
+/// "today", "tomorrow", "in 3 days" or "in 2 weeks".
+fn when(due: chrono::DateTime<chrono::Utc>, now: chrono::DateTime<chrono::Utc>) -> String {
+    let days = (due - now).num_hours().div_euclid(24).max(0);
+    match days {
+        0 => "today".into(),
+        1 => "tomorrow".into(),
+        2..=13 => format!("in {days} days"),
+        _ => format!("in {} weeks", days / 7),
+    }
+}
+
+/// The results of a graded session for the terminal (ADR-0004 D6): each
+/// question with ✓ or ✗, the correct option, the explanation and the next
+/// review, then the score and level. The terminal is private to the
+/// learner, so the profile data is shown here (ADR-0004 D2).
+pub fn render_results(outcome: &SessionOutcome, now: chrono::DateTime<chrono::Utc>) -> String {
+    let mut out = String::from("\n");
+    for (i, r) in outcome.results.iter().enumerate() {
+        let mark = if r.is_correct() { "✓" } else { "✗" };
+        out.push_str(&format!("{mark} {}. {}\n", i + 1, r.prompt.trim()));
+        match (&r.answer, r.correct_option) {
+            (None, _) => out.push_str("     Not answered.\n"),
+            (Some(AnswerBody::Choice(c)), Some(right)) if *c != right => {
+                let yours = r.options.get(*c).map(String::as_str).unwrap_or("?");
+                out.push_str(&format!("     Your answer: {}. {yours}\n", letter(*c)));
+            }
+            _ => {}
+        }
+        if let Some(right) = r.correct_option
+            && !r.is_correct()
+        {
+            let text = r.options.get(right).map(String::as_str).unwrap_or("?");
+            out.push_str(&format!("     Correct answer: {}. {text}\n", letter(right)));
+        }
+        for line in r.feedback.trim().lines() {
+            out.push_str(&format!("     {line}\n"));
+        }
+        if let Some(due) = r.next_review {
+            out.push_str(&format!("     Next review: {}\n", when(due, now)));
+        }
+        out.push('\n');
+    }
+    let correct = outcome.results.iter().filter(|r| r.is_correct()).count();
+    out.push_str(&format!(
+        "Soqrates: {correct} of {} correct, {}. Level: {:?}.\n\n",
+        outcome.results.len(),
+        if outcome.passed {
+            "passed"
+        } else {
+            "not passed"
+        },
+        outcome.level_after
+    ));
+    out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_choice;
+    use super::{parse_choice, render_results};
+    use chrono::{Duration, TimeZone, Utc};
+    use soqrates_core::{
+        AnswerBody, ConceptId, Grade, Level, ProfileLocation, QuestionId, QuestionResult,
+        SessionOutcome,
+    };
+
+    fn outcome() -> SessionOutcome {
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        let mc = |grade, answer| QuestionResult {
+            question: QuestionId("rust.borrow/mc".into()),
+            concept: ConceptId("rust.borrow".into()),
+            prompt: "When does the borrow end?".into(),
+            options: vec!["At last use".into(), "At end of scope".into()],
+            correct_option: Some(0),
+            answer,
+            grade,
+            feedback: "Non-lexical lifetimes end a borrow at its last use.".into(),
+            next_review: Some(now + Duration::days(3)),
+        };
+        SessionOutcome {
+            grades: vec![],
+            passed: false,
+            level_after: Level::Novice,
+            events: vec![],
+            profile_location: ProfileLocation::LearnerStore,
+            results: vec![
+                mc(Grade::Good, Some(AnswerBody::Choice(0))),
+                mc(Grade::Again, Some(AnswerBody::Choice(1))),
+                mc(Grade::Again, None),
+            ],
+        }
+    }
+
+    // @adr-0004-d6
+    #[test]
+    fn terminal_results_show_verdict_correct_option_explanation_and_next_review() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        let text = render_results(&outcome(), now);
+        assert!(text.contains("✓ 1. When does the borrow end?"), "{text}");
+        assert!(text.contains("✗ 2. When does the borrow end?"), "{text}");
+        assert!(text.contains("Your answer: b. At end of scope"), "{text}");
+        assert!(text.contains("Correct answer: a. At last use"), "{text}");
+        assert!(text.contains("Not answered."), "{text}");
+        assert!(
+            text.contains("Non-lexical lifetimes end a borrow"),
+            "{text}"
+        );
+        assert!(text.contains("Next review: in 3 days"), "{text}");
+        assert!(
+            text.contains("1 of 3 correct, not passed. Level: Novice."),
+            "{text}"
+        );
+        // A correct answer doesn't repeat the correct option.
+        let first = text.split("✗ 2.").next().unwrap();
+        assert!(!first.contains("Correct answer"), "{text}");
+    }
 
     #[test]
     fn choices() {

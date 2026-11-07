@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 
 use crate::Result;
 use crate::app::engine::SessionOutcome;
-use crate::assessment::{Answer, Concept, Diff, Grade, Question, QuestionFormat};
+use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionFormat};
 use crate::delivery::{CheckStatus, GradedSession, PrRef, PullRequest, Session};
 use crate::ids::{Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
@@ -78,11 +78,12 @@ pub trait Examiner: Send + Sync {
         concept: &Concept,
         format: QuestionFormat,
     ) -> impl Future<Output = Result<Question>> + Send;
+    /// Grade `answer` and explain the grade to the author (ADR-0004 D1).
     fn grade(
         &self,
         question: &Question,
         answer: &Answer,
-    ) -> impl Future<Output = Result<Grade>> + Send;
+    ) -> impl Future<Output = Result<Grading>> + Send;
 }
 
 /// A forge/CI provider (D4). Implemented by `soqrates-scm-github` and friends.
@@ -100,6 +101,15 @@ pub trait ScmProvider: Send + Sync {
         pr: &PrRef,
         session: &Session,
     ) -> impl Future<Output = Result<Option<Vec<Answer>>>> + Send;
+    /// Post the per-question results of a graded session and mark the
+    /// question comment as graded (ADR-0004 D1, D2, D5). Shows this
+    /// session's results only, never the learner's profile.
+    fn post_results(
+        &self,
+        pr: &PrRef,
+        session: &Session,
+        outcome: &SessionOutcome,
+    ) -> impl Future<Output = Result<()>> + Send;
     /// Set the check status with a human-readable `summary`. The summary
     /// never mentions the learner's other identities (ADR-0003 D6).
     fn set_check(

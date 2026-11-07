@@ -86,6 +86,7 @@ where
         }
         Some(answers) => {
             let outcome = app.submit(&key, &answers).await?;
+            scm.post_results(pr, &session, &outcome).await?;
             finish(app, scm, pr, &outcome).await
         }
     }

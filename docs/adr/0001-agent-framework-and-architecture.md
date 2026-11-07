@@ -119,8 +119,8 @@ sequenceDiagram
 
 Every decision has an ID. An `automated` decision must be covered by at least
 one test tagged with that ID: a Gherkin tag such as `@adr-0001-d2` in
-`crates/soqrates-spec/features/`, or a comment such as `// @adr-0001-d2` in
-`crates/soqrates-spec/tests/`. The traceability test (`adr-0001-d15`) fails
+`crates/soqrates-spec/features/`, or a comment such as `// @adr-0001-d2`
+directly above a test in any crate's `src/` or `tests/`. The traceability test (`adr-0001-d15`) fails
 the build if one is missing. A `manual` decision is checked in review and must
 say why it is not automated yet.
 

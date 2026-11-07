@@ -11,8 +11,8 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
     Answer, AnswerBody, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error, Grade,
-    GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PullRequest,
-    Question, QuestionBody, QuestionFormat, QuestionId, Result, Session, SessionKey,
+    GradedSession, Grading, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
+    PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result, Session, SessionKey,
     SessionOutcome,
 };
 use soqrates_store::{FileStore, InMemoryStore};
@@ -174,10 +174,11 @@ impl Examiner for FakeExaminer {
             concept: concept.id.clone(),
             scope: concept.scope,
             body,
+            explanation: Self::explanation(&concept.id),
         })
     }
 
-    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grade> {
+    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
         if answer.question != question.id {
             return Err(Error::Invalid(format!(
                 "answer for {:?} graded against {:?}",
@@ -189,11 +190,34 @@ impl Examiner for FakeExaminer {
             (QuestionBody::Open { .. }, AnswerBody::Text(t)) => t.starts_with("correct"),
             _ => false,
         };
-        Ok(if correct {
+        let grade = if correct {
             *self.correct_grade.lock().unwrap()
         } else {
             Grade::Again
-        })
+        };
+        // Open answers get the grader's own feedback; multiple choice leaves
+        // it empty so the question's explanation is used (ADR-0004 D1).
+        let feedback = match &question.body {
+            QuestionBody::Open { .. } => Self::open_feedback(&question.concept, correct),
+            QuestionBody::MultipleChoice { .. } => String::new(),
+        };
+        Ok(Grading { grade, feedback })
+    }
+}
+
+impl FakeExaminer {
+    /// The explanation the fake writes for `concept`.
+    pub fn explanation(concept: &ConceptId) -> String {
+        format!("Because {} works that way.", concept.0)
+    }
+
+    /// The feedback the fake gives on an open answer about `concept`.
+    pub fn open_feedback(concept: &ConceptId, correct: bool) -> String {
+        if correct {
+            format!("Covers {} well.", concept.0)
+        } else {
+            format!("Misses what {} does.", concept.0)
+        }
     }
 }
 
@@ -253,6 +277,8 @@ pub struct ScmState {
     pub replies: HashMap<SessionKey, Vec<Answer>>,
     /// Make the next `post_questions` call fail, as on a transient error.
     pub fail_next_post: bool,
+    /// Every `post_results` call, in order.
+    pub results: Vec<(PrRef, SessionKey, SessionOutcome)>,
 }
 
 /// A fake forge. Records what Soqrates posts and lets steps inject the
@@ -335,6 +361,20 @@ impl ScmProvider for FakeScm {
             return Err(Error::Port("the forge is unavailable".into()));
         }
         state.posted.push((pr.clone(), session.clone()));
+        Ok(())
+    }
+
+    async fn post_results(
+        &self,
+        pr: &PrRef,
+        session: &Session,
+        outcome: &SessionOutcome,
+    ) -> Result<()> {
+        self.state.lock().unwrap().results.push((
+            pr.clone(),
+            session.key().clone(),
+            outcome.clone(),
+        ));
         Ok(())
     }
 

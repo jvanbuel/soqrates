@@ -19,7 +19,7 @@ use rig_core::completion::CompletionRequest;
 use rig_core::operation::Completion;
 use rig_core::providers::{anthropic::Anthropic, ollama::Ollama, openai::OpenAI};
 use soqrates_core::ports::Examiner;
-use soqrates_core::{Answer, Concept, Diff, Error, Grade, Question, QuestionFormat, Result};
+use soqrates_core::{Answer, Concept, Diff, Error, Grading, Question, QuestionFormat, Result};
 
 use crate::examiner::{Core, Llm, LlmRequest};
 
@@ -171,7 +171,7 @@ impl Examiner for RigExaminer {
     async fn write_question(&self, concept: &Concept, format: QuestionFormat) -> Result<Question> {
         self.core.write_question(concept, format).await
     }
-    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grade> {
+    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
         self.core.grade(question, answer).await
     }
 }

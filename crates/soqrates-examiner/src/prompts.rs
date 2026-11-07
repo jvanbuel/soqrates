@@ -69,7 +69,13 @@ Rules:
 - options: 3 to 5 distinct, plausible options. Exactly one is correct. Distractors should \
 reflect real misconceptions, not jokes. Do not use 'all of the above' or 'none of the above'. \
 Do not prefix options with letters or numbers.
-- correct: the 0-based index of the correct option in `options`.";
+- correct: the 0-based index of the correct option in `options`.
+- explanation: 1 to 3 sentences on why the correct option is correct, and, where it helps, \
+the misconception behind the most tempting wrong option. It is shown to the author only after \
+their answer is graded. Plain text only: no markdown headings, lists or HTML.
+- The options are shuffled before they are shown, so letters, numbers and positions change. \
+In the explanation, refer to an option only by its content, never by letter, number or \
+position: do not write 'option A', '(b)', 'answer 2' or 'the first option'.";
 
 pub const WRITE_OPEN_SYSTEM: &str = "\
 You are the examiner of Soqrates, a tool that checks whether the author of a code change \
@@ -83,7 +89,10 @@ situation. Do not ask trivia, definitions to recite, names, dates or version num
 Rules:
 - prompt: the question, self-contained, answerable without seeing the code.
 - rubric: what a good answer must cover, as a short list of key points, plus common \
-misconceptions that make an answer wrong. A grader will use only this rubric.";
+misconceptions that make an answer wrong. A grader will use only this rubric.
+- explanation: 1 to 3 sentences on what a good answer covers and why, written for the author. \
+It is shown to the author only after their answer is graded. Plain text only: no markdown \
+headings, lists or HTML.";
 
 pub const GRADE_OPEN_SYSTEM: &str = "\
 You are the grader of Soqrates, a tool that checks whether the author of a code change \
@@ -101,7 +110,9 @@ Grade with exactly one of:
 - good: correct and covers the key points.
 - easy: correct, thorough and precise, covering all key points.
 
-Also give a one-sentence rationale.";
+Also give a rationale: one or two sentences, addressed to the learner, saying what their \
+answer got right and what it missed or got wrong. It is shown to the learner as feedback. \
+Plain text only: no markdown headings, lists or HTML.";
 
 /// Cut `diff` to at most [`MAX_DIFF_BYTES`] bytes, at a line boundary where
 /// possible. Returns the text to send and whether it was cut.

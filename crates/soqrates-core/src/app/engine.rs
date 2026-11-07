@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::events::DomainEvent;
 use crate::app::ports::{Clock, Examiner, StateStore};
-use crate::assessment::{Answer, Concept, ConceptScope, Diff, Grade};
-use crate::delivery::{GradedSession, Mode, Session};
+use crate::assessment::{Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, QuestionBody};
+use crate::delivery::{GradedSession, Mode, QuestionResult, Session};
 use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, Level, LinkCode, LinkRejection, policy};
 use crate::{Error, Result};
@@ -24,6 +24,8 @@ pub struct SessionOutcome {
     pub events: Vec<DomainEvent>,
     /// Where the general reviews were stored (ADR-0003 D4).
     pub profile_location: ProfileLocation,
+    /// Per-question feedback, in question order (ADR-0004 D1).
+    pub results: Vec<QuestionResult>,
 }
 
 /// Where a learner's profile was read from and written to (ADR-0003 D4).
@@ -425,9 +427,12 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         session.validate_answers(answers)?;
 
         let mut grades = Vec::new();
+        let mut feedback: Vec<(QuestionId, String)> = Vec::new();
         for q in session.questions() {
             if let Some(a) = answers.iter().find(|a| a.question == q.id) {
-                grades.push((q.id.clone(), self.examiner.grade(q, a).await?));
+                let grading = self.examiner.grade(q, a).await?;
+                grades.push((q.id.clone(), grading.grade));
+                feedback.push((q.id.clone(), grading.feedback));
             }
         }
         let author = session.author().clone();
@@ -459,6 +464,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             );
         }
         events.push(result.event.into());
+        let results = question_results(&questions, answers, &result.grades, &feedback, &events);
         let correct = result.grades.iter().filter(|(_, g)| g.is_correct()).count();
         let graded = GradedSession {
             key: key.clone(),
@@ -495,6 +501,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             level_after: primary.level(),
             events,
             profile_location: place.location,
+            results,
         })
     }
 
@@ -649,6 +656,66 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         }
         Ok(())
     }
+}
+
+/// Per-question results for the author (ADR-0004 D1): the answer, the
+/// correct option, feedback, and when the concept is next due.
+fn question_results(
+    questions: &[crate::assessment::Question],
+    answers: &[Answer],
+    grades: &[(QuestionId, Grade)],
+    feedback: &[(QuestionId, String)],
+    events: &[DomainEvent],
+) -> Vec<QuestionResult> {
+    questions
+        .iter()
+        .zip(grades)
+        .map(|(q, (_, grade))| {
+            let (prompt, options, correct_option) = match &q.body {
+                QuestionBody::MultipleChoice {
+                    prompt,
+                    options,
+                    correct,
+                } => (prompt.clone(), options.clone(), Some(*correct)),
+                QuestionBody::Open { prompt, .. } => (prompt.clone(), Vec::new(), None),
+            };
+            let answer: Option<AnswerBody> = answers
+                .iter()
+                .find(|a| a.question == q.id)
+                .map(|a| a.body.clone());
+            let feedback = feedback
+                .iter()
+                .find(|(id, _)| *id == q.id)
+                .map(|(_, f)| f.clone())
+                .filter(|f| !f.trim().is_empty())
+                .unwrap_or_else(|| {
+                    if answer.is_none() {
+                        format!("Not answered. {}", q.explanation)
+                    } else {
+                        q.explanation.clone()
+                    }
+                });
+            let next_review = events.iter().rev().find_map(|e| match e {
+                DomainEvent::Learner(crate::learner::LearnerEvent::ReviewScheduled {
+                    concept,
+                    due,
+                    ..
+                }) if *concept == q.concept => Some(*due),
+                _ => None,
+            });
+            QuestionResult {
+                question: q.id.clone(),
+                concept: q.concept.clone(),
+                prompt,
+                options,
+                correct_option,
+                answer,
+                grade: *grade,
+                feedback,
+                next_review,
+            }
+        })
+        .collect()
 }
 
 /// A stable, non-reversible-at-a-glance ID: 64-bit FNV-1a of `text`. Not a

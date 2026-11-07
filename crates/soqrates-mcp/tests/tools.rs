@@ -7,12 +7,13 @@ use serde_json::{Value, json};
 use soqrates_core::ports::{Clock, Examiner};
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, Concept, ConceptId, ConceptScope, Config, Diff, Error, Grade,
-    Question, QuestionBody, QuestionFormat, QuestionId, Result, Soqrates,
+    Grading, Question, QuestionBody, QuestionFormat, QuestionId, Result, Soqrates,
 };
 use soqrates_mcp::SoqratesMcp;
 use soqrates_store::InMemoryStore;
 
 const RUBRIC: &str = "SECRET-RUBRIC: must mention the borrow checker";
+const EXPLANATION: &str = "SECRET-EXPLANATION: option c is right because";
 const RIGHT: usize = 2;
 
 /// One concept per `+concept:` line; multiple choice is right at index
@@ -51,16 +52,20 @@ impl Examiner for FakeExaminer {
             concept: concept.id.clone(),
             scope: concept.scope,
             body,
+            explanation: EXPLANATION.into(),
         })
     }
 
-    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grade> {
+    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
         let right = match (&question.body, &answer.body) {
             (QuestionBody::MultipleChoice { correct, .. }, AnswerBody::Choice(c)) => c == correct,
             (QuestionBody::Open { .. }, AnswerBody::Text(t)) => t.starts_with("right"),
             _ => false,
         };
-        Ok(if right { Grade::Good } else { Grade::Again })
+        Ok(Grading {
+            grade: if right { Grade::Good } else { Grade::Again },
+            feedback: String::new(),
+        })
     }
 }
 
@@ -172,6 +177,10 @@ async fn start_session_never_reveals_the_answer_key() {
     assert!(
         !out.to_string().contains("SECRET-RUBRIC"),
         "rubric leaked in {out}"
+    );
+    assert!(
+        !out.to_string().contains("SECRET-EXPLANATION"),
+        "start_session must not reveal the explanation before grading (ADR-0004 D1)"
     );
 }
 

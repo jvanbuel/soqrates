@@ -1,6 +1,9 @@
 # Dogfooding (ADR-0001 D14): Soqrates checks its own pull requests.
 #
-# - Runs on PR open/push, and when someone comments `/soqrates ...` on a PR.
+# - Runs on PR open/push, when someone comments `/soqrates ...` on a PR,
+#   and when a Soqrates question comment is edited (ticking a checkbox edits
+#   the comment, ADR-0004 D3). Edits made with the workflow's own token
+#   don't trigger workflows, so posting results doesn't loop.
 # - Advisory mode: a failed session reports a success status with an
 #   "Advisory:" note, so it never blocks a merge.
 # - Learner state is kept on the `soqrates-state` branch (one JSON document
@@ -15,7 +18,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
   issue_comment:
-    types: [created]
+    types: [created, edited]
 
 permissions:
   contents: write       # push the soqrates-state branch
@@ -32,7 +35,10 @@ jobs:
   check:
     if: >-
       github.event_name == 'pull_request' ||
-      (github.event.issue.pull_request && startsWith(github.event.comment.body, '/soqrates'))
+      (github.event.issue.pull_request && (
+        (github.event.action == 'created' && startsWith(github.event.comment.body, '/soqrates')) ||
+        (github.event.action == 'edited' && contains(github.event.comment.body, 'soqrates:session='))
+      ))
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

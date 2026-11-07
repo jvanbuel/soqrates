@@ -93,6 +93,7 @@ fn mc_question(concept: &ConceptId) -> Question {
             options: vec!["right".into(), "wrong".into(), "also wrong".into()],
             correct: 0,
         },
+        explanation: FakeExaminer::explanation(concept),
     }
 }
 
@@ -105,6 +106,7 @@ fn open_question(concept: &ConceptId) -> Question {
             prompt: format!("Explain {} in this change.", concept.0),
             rubric: format!("Covers {}", concept.0),
         },
+        explanation: FakeExaminer::explanation(concept),
     }
 }
 

@@ -4,6 +4,7 @@ mod adaptive_questions;
 mod ci_check;
 mod common;
 mod domain_model;
+mod feedback;
 mod learner_identity;
 mod learner_state;
 mod local_hooks;

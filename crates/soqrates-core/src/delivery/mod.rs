@@ -5,11 +5,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::assessment::{Answer, Diff, Grade, Question};
+use crate::assessment::{Answer, AnswerBody, Diff, Grade, Question};
 use crate::{Error, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ids::{AuthorId, Identity, QuestionId, SessionKey};
+use crate::ids::{AuthorId, ConceptId, Identity, QuestionId, SessionKey};
 
 /// Whether a failed session blocks (ADR-0001 D8, D9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -57,6 +57,33 @@ pub struct GradedSession {
     pub total: usize,
     pub passed: bool,
     pub at: DateTime<Utc>,
+}
+
+/// The result of one question in a graded session (ADR-0004 D1).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuestionResult {
+    pub question: QuestionId,
+    pub concept: ConceptId,
+    /// The question as asked.
+    pub prompt: String,
+    /// The options of a multiple-choice question, in the order shown.
+    pub options: Vec<String>,
+    /// The index of the correct option, for multiple choice.
+    pub correct_option: Option<usize>,
+    /// What the author answered; `None` if unanswered.
+    pub answer: Option<AnswerBody>,
+    pub grade: Grade,
+    /// Why the answer was right or wrong.
+    pub feedback: String,
+    /// When this concept is next due for review. Profile data: shown only
+    /// on private surfaces (ADR-0004 D2).
+    pub next_review: Option<DateTime<Utc>>,
+}
+
+impl QuestionResult {
+    pub fn is_correct(&self) -> bool {
+        self.grade.is_correct()
+    }
 }
 
 /// The result of concluding a session.

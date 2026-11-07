@@ -77,6 +77,9 @@ pub struct Question {
     /// (ADR-0003 D5).
     pub scope: ConceptScope,
     pub body: QuestionBody,
+    /// Why the correct answer is correct (multiple choice) or what a good
+    /// answer covers (open). Shown only after grading (ADR-0004 D1).
+    pub explanation: String,
 }
 
 impl Question {
@@ -109,6 +112,14 @@ pub enum Grade {
     Good,
     /// Correct and thorough.
     Easy,
+}
+
+/// The examiner's verdict on one answer: the grade and a short explanation
+/// for the author (ADR-0004 D1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Grading {
+    pub grade: Grade,
+    pub feedback: String,
 }
 
 impl Grade {

@@ -708,9 +708,11 @@ fn decisions() -> Vec<Decision> {
     out
 }
 
-/// Tag -> places that reference it, from feature files and test comments.
+/// Tag -> places that reference it, from feature files and from test
+/// comments anywhere in the workspace.
 fn references() -> BTreeMap<String, Vec<String>> {
     let spec = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let spec_canonical = spec.canonicalize().unwrap();
     let gherkin_tag = Regex::new(r"@(adr-\d{4}-d\d+)\b").unwrap();
     let rust_comment = Regex::new(r"^\s*//.*").unwrap();
     let mut refs: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -760,6 +762,21 @@ fn references() -> BTreeMap<String, Vec<String>> {
             visit(p, true)
         }
     });
+    // Tagged unit and integration tests in the other crates count too, e.g.
+    // the GitHub adapter's rendering tests (ADR-0004).
+    for krate in fs::read_dir(workspace_root().join("crates")).unwrap() {
+        let krate = krate.unwrap().path();
+        if krate.canonicalize().unwrap() == spec_canonical {
+            continue;
+        }
+        for dir in ["src", "tests"] {
+            walk(&krate.join(dir), &mut |p| {
+                if p.extension().is_some_and(|e| e == "rs") {
+                    visit(p, true)
+                }
+            });
+        }
+    }
     refs
 }
 

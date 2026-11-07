@@ -1,8 +1,12 @@
 //! `ScmProvider` for GitHub (ADR-0001 D4). This is the only crate that may
 //! depend on `octocrab`.
 //!
-//! Questions are posted as one PR comment carrying a hidden session marker;
-//! the author answers with a `/soqrates answer` comment (ADR-0001 D8). The
+//! Questions are posted as one PR comment carrying a hidden session marker.
+//! The author answers multiple choice by ticking boxes in it and submits by
+//! ticking "Grade my answers", or answers with a `/soqrates answer` comment
+//! (ADR-0001 D8, ADR-0004 D3). Boxes count only when GraphQL reports the PR
+//! author as the comment's last editor. Results are posted as a new comment
+//! and the question comment is frozen (ADR-0004 D5). The
 //! check is reported as a commit status with context `soqrates`, which works
 //! with the Actions `GITHUB_TOKEN` given `statuses: write`. Authors are
 //! identified by host and numeric user id, never by login (ADR-0003 D1).
@@ -13,14 +17,16 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use octocrab::Octocrab;
+use octocrab::models::issues::Comment;
 use soqrates_core::ports::ScmProvider;
 use soqrates_core::{
-    Answer, AuthorId, CheckStatus, Diff, Error, PrRef, PullRequest, Result, Session,
+    Answer, AuthorId, CheckStatus, Diff, Error, PrRef, PullRequest, Result, Session, SessionOutcome,
 };
 
 use crate::format::{
-    STATUS_CONTEXT, StatusState, author_id, commit_status, host_of, parse_answers,
-    render_questions, select_answer_comment, session_marker, split_repo,
+    EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, commit_status, editor_database_id,
+    graphql_base, host_of, merge_answers, parse_answers, parse_checkboxes, render_graded_questions,
+    render_questions, render_results, select_answer_comment, session_marker, split_repo,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -34,6 +40,8 @@ pub struct GitHubProvider {
     /// Built on first use: octocrab spawns a worker task, which needs a
     /// running Tokio runtime.
     client: OnceLock<Octocrab>,
+    /// Like `client`, rooted where `/graphql` is served.
+    graphql_client: OnceLock<Octocrab>,
     /// Head commits seen by `pull_request`, for `set_check`.
     head_shas: Mutex<HashMap<PrRef, String>>,
 }
@@ -70,6 +78,7 @@ impl GitHubProvider {
             api_url,
             host,
             client: OnceLock::new(),
+            graphql_client: OnceLock::new(),
             head_shas: Mutex::new(HashMap::new()),
         })
     }
@@ -87,17 +96,27 @@ impl GitHubProvider {
     }
 
     fn client(&self) -> Result<Octocrab> {
-        if let Some(client) = self.client.get() {
+        self.build_client(&self.client, &self.api_url)
+    }
+
+    /// The client for GraphQL. octocrab posts to `/graphql` under its base
+    /// URI, which on GitHub Enterprise Server is `/api`, not `/api/v3`.
+    fn graphql_client(&self) -> Result<Octocrab> {
+        self.build_client(&self.graphql_client, &graphql_base(&self.api_url))
+    }
+
+    fn build_client(&self, cell: &OnceLock<Octocrab>, base: &str) -> Result<Octocrab> {
+        if let Some(client) = cell.get() {
             return Ok(client.clone());
         }
         let client = Octocrab::builder()
             .personal_token(self.token.clone())
-            .base_uri(self.api_url.as_str())
+            .base_uri(base)
             .map_err(port("API URL"))?
             .build()
             .map_err(port("client"))?;
         // A concurrent caller may have won the race; either client works.
-        Ok(self.client.get_or_init(|| client).clone())
+        Ok(cell.get_or_init(|| client).clone())
     }
 
     fn author(&self, user_id: u64) -> String {
@@ -117,6 +136,43 @@ impl GitHubProvider {
             .map_err(port("get pull request"))?;
         Ok(pull.head.sha)
     }
+
+    /// Every comment on the PR, oldest first.
+    async fn comments(&self, pr: &PrRef) -> Result<Vec<Comment>> {
+        let (owner, name) = repo(pr)?;
+        let client = self.client()?;
+        let first = client
+            .issues(owner, name)
+            .list_comments(pr.number)
+            .per_page(100)
+            .send()
+            .await
+            .map_err(port("list comments"))?;
+        client.all_pages(first).await.map_err(port("list comments"))
+    }
+
+    /// The author id of the last editor of a comment, if it was edited by a
+    /// user (ADR-0004 D3). REST does not say who edited a comment; GraphQL
+    /// does.
+    async fn last_editor(&self, node_id: &str) -> Result<Option<String>> {
+        let payload = serde_json::json!({
+            "query": EDITOR_QUERY,
+            "variables": { "id": node_id },
+        });
+        let data: serde_json::Value = self
+            .graphql_client()?
+            .graphql(&payload)
+            .await
+            .map_err(port("query comment editor"))?;
+        Ok(editor_database_id(&data).map(|id| self.author(id)))
+    }
+}
+
+/// The question comment of a session: the first comment carrying its marker.
+fn question_comment<'a>(comments: &'a [Comment], marker: &str) -> Option<&'a Comment> {
+    comments
+        .iter()
+        .find(|c| c.body.as_deref().is_some_and(|b| b.contains(marker)))
 }
 
 fn repo(pr: &PrRef) -> Result<(&str, &str)> {
@@ -167,34 +223,75 @@ impl ScmProvider for GitHubProvider {
     }
 
     async fn fetch_answers(&self, pr: &PrRef, session: &Session) -> Result<Option<Vec<Answer>>> {
-        let (owner, name) = repo(pr)?;
-        let client = self.client()?;
-        let first = client
-            .issues(owner, name)
-            .list_comments(pr.number)
-            .per_page(100)
-            .send()
-            .await
-            .map_err(port("list comments"))?;
-        let all = client
-            .all_pages(first)
-            .await
-            .map_err(port("list comments"))?;
-        let comments: Vec<_> = all
-            .into_iter()
+        let comments = self.comments(pr).await?;
+        let marker = session_marker(session.key());
+        let Some(question) = question_comment(&comments, &marker) else {
+            return Ok(None);
+        };
+        let author = &session.author().0;
+        let listed: Vec<_> = comments
+            .iter()
             .map(|c| {
                 (
                     self.author(c.user.id.into_inner()),
                     c.created_at,
-                    c.body.unwrap_or_default(),
+                    c.body.clone().unwrap_or_default(),
                 )
             })
             .collect();
-        let marker = session_marker(session.key());
-        Ok(
-            select_answer_comment(&comments, &marker, &session.author().0)
-                .and_then(|body| parse_answers(body, session.questions())),
-        )
+        let from_comment = select_answer_comment(&listed, &marker, author)
+            .and_then(|body| parse_answers(body, session.questions()));
+
+        // Boxes count only if the PR author made the last edit (ADR-0004
+        // D3). Ask GraphQL only when the boxes could matter: something is
+        // ticked, and the author has submitted.
+        let boxes = parse_checkboxes(
+            question.body.as_deref().unwrap_or_default(),
+            session.questions(),
+        );
+        let boxes = if boxes.any() && (boxes.done || from_comment.is_some()) {
+            let editor = self.last_editor(&question.node_id).await?;
+            (editor.as_deref() == Some(author.as_str())).then_some(boxes)
+        } else {
+            None
+        };
+        Ok(merge_answers(
+            session.questions(),
+            boxes.as_ref(),
+            from_comment,
+        ))
+    }
+
+    async fn post_results(
+        &self,
+        pr: &PrRef,
+        session: &Session,
+        outcome: &SessionOutcome,
+    ) -> Result<()> {
+        let (owner, name) = repo(pr)?;
+        let client = self.client()?;
+        // Results first: a new comment notifies the author (ADR-0004 D5).
+        client
+            .issues(owner, name)
+            .create_comment(
+                pr.number,
+                render_results(session, &outcome.results, outcome.passed),
+            )
+            .await
+            .map_err(port("post results comment"))?;
+        // Then freeze the question comment, so its boxes can't be ticked.
+        let comments = self.comments(pr).await?;
+        if let Some(question) = question_comment(&comments, &session_marker(session.key())) {
+            let route = format!("/repos/{owner}/{name}/issues/comments/{}", question.id);
+            let body = serde_json::json!({
+                "body": render_graded_questions(session, &outcome.results),
+            });
+            let _: Comment = client
+                .patch(route, Some(&body))
+                .await
+                .map_err(port("mark question comment graded"))?;
+        }
+        Ok(())
     }
 
     async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
