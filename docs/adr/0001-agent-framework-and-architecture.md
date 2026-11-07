@@ -29,97 +29,83 @@ reference implementations are in Rust.
 
 ## Architecture overview
 
-Solid arrows are calls or dependencies. Dotted arrows mean "implements a
-port". Only `soqrates-core` sits in the middle, and it knows nothing about
-the outside world (D2).
+Three zoom levels. Each diagram answers one question.
+
+### Level 1: context. Who uses Soqrates and what it talks to.
 
 ```mermaid
-flowchart TB
-    subgraph entry["Entry points"]
-        git["git pre-commit"]
-        jj["jj pre-push"]
-        gha["GitHub Actions<br/>PR check"]
-        harness["Other agent harness<br/>(Claude Code, ...)"]
-    end
+flowchart LR
+    author(["Author"])
+    harness(["Other agent harness"])
+    soq["Soqrates"]
+    llm["LLM provider"]
+    forge["Forge / CI<br/>(GitHub, ...)"]
+    state[("Learner state")]
 
-    skills["skills/name/SKILL.md<br/>(D11)"]
-
-    subgraph bin["soqrates binary (soqrates-cli, D1)"]
-        hookcmd["soqrates hook"]
-        cicmd["soqrates ci"]
-        mcpcmd["soqrates mcp"]
-    end
-
-    mcp["soqrates-mcp (rmcp, D10)<br/>start_session · submit_answers<br/>get_learner_profile · due_reviews"]
-
-    subgraph core["soqrates-core (no I/O, D2)"]
-        direction TB
-        hookwf["hook workflow (D9)"]
-        ciwf["CI workflow (D8)"]
-        engine["engine: sessions,<br/>grading, profiles"]
-        policy["question policy:<br/>level to format (D7)"]
-        sched["FSRS schedule<br/>(rs-fsrs, D6)"]
-        subgraph ports["Ports"]
-            pstore[["StateStore"]]
-            pexam[["Examiner"]]
-            pscm[["ScmProvider"]]
-            pclock[["Clock"]]
-            pprompt[["Prompter"]]
-        end
-        hookwf --> engine
-        ciwf --> engine
-        engine --> policy
-        engine --> sched
-    end
-
-    subgraph adapters["Adapters"]
-        store["soqrates-store<br/>InMemory · File (D5)"]
-        llm["soqrates-llm<br/>Rig (D3)"]
-        gh["soqrates-scm-github<br/>octocrab (D4)"]
-        tty["terminal prompter"]
-    end
-
-    subgraph ext["External systems"]
-        models["LLM providers<br/>Anthropic · OpenAI · Gemini · Ollama"]
-        github["GitHub API<br/>comments · checks"]
-        state[("Learner state<br/>JSON files / git branch")]
-    end
-
-    subgraph verify["Verification"]
-        spec["soqrates-spec (D12, D15)<br/>architecture tests · traceability<br/>BDD features with fakes"]
-        evals["evals/ (Inspect AI, D13)<br/>black-box benchmarks"]
-    end
-
-    git --> hookcmd
-    jj --> hookcmd
-    gha --> cicmd
-    harness --> mcpcmd
-    harness -. loads .-> skills
-    skills -. calls tools of .-> mcp
-
-    hookcmd --> hookwf
-    cicmd --> ciwf
-    mcpcmd --> mcp
-    mcp --> engine
-
-    hookwf --> pprompt
-    ciwf --> pscm
-    engine --> pstore
-    engine --> pexam
-    engine --> pclock
-
-    store -.-> pstore
-    llm -.-> pexam
-    gh -.-> pscm
-    tty -.-> pprompt
-
-    llm --> models
-    gh --> github
-    store --> state
-
-    spec -. drives with fakes .-> core
-    evals -. drives .-> bin
+    author -- "commits, pushes, opens PRs" --> soq
+    harness -- "skills + MCP" --> soq
+    soq -- "concepts, questions, grading" --> llm
+    soq -- "questions, answers, check status" --> forge
+    soq -- "profiles, review schedule" --> state
 ```
+
+### Level 2: crates. A hexagon: the core defines ports, adapters implement them.
+
+```mermaid
+flowchart LR
+    subgraph drivers["Driving side"]
+        cli["soqrates-cli<br/>hook · ci · mcp"]
+        mcp["soqrates-mcp"]
+    end
+
+    core["soqrates-core<br/>domain + ports"]
+
+    subgraph driven["Driven side"]
+        store["soqrates-store"]
+        llm["soqrates-llm<br/>(Rig)"]
+        gh["soqrates-scm-github<br/>(octocrab)"]
+    end
+
+    cli --> core
+    cli --> mcp
+    mcp --> core
+    store -. StateStore .-> core
+    llm -. Examiner .-> core
+    gh -. ScmProvider .-> core
+```
+
+Arrows point toward the core: it depends on nothing in the workspace (D2),
+and each third-party framework lives in exactly one adapter (D3, D4, D10).
+`soqrates-spec` tests the core with fakes for every port (D12).
+
+### Level 3: inside the core
+
+```mermaid
+flowchart LR
+    subgraph wf["Workflows"]
+        hook["hook (D9)"]
+        ci["CI check (D8)"]
+    end
+    engine["engine<br/>sessions, grading"]
+    subgraph logic["Pure domain logic"]
+        policy["question policy (D7)"]
+        sched["FSRS schedule (D6)"]
+    end
+    subgraph ports["Ports (implemented by adapters)"]
+        p["StateStore · Examiner · Clock<br/>ScmProvider · Prompter"]
+    end
+
+    wf --> engine
+    engine --> logic
+    engine --> ports
+    wf --> ports
+```
+
+The workflows decide *when* to ask, the engine decides *what* to ask, and
+the policy and schedule decide *how* and *how often*. All I/O goes through
+ports.
+
+### CI check flow
 
 The CI check (D8) is asynchronous: questions and answers pass through PR
 comments over several workflow runs.
