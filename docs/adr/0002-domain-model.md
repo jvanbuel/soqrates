@@ -160,7 +160,10 @@ fails, all of them are rolled back and the session is given back.
 
 **Known limitation.** The rollback is best effort. A store failure during
 rollback, or a crash between the writes, can leave partial state: a lost
-session, or a graded record without its reviews. Closing this needs
+session, or a graded record without its reviews. While a submission holds
+the claim, a CI check from a caller outside the workflow's concurrency
+group sees neither a pending nor a graded session and may open a new one
+for the same key. Closing this needs
 durable multi-write atomicity, such as a write-ahead grading journal
 recovered at the start of each run. It is deferred: CI runs are serialised,
 and the stores have no transactions.
