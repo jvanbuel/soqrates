@@ -39,6 +39,19 @@ max_questions = 3
 "github.com" = "github.com:1001"
 ```
 
+Learner state is kept as JSON files in the platform data directory
+(`--state-dir` to change it), or in a database when `SOQRATES_DATABASE_URL`
+is set ([ADR-0005](docs/adr/0005-sql-database-store.md)):
+
+```sh
+export SOQRATES_DATABASE_URL='sqlite:///home/me/soqrates.db?mode=rwc'  # one local file
+export SOQRATES_DATABASE_URL='postgres://soqrates@db.example.com/soqrates?sslmode=require'  # shared
+```
+
+The tables are created on first use. The URL is only read from the
+environment or `--database-url`, never from a config file, since it may
+hold a password.
+
 ### As a PR check
 
 [`.github/workflows/soqrates.yml`](.github/workflows/soqrates.yml) runs
@@ -93,7 +106,7 @@ flowchart LR
 |---|---|
 | `docs/adr/` | Architecture decision records. Every decision is numbered and has an enforcement mode. |
 | `crates/soqrates-core` | Domain contexts (`assessment`, `learner`, `delivery`) and the `app` layer with the ports. No I/O. |
-| `crates/soqrates-store` | State adapters (in-memory, JSON files). |
+| `crates/soqrates-store` | State adapters (in-memory, JSON files, and SQLite or PostgreSQL behind the `sqlite` and `postgres` features). |
 | `crates/soqrates-examiner` | `Examiner` on top of Rig: any LLM provider. |
 | `crates/soqrates-scm-github` | `ScmProvider` for GitHub. |
 | `crates/soqrates-mcp` | MCP server exposing the core. |

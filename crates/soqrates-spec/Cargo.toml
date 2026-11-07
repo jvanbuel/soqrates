@@ -10,7 +10,7 @@ publish = false
 
 [dev-dependencies]
 soqrates-core.workspace = true
-soqrates-store.workspace = true
+soqrates-store = { workspace = true, features = ["sqlite"] }
 soqrates-mcp.workspace = true
 chrono.workspace = true
 tokio.workspace = true

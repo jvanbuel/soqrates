@@ -24,7 +24,7 @@ use soqrates_core::ports::Clock;
 use soqrates_core::{AuthorId, Diff, HookDecision, HookKind, Identity, PrRef, Soqrates, ci, hook};
 use soqrates_examiner::{DEFAULT_MODEL, ModelSpec, RigExaminer};
 use soqrates_scm_github::GitHubProvider;
-use soqrates_store::FileStore;
+use soqrates_store::Store;
 
 use crate::config::ModeName;
 use crate::local::Vcs;
@@ -39,6 +39,17 @@ struct Cli {
     /// Directory of the learner store (default: the platform data dir).
     #[arg(long, global = true, env = "SOQRATES_STATE_DIR")]
     state_dir: Option<PathBuf>,
+    /// Keep the learner store in a database instead of the state directory
+    /// (ADR-0005), e.g. `sqlite://state.db?mode=rwc` or
+    /// `postgres://user@host/db`. Prefer the environment variable: a URL
+    /// may hold a password.
+    #[arg(
+        long,
+        global = true,
+        env = "SOQRATES_DATABASE_URL",
+        hide_env_values = true
+    )]
+    database_url: Option<String>,
     /// Model, e.g. `anthropic:claude-sonnet-5-5`.
     #[arg(long, global = true, env = "SOQRATES_MODEL")]
     model: Option<String>,
@@ -115,7 +126,7 @@ impl Clock for SystemClock {
     }
 }
 
-type App = Soqrates<FileStore, RigExaminer, SystemClock>;
+type App = Soqrates<Store, RigExaminer, SystemClock>;
 
 /// The effective configuration: user file, project file, then flags.
 fn settings(cli: &Cli, project_root: Option<&std::path::Path>) -> Result<config::File, String> {
@@ -131,7 +142,7 @@ fn settings(cli: &Cli, project_root: Option<&std::path::Path>) -> Result<config:
     }))
 }
 
-fn build_app(settings: &config::File) -> Result<App, String> {
+async fn build_app(cli: &Cli, settings: &config::File) -> Result<App, String> {
     let model = ModelSpec::parse(settings.model.as_deref().unwrap_or(DEFAULT_MODEL))
         .map_err(|e| e.to_string())?;
     let examiner = RigExaminer::new(model).map_err(|e| e.to_string())?;
@@ -146,12 +157,12 @@ fn build_app(settings: &config::File) -> Result<App, String> {
         .state_dir
         .clone()
         .unwrap_or_else(config::default_state_dir);
-    Ok(Soqrates::new(
-        FileStore::new(dir),
-        examiner,
-        SystemClock,
-        core,
-    ))
+    // Only from the flag or the environment, never from a config file,
+    // which may be committed (ADR-0005 D5).
+    let store = Store::open(cli.database_url.as_deref(), dir)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Soqrates::new(store, examiner, SystemClock, core))
 }
 
 /// The identity to act as locally (ADR-0003 D7).
@@ -194,7 +205,7 @@ async fn run_hook(cli: &Cli, kind: HookArg) -> Result<ExitCode, String> {
         eprintln!("soqrates: no terminal to ask questions on; skipping.");
         return Ok(ExitCode::SUCCESS);
     };
-    let app = build_app(&settings)?;
+    let app = build_app(cli, &settings).await?;
     let author = local_author(vcs, &settings)?;
     let decision = hook::run_hook(&app, &mut prompter, kind, &author, &diff)
         .await
@@ -224,7 +235,7 @@ async fn run_ci(cli: &Cli, repo: &str, pr: Option<u64>) -> Result<ExitCode, Stri
         return Ok(ExitCode::SUCCESS);
     };
     let settings = settings(cli, std::env::current_dir().ok().as_deref())?;
-    let app = build_app(&settings)?;
+    let app = build_app(cli, &settings).await?;
     let scm = GitHubProvider::from_env().map_err(|e| e.to_string())?;
     let pr = PrRef {
         repo: repo.to_string(),
@@ -255,7 +266,7 @@ async fn run_identity(cli: &Cli, command: &IdentityCommand) -> Result<ExitCode, 
         return Ok(ExitCode::SUCCESS);
     }
     let settings = settings(cli, local::repo_root(vcs).as_deref())?;
-    let app = build_app(&settings)?;
+    let app = build_app(cli, &settings).await?;
     let author = local_author(vcs, &settings)?;
     let err = |e: soqrates_core::Error| e.to_string();
     match command {
@@ -335,7 +346,7 @@ async fn main() -> ExitCode {
             ok => ok,
         },
         Command::Ci { repo, pr } => run_ci(&cli, repo, *pr).await,
-        Command::Mcp => match settings(&cli, None).and_then(|s| build_app(&s)) {
+        Command::Mcp => match async { build_app(&cli, &settings(&cli, None)?).await }.await {
             Ok(app) => soqrates_mcp::SoqratesMcp::new(Arc::new(app))
                 .serve_stdio()
                 .await

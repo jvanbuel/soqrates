@@ -108,6 +108,8 @@ pub struct SpecWorld {
     pub prompter: ScriptedPrompter,
     /// Directory of the file store, if the scenario uses one.
     pub state_dir: Option<PathBuf>,
+    /// Directory of the SQLite database, if the scenario uses one.
+    pub database_dir: Option<PathBuf>,
     /// The session most recently started through the engine.
     pub session: Option<Session>,
     pub outcome: Option<SessionOutcome>,
@@ -162,6 +164,7 @@ impl SpecWorld {
             scm: FakeScm::default(),
             prompter: ScriptedPrompter::default(),
             state_dir: None,
+            database_dir: None,
             session: None,
             outcome: None,
             looked_up: None,
@@ -180,34 +183,31 @@ impl SpecWorld {
 
     /// Switch to a file store in a fresh, unique temporary directory.
     pub fn use_file_store(&mut self) {
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default();
-        let dir = std::env::temp_dir().join(format!(
-            "soqrates-spec-{}-{}-{nanos}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::SeqCst)
-        ));
-        std::fs::create_dir_all(&dir).expect("create state directory");
+        let dir = fresh_dir();
         self.app.store = AnyStore::file(&dir);
         self.state_dir = Some(dir);
     }
 
-    /// Simulate a new process: a fresh engine on the same state directory.
-    pub fn restart(&mut self) {
-        let dir = self
-            .state_dir
-            .clone()
-            .expect("restart needs a file store; use the file store step first");
+    /// Switch to a SQLite database in a fresh, unique temporary directory
+    /// (ADR-0005).
+    pub async fn use_sqlite_store(&mut self) {
+        let dir = fresh_dir();
+        self.app.store = AnyStore::sqlite(&dir).await;
+        self.database_dir = Some(dir);
+    }
+
+    /// Simulate a new process: a fresh engine on the same state directory
+    /// or database.
+    pub async fn restart(&mut self) {
+        let store = match (&self.state_dir, &self.database_dir) {
+            (Some(dir), _) => AnyStore::file(dir),
+            (None, Some(dir)) => AnyStore::sqlite(dir).await,
+            (None, None) => {
+                panic!("restart needs a file store or a database; use a store step first")
+            }
+        };
         let config = self.app.config.clone();
-        self.app = Soqrates::new(
-            AnyStore::file(&dir),
-            self.examiner.clone(),
-            self.clock.clone(),
-            config,
-        );
+        self.app = Soqrates::new(store, self.examiner.clone(), self.clock.clone(), config);
     }
 
     pub fn next_local_key(&mut self, author: &AuthorId) -> SessionKey {
@@ -296,4 +296,20 @@ impl Drop for SpecWorld {
             let _ = std::fs::remove_dir_all(dir);
         }
     }
+}
+
+/// A fresh, unique temporary directory.
+fn fresh_dir() -> PathBuf {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let dir = std::env::temp_dir().join(format!(
+        "soqrates-spec-{}-{}-{nanos}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
+    ));
+    std::fs::create_dir_all(&dir).expect("create state directory");
+    dir
 }

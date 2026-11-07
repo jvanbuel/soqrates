@@ -1,4 +1,10 @@
-//! `StateStore` adapters (ADR-0001 D5, ADR-0003).
+//! `StateStore` adapters (ADR-0001 D5, ADR-0003): in memory, JSON files,
+//! and, with the `sqlite` or `postgres` feature, a SQL database (ADR-0005).
+
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+mod sql;
+#[cfg(any(feature = "sqlite", feature = "postgres"))]
+pub use sql::{SCHEMA_VERSION, SqlStore};
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -263,6 +269,95 @@ impl StateStore for FileStore {
 
 impl LearnerStore for FileStore {}
 
+/// Any of the stores above, chosen at run time, e.g. from configuration.
+#[derive(Debug)]
+pub enum Store {
+    Memory(InMemoryStore),
+    File(FileStore),
+    #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    Sql(SqlStore),
+}
+
+impl Store {
+    /// The SQL store at `url` if one is given (ADR-0005 D5), else the file
+    /// store in `state_dir`.
+    pub async fn open(database_url: Option<&str>, state_dir: PathBuf) -> Result<Self> {
+        match database_url {
+            #[cfg(any(feature = "sqlite", feature = "postgres"))]
+            Some(url) => Ok(Store::Sql(SqlStore::connect(url).await?)),
+            #[cfg(not(any(feature = "sqlite", feature = "postgres")))]
+            Some(_) => Err(Error::Port(
+                "this build of Soqrates has no database support".into(),
+            )),
+            None => Ok(Store::File(FileStore::new(state_dir))),
+        }
+    }
+}
+
+macro_rules! delegate {
+    ($self:ident, $method:ident($($arg:expr),*)) => {
+        match $self {
+            Store::Memory(s) => s.$method($($arg),*).await,
+            Store::File(s) => s.$method($($arg),*).await,
+            #[cfg(any(feature = "sqlite", feature = "postgres"))]
+            Store::Sql(s) => s.$method($($arg),*).await,
+        }
+    };
+}
+
+impl StateStore for Store {
+    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
+        delegate!(self, load_profile(learner))
+    }
+    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
+        delegate!(self, save_profile(profile))
+    }
+    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
+        delegate!(self, delete_learner(learner))
+    }
+    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
+        delegate!(self, learner_of(identity))
+    }
+    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
+        delegate!(self, save_link(link))
+    }
+    async fn delete_link(&self, identity: &Identity) -> Result<()> {
+        delegate!(self, delete_link(identity))
+    }
+    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
+        delegate!(self, links_of(learner))
+    }
+    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
+        delegate!(self, save_link_code(code))
+    }
+    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
+        delegate!(self, load_link_code(code))
+    }
+    async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
+        delegate!(self, load_session(key))
+    }
+    async fn save_session(&self, session: &Session) -> Result<()> {
+        delegate!(self, save_session(session))
+    }
+    async fn delete_session(&self, key: &SessionKey) -> Result<()> {
+        delegate!(self, delete_session(key))
+    }
+    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
+        delegate!(self, take_session(key))
+    }
+    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
+        delegate!(self, save_graded(graded))
+    }
+    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
+        delegate!(self, load_graded(key))
+    }
+    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
+        delegate!(self, delete_graded(key))
+    }
+}
+
+impl LearnerStore for Store {}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -303,6 +398,163 @@ mod tests {
         assert!(store.load_session(&key).await.unwrap().is_none());
     }
 
+    fn json<T: Serialize>(v: &T) -> serde_json::Value {
+        serde_json::to_value(v).unwrap()
+    }
+
+    fn forge(account: &str) -> Identity {
+        Identity::Forge {
+            host: "github.com".into(),
+            account: account.into(),
+        }
+    }
+
+    /// The behaviour every `StateStore` adapter shares: records round-trip,
+    /// saving again replaces, deleting removes, and links are found by
+    /// learner (ADR-0001 D5, ADR-0003, ADR-0005 D4).
+    async fn conforms<S: StateStore>(store: &S) {
+        let now = chrono::Utc::now();
+        let ada = LearnerId("ada".into());
+        let bob = LearnerId("bob".into());
+
+        // Profiles.
+        assert!(store.load_profile(&ada).await.unwrap().is_none());
+        let profile = LearnerProfile::new(ada.clone());
+        store.save_profile(&profile).await.unwrap();
+        store.save_profile(&profile).await.unwrap();
+        let loaded = store.load_profile(&ada).await.unwrap().unwrap();
+        assert_eq!(json(&loaded), json(&profile));
+        store
+            .save_profile(&LearnerProfile::new(bob.clone()))
+            .await
+            .unwrap();
+
+        // Links, at most one per identity.
+        let link = |identity: Identity, learner: &LearnerId| IdentityLink {
+            identity,
+            learner: learner.clone(),
+            since: now,
+        };
+        store.save_link(&link(forge("1"), &ada)).await.unwrap();
+        store
+            .save_link(&link(Identity::Email("ada@example.com".into()), &ada))
+            .await
+            .unwrap();
+        store.save_link(&link(forge("2"), &ada)).await.unwrap();
+        store.save_link(&link(forge("2"), &bob)).await.unwrap();
+        assert_eq!(
+            store.learner_of(&forge("1")).await.unwrap(),
+            Some(ada.clone())
+        );
+        assert_eq!(
+            store.learner_of(&forge("2")).await.unwrap(),
+            Some(bob.clone())
+        );
+        assert_eq!(store.learner_of(&forge("3")).await.unwrap(), None);
+        let mut of_ada: Vec<String> = store
+            .links_of(&ada)
+            .await
+            .unwrap()
+            .iter()
+            .map(|l| l.identity.to_string())
+            .collect();
+        of_ada.sort();
+        assert_eq!(of_ada, ["email:ada@example.com", "github.com:1"]);
+        store.delete_link(&forge("1")).await.unwrap();
+        store.delete_link(&forge("1")).await.unwrap();
+        assert_eq!(store.links_of(&ada).await.unwrap().len(), 1);
+
+        // Deleting a learner removes the profile and every link, and only
+        // theirs (ADR-0003 D6).
+        store.delete_learner(&ada).await.unwrap();
+        assert!(store.load_profile(&ada).await.unwrap().is_none());
+        assert!(store.links_of(&ada).await.unwrap().is_empty());
+        assert!(store.load_profile(&bob).await.unwrap().is_some());
+        assert_eq!(store.links_of(&bob).await.unwrap().len(), 1);
+
+        // Link codes.
+        let code = LinkCode::issue("K7Q-29XZ".into(), forge("2"), bob.clone(), now);
+        store.save_link_code(&code).await.unwrap();
+        let loaded = store.load_link_code("K7Q-29XZ").await.unwrap().unwrap();
+        assert_eq!(loaded, code);
+        assert!(store.load_link_code("nope").await.unwrap().is_none());
+
+        // Sessions and graded records.
+        let s = session();
+        store.save_session(&s).await.unwrap();
+        store.save_session(&s).await.unwrap();
+        let loaded = store.load_session(s.key()).await.unwrap().unwrap();
+        assert_eq!(json(&loaded), json(&s));
+        store.delete_session(s.key()).await.unwrap();
+        assert!(store.load_session(s.key()).await.unwrap().is_none());
+        assert!(store.take_session(s.key()).await.unwrap().is_none());
+        store.save_session(&s).await.unwrap();
+        let taken = store.take_session(s.key()).await.unwrap().unwrap();
+        assert_eq!(json(&taken), json(&s));
+        assert!(store.take_session(s.key()).await.unwrap().is_none());
+
+        let graded = GradedSession {
+            key: s.key().clone(),
+            author: s.author().clone(),
+            correct: 2,
+            total: 3,
+            passed: true,
+            at: now,
+        };
+        store.save_graded(&graded).await.unwrap();
+        assert_eq!(store.load_graded(s.key()).await.unwrap(), Some(graded));
+        store.delete_graded(s.key()).await.unwrap();
+        assert!(store.load_graded(s.key()).await.unwrap().is_none());
+
+        // Keys are used verbatim: no collisions between similar keys.
+        for key in ["o/r#1@abc", "o/r#1@abc ", "O/R#1@ABC", "o/r#1@ab'c"] {
+            let mut s = session();
+            s = Session::open(
+                SessionKey(key.into()),
+                s.author().clone(),
+                Vec::new(),
+                3,
+                now,
+            )
+            .unwrap();
+            store.save_session(&s).await.unwrap();
+        }
+        for key in ["o/r#1@abc", "o/r#1@abc ", "O/R#1@ABC", "o/r#1@ab'c"] {
+            let got = store.take_session(&SessionKey(key.into())).await.unwrap();
+            assert_eq!(got.map(|s| s.key().0.clone()).as_deref(), Some(key));
+        }
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "soqrates-store-{name}-{}-{}",
+            std::process::id(),
+            CLAIMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ))
+    }
+
+    #[tokio::test]
+    async fn in_memory_conforms() {
+        conforms(&InMemoryStore::new()).await;
+    }
+
+    // @adr-0005-d5
+    #[tokio::test]
+    async fn store_opens_the_file_store_without_a_database_url() {
+        let dir = temp_dir("open");
+        let store = Store::open(None, dir.clone()).await.unwrap();
+        assert!(matches!(store, Store::File(_)));
+        conforms(&store).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn file_conforms() {
+        let dir = temp_dir("conforms");
+        conforms(&FileStore::new(&dir)).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn in_memory_claims_are_exclusive() {
         exactly_one_claim(Arc::new(InMemoryStore::new())).await;
@@ -310,12 +562,146 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn file_claims_are_exclusive() {
-        let dir = std::env::temp_dir().join(format!(
-            "soqrates-store-claims-{}-{}",
-            std::process::id(),
-            CLAIMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        let dir = temp_dir("claims");
         exactly_one_claim(Arc::new(FileStore::new(&dir))).await;
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // --- SQL database store (ADR-0005) -------------------------------------
+
+    #[cfg(feature = "sqlite")]
+    mod sqlite {
+        use std::path::Path;
+
+        use super::*;
+
+        fn url(dir: &Path) -> String {
+            format!("sqlite://{}?mode=rwc", dir.join("state.db").display())
+        }
+
+        // @adr-0005-d5
+        #[tokio::test]
+        async fn store_opens_the_database_given_a_url() {
+            let store = Store::open(Some("sqlite::memory:"), temp_dir("unused"))
+                .await
+                .unwrap();
+            assert!(matches!(store, Store::Sql(_)));
+            conforms(&store).await;
+        }
+
+        // @adr-0005-d1 @adr-0005-d2 @adr-0005-d6
+        #[tokio::test]
+        async fn in_memory_sqlite_conforms() {
+            conforms(&SqlStore::connect("sqlite::memory:").await.unwrap()).await;
+        }
+
+        // @adr-0005-d1 @adr-0005-d3 @adr-0005-d6
+        #[tokio::test]
+        async fn sqlite_file_conforms_and_survives_a_reconnect() {
+            let dir = temp_dir("sqlite");
+            std::fs::create_dir_all(&dir).unwrap();
+            let store = SqlStore::connect(&url(&dir)).await.unwrap();
+            conforms(&store).await;
+            store.save_session(&session()).await.unwrap();
+            drop(store);
+            // Connecting again finds the schema and the data.
+            let store = SqlStore::connect(&url(&dir)).await.unwrap();
+            assert!(store.load_session(session().key()).await.unwrap().is_some());
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        // @adr-0005-d4
+        #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+        async fn sqlite_claims_are_exclusive() {
+            let dir = temp_dir("sqlite-claims");
+            std::fs::create_dir_all(&dir).unwrap();
+            exactly_one_claim(Arc::new(SqlStore::connect(&url(&dir)).await.unwrap())).await;
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        // @adr-0005-d2
+        #[tokio::test]
+        async fn rows_hold_the_documents_the_file_store_writes() {
+            let dir = temp_dir("same-docs");
+            std::fs::create_dir_all(&dir).unwrap();
+            let files = FileStore::new(dir.join("files"));
+            let sql = SqlStore::connect(&url(&dir)).await.unwrap();
+            let profile = LearnerProfile::new(LearnerId("ada".into()));
+            files.save_profile(&profile).await.unwrap();
+            sql.save_profile(&profile).await.unwrap();
+            let file_doc: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(files.path("profiles", "ada")).unwrap())
+                    .unwrap();
+            let row_doc: serde_json::Value = serde_json::from_str(
+                &sql.raw_doc_for_test("soqrates_profiles", "learner", "ada")
+                    .await,
+            )
+            .unwrap();
+            assert_eq!(row_doc, file_doc);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        // @adr-0005-d3
+        #[tokio::test]
+        async fn a_newer_schema_is_refused() {
+            let dir = temp_dir("sqlite-newer");
+            std::fs::create_dir_all(&dir).unwrap();
+            let store = SqlStore::connect(&url(&dir)).await.unwrap();
+            store.bump_schema_for_test(SCHEMA_VERSION + 1).await;
+            drop(store);
+            let err = SqlStore::connect(&url(&dir)).await.unwrap_err();
+            assert!(err.to_string().contains("newer"), "{err}");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        // @adr-0005-d5
+        #[tokio::test]
+        async fn connection_errors_never_show_the_url() {
+            let err = SqlStore::connect("sqlite:///nonexistent-dir/x/state.db?secret=hunter2")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(!err.contains("hunter2"), "{err}");
+            assert!(err.contains("SQLite"), "{err}");
+        }
+    }
+
+    /// Run against a real PostgreSQL only when `SOQRATES_TEST_POSTGRES_URL`
+    /// is set, e.g. `postgres://postgres@localhost/soqrates_test`; the
+    /// tests pass without it, so the suite stays hermetic (ADR-0001 D12).
+    #[cfg(feature = "postgres")]
+    mod postgres {
+        use super::*;
+
+        async fn store() -> Option<SqlStore> {
+            let url = std::env::var("SOQRATES_TEST_POSTGRES_URL").ok()?;
+            let store = SqlStore::connect(&url).await.unwrap();
+            store.clear_for_test().await;
+            Some(store)
+        }
+
+        // @adr-0005-d4 @adr-0005-d6
+        // One test, so the shared database is never used by two at once.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+        async fn postgres_conforms_and_claims_are_exclusive() {
+            let Some(store) = store().await else {
+                eprintln!("SOQRATES_TEST_POSTGRES_URL is not set; skipping");
+                return;
+            };
+            conforms(&store).await;
+            store.clear_for_test().await;
+            exactly_one_claim(Arc::new(store)).await;
+            // Concurrent connects (e.g. two CI runners) create the schema once.
+            let url = std::env::var("SOQRATES_TEST_POSTGRES_URL").unwrap();
+            let connects: Vec<_> = (0..8)
+                .map(|_| {
+                    let url = url.clone();
+                    tokio::spawn(async move { SqlStore::connect(&url).await.map(|_| ()) })
+                })
+                .collect();
+            for c in connects {
+                c.await.unwrap().unwrap();
+            }
+        }
     }
 }
