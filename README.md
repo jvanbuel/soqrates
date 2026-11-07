@@ -1,6 +1,11 @@
-# soqrates
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/soqrates-lockup-dark.svg">
+    <img src="assets/logo/soqrates-lockup.svg" alt="soqrates: the unexamined PR is not worth merging" width="480">
+  </picture>
+</p>
 
-> *The unexamined PR is not worth merging.*
+# soqrates
 
 A learning companion for code changes. Soqrates quizzes the author of a change
 about the concepts in it, adapting to their level and using spaced
@@ -92,6 +97,7 @@ flowchart LR
 | `crates/soqrates-spec` | Executable ADRs: architecture tests, traceability, BDD acceptance tests. |
 | `skills/` | Portable `SKILL.md` skills. |
 | `evals/` | Eval harness and benchmarks (Python, Inspect AI). |
+| `assets/logo/` | The logo: a question mark drawn as git history, with the merge commit as its dot. |
 
 ## Executable ADRs
 
