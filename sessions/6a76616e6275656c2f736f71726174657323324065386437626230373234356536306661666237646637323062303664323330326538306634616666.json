@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#2@e8d7bb07245e60fafb7df720b06d2302e80f4aff",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.concurrency.job-level/mc",
+      "concept": "github-actions.concurrency.job-level",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow is triggered by many events, including issue comments that are irrelevant and whose job is skipped by an `if:` condition. A real run is waiting in a concurrency group, and an irrelevant comment event then arrives. Why does moving the `concurrency:` block from the workflow level to the job that carries the `if:` fix the problem of the real run being displaced?",
+          "options": [
+            "The job-level group applies to all jobs in the workflow at once, so one group value now serialises every job, including those from other workflows.",
+            "Job-level concurrency lets the `if:` condition see the state of other queued runs, so it can decide whether to skip based on what is pending.",
+            "The job-level group makes the skipped jobs run faster, because the runner is reserved before the `if:` is evaluated, so the real run finishes sooner.",
+            "A job skipped by its `if:` never enters the concurrency group, so irrelevant comment events no longer cancel or displace a pending real run."
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "At workflow level, every triggered run enters the concurrency group before any `if:` is evaluated, so an irrelevant run can displace a pending real run. At job level, a job skipped by its `if:` never enters the group, so only runs that actually do work compete for it. Moving the group does not change what the `if:` condition evaluates; it only changes when a run joins the group."
+    },
+    {
+      "id": "github-actions.conditions.event-filtering/mc",
+      "concept": "github-actions.conditions.event-filtering",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow runs on issue_comment with type edited, and should act only when a bot's own session comment has a checkbox ticked. Without any filtering, what happens when a user edits some unrelated comment on the issue, and what is the right way to prevent a run from doing work?",
+          "options": [
+            "Nothing is needed, because the edited trigger type only fires when a checkbox in a comment is ticked, so extra conditions are redundant.",
+            "Add an if expression on the job that checks the comment author, that the body contains the session marker, and that it contains a ticked checkbox, so unrelated edits skip the job.",
+            "Filter only on the comment author in the if expression, because the marker and checkbox are already guaranteed by the bot's own comments.",
+            "Check the conditions in the first step of the job and call exit 1 on mismatch, since job-level if expressions cannot read the event payload."
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "Because the edited event fires for any comment edit, the job's if expression must check the event payload, such as the comment author being the bot, the body containing the session marker, and the checkbox being ticked. When any condition is false the job is skipped. Relying on the workflow trigger alone or on later steps would still start runs for unrelated edits."
+    },
+    {
+      "id": "github-actions.apps.token-and-triggers/mc",
+      "concept": "github-actions.apps.token-and-triggers",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow posts and later edits a PR comment. The author switches from GITHUB_TOKEN to a GitHub App installation token (generated from an app ID and private key), keeping the workflow triggered on issue_comment and pull_request events. What is the most important consequence of this switch that the author must handle?",
+          "options": [
+            "The workflow will fail with a permissions error, because installation tokens cannot edit comments that were created by a different identity.",
+            "Nothing changes, because the app token is treated like GITHUB_TOKEN and its events never trigger workflows, so no loop is possible.",
+            "The app token expires immediately after creation, so the workflow must regenerate it for each API call to avoid retriggering.",
+            "The workflow can now re-trigger itself on its own comment edits, so it needs a filter such as ignoring events whose sender is the app's bot."
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "Events created with GITHUB_TOKEN deliberately do not start new workflow runs, but events created with an app installation token do. A workflow that edits a comment or PR with the app token can therefore retrigger itself, so it needs a guard such as ignoring events whose actor is the app's bot."
+    }
+  ],
+  "created_at": "2026-11-07T12:30:49.897391063Z"
+}
