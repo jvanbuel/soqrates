@@ -98,9 +98,11 @@ pub fn render_questions(session: &Session) -> String {
     );
     out.push_str("```\n/soqrates answer\n1. b\n2. Your answer in your own words\n```\n\n");
     out.push_str(
-        "An answer in your own words may span several lines. You can post a new \
-         answer comment to replace an earlier one; the latest one counts. Only \
-         answers from the author of this pull request count.\n",
+        "An answer in your own words may span several lines. Until your answers \
+         are graded, you can post a new answer comment to replace an earlier \
+         one; the latest one counts. After grading, answers for this commit are \
+         final; a new push asks new questions. Only answers from the author of \
+         this pull request count.\n",
     );
     out
 }

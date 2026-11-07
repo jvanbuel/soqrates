@@ -395,29 +395,17 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let pending = session.clone();
         let result = session.conclude(grades, self.config.pass_threshold, now);
 
-        // Grade at most once (ADR-0002 D6): end the session and record that
-        // it was graded before recording reviews, so a retry finds nothing
-        // to grade instead of recording the reviews twice.
-        session_store.delete_session(key).await?;
-        let correct = result.grades.iter().filter(|(_, g)| g.is_correct()).count();
-        session_store
-            .save_graded(&GradedSession {
-                key: key.clone(),
-                author: author.clone(),
-                correct,
-                total: result.grades.len(),
-                passed: result.passed,
-                at: now,
-            })
-            .await?;
-
+        // Prepare every write before making any, so that a failure part-way
+        // can be rolled back (ADR-0002 D6).
         let place = self.place(&author).await?;
         let identity = author.identity()?;
-        let mut primary = Self::load_or_new(place.primary, &place.learner).await?;
-        let mut project = match place.project {
+        let original_primary = Self::load_or_new(place.primary, &place.learner).await?;
+        let original_project = match place.project {
             Some(store) => Some(Self::load_or_new(store, &place.learner).await?),
             None => None,
         };
+        let mut primary = original_primary.clone();
+        let mut project = original_project.clone();
         let mut events: Vec<DomainEvent> = Vec::new();
         for (q, (_, grade)) in questions.iter().zip(&result.grades) {
             let profile = match (&mut project, q.scope) {
@@ -432,8 +420,23 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             );
         }
         events.push(result.event.into());
+        let correct = result.grades.iter().filter(|(_, g)| g.is_correct()).count();
+        let graded = GradedSession {
+            key: key.clone(),
+            author: author.clone(),
+            correct,
+            total: result.grades.len(),
+            passed: result.passed,
+            at: now,
+        };
 
-        let saved = async {
+        // Grade at most once (ADR-0002 D6): end the session and record that
+        // it was graded before saving reviews, so a retry finds nothing left
+        // to grade. If any write fails, undo them all so the author can
+        // answer again and is graded exactly once.
+        let committed = async {
+            session_store.delete_session(key).await?;
+            session_store.save_graded(&graded).await?;
             place.primary.save_profile(&primary).await?;
             if let (Some(store), Some(p)) = (place.project, &project) {
                 store.save_profile(p).await?;
@@ -441,8 +444,12 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             Ok::<(), Error>(())
         }
         .await;
-        if let Err(e) = saved {
-            // Keep the session answerable if the reviews could not be saved.
+        if let Err(e) = committed {
+            let _ = place.primary.save_profile(&original_primary).await;
+            if let (Some(store), Some(p)) = (place.project, &original_project) {
+                let _ = store.save_profile(p).await;
+            }
+            let _ = session_store.delete_graded(key).await;
             let _ = session_store.save_session(&pending).await;
             return Err(e);
         }

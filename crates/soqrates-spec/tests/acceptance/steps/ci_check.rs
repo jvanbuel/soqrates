@@ -8,7 +8,7 @@ use soqrates_core::ports::StateStore;
 use soqrates_core::{ConceptId, PrRef, PullRequest, Session};
 
 use super::{answer_table, author, check_status, concepts, correctness, quoted};
-use crate::fakes::{FakeExaminer, diff_touching};
+use crate::fakes::{AnyStore, FakeExaminer, diff_touching};
 use crate::world::SpecWorld;
 
 fn pr_ref(repo: &str, number: u64) -> PrRef {
@@ -57,6 +57,17 @@ async fn check_runs(w: &mut SpecWorld) {
 #[given("posting the questions fails once")]
 fn posting_fails_once(w: &mut SpecWorld) {
     w.scm.state.lock().unwrap().fail_next_post = true;
+}
+
+#[given("saving the learner profile fails once")]
+fn profile_save_fails_once(w: &mut SpecWorld) {
+    let store = std::mem::replace(&mut w.app.store, AnyStore::memory());
+    w.app.store = match store {
+        AnyStore::Memory(m) => {
+            AnyStore::FailingProfileSave(m, std::sync::atomic::AtomicBool::new(true))
+        }
+        other => panic!("expected an in-memory store, got {other:?}"),
+    };
 }
 
 #[when("the Soqrates check runs and fails")]

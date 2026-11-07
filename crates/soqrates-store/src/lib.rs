@@ -101,6 +101,10 @@ impl StateStore for InMemoryStore {
     async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         Ok(self.with(|d| d.graded.get(key).cloned()))
     }
+    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
+        self.with(|d| d.graded.remove(key));
+        Ok(())
+    }
 }
 
 impl LearnerStore for InMemoryStore {}
@@ -226,6 +230,9 @@ impl StateStore for FileStore {
     }
     async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         self.read("graded", &key.0)
+    }
+    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
+        self.remove("graded", &key.0)
     }
 }
 

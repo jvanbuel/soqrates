@@ -394,6 +394,9 @@ pub enum AnyStore {
     /// call fails with `Error::Port` (ADR-0003 D4). Steps can still inspect
     /// the wrapped store with [`AnyStore::inner`].
     Unreachable(Box<AnyStore>),
+    /// An in-memory store whose next `save_profile` fails while the flag is
+    /// set, as on a transient write error.
+    FailingProfileSave(InMemoryStore, std::sync::atomic::AtomicBool),
 }
 
 impl AnyStore {
@@ -432,6 +435,7 @@ macro_rules! delegate {
             AnyStore::Memory(s) => s.$method($($arg),*).await,
             AnyStore::File(s) => s.$method($($arg),*).await,
             AnyStore::Unreachable(_) => Err(unreachable()),
+            AnyStore::FailingProfileSave(s, _) => s.$method($($arg),*).await,
         }
     };
 }
@@ -441,6 +445,11 @@ impl StateStore for AnyStore {
         delegate!(self, load_profile(learner))
     }
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
+        if let AnyStore::FailingProfileSave(_, fail) = self
+            && fail.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(Error::Port("the learner profile could not be saved".into()));
+        }
         delegate!(self, save_profile(profile))
     }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
@@ -478,6 +487,9 @@ impl StateStore for AnyStore {
     }
     async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         delegate!(self, load_graded(key))
+    }
+    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
+        delegate!(self, delete_graded(key))
     }
 }
 

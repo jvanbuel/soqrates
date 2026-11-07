@@ -54,6 +54,8 @@ pub trait StateStore: Send + Sync {
         &self,
         key: &SessionKey,
     ) -> impl Future<Output = Result<Option<GradedSession>>> + Send;
+    /// Undo [`StateStore::save_graded`] when grading is rolled back.
+    fn delete_graded(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// The store holding the profiles of linked learners, reachable from several
