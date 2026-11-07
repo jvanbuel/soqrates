@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Stable identity of an author, e.g. `github:12345` or `email:jan@example.com`
+/// Stable identity of an author, e.g. `github.com:12345` or `email:jan@example.com`
 /// (ADR-0001 D5).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AuthorId(pub String);

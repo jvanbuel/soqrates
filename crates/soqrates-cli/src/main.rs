@@ -290,9 +290,14 @@ async fn run_identity(cli: &Cli, command: &IdentityCommand) -> Result<ExitCode, 
     Ok(ExitCode::SUCCESS)
 }
 
+/// The installed git hook. It fails open: without `soqrates` on `PATH` (as
+/// in many IDE commits) it allows the commit (ADR-0001 D9).
+const HOOK_SCRIPT: &str = "#!/bin/sh\n\
+command -v soqrates >/dev/null 2>&1 || exit 0\n\
+exec soqrates hook pre-commit\n";
+
 fn install_hook(force: bool) -> Result<ExitCode, String> {
-    let root = local::repo_root(Vcs::Git).ok_or("not in a git repository")?;
-    let path = root.join(".git").join("hooks").join("pre-commit");
+    let path = local::git_hook_path("pre-commit")?;
     if path.exists() && !force {
         return Err(format!(
             "{} exists; pass --force to replace it",
@@ -300,8 +305,7 @@ fn install_hook(force: bool) -> Result<ExitCode, String> {
         ));
     }
     std::fs::create_dir_all(path.parent().expect("has parent")).map_err(|e| e.to_string())?;
-    std::fs::write(&path, "#!/bin/sh\nexec soqrates hook pre-commit\n")
-        .map_err(|e| e.to_string())?;
+    std::fs::write(&path, HOOK_SCRIPT).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -352,6 +356,16 @@ mod tests {
         Cli::try_parse_from(["soqrates", "ci", "--repo", "o/r", "--pr", "3"]).unwrap();
         Cli::try_parse_from(["soqrates", "--mode", "blocking", "mcp"]).unwrap();
         Cli::try_parse_from(["soqrates", "identity", "use", "github.com:1001"]).unwrap();
+    }
+
+    #[test]
+    fn hook_script_fails_open_without_soqrates() {
+        let out = std::process::Command::new("/bin/sh")
+            .args(["-c", HOOK_SCRIPT])
+            .env("PATH", "/nonexistent")
+            .status()
+            .unwrap();
+        assert!(out.success());
     }
 
     #[test]

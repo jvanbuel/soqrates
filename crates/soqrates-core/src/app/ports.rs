@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use crate::Result;
 use crate::app::engine::SessionOutcome;
 use crate::assessment::{Answer, Concept, Diff, Grade, Question, QuestionFormat};
-use crate::delivery::{CheckStatus, PrRef, PullRequest, Session};
+use crate::delivery::{CheckStatus, GradedSession, PrRef, PullRequest, Session};
 use crate::ids::{Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 
@@ -47,6 +47,13 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<Session>>> + Send;
     fn save_session(&self, session: &Session) -> impl Future<Output = Result<()>> + Send;
     fn delete_session(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
+
+    /// Record that a session was graded (ADR-0002 D6).
+    fn save_graded(&self, graded: &GradedSession) -> impl Future<Output = Result<()>> + Send;
+    fn load_graded(
+        &self,
+        key: &SessionKey,
+    ) -> impl Future<Output = Result<Option<GradedSession>>> + Send;
 }
 
 /// The store holding the profiles of linked learners, reachable from several

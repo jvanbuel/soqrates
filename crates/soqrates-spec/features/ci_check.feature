@@ -120,3 +120,22 @@ Feature: The CI check is an asynchronous round trip
     Then the check is Failure
     And the history of "github:1001" has 2 graded answers
     And the history of "github:2002" has 1 graded answer
+
+  @adr-0001-d8 @adr-0002-d6
+  Scenario: Running the check again after grading reports the result without asking again
+    Given the Soqrates check has run
+    And the author replies with correct answers
+    And the Soqrates check has run
+    When the Soqrates check runs
+    Then the check is Success
+    And the questions were posted 1 time
+    And the history of "github:1001" has 2 graded answers
+
+  @adr-0001-d8
+  Scenario: When the questions cannot be posted, the next run asks again
+    Given posting the questions fails once
+    When the Soqrates check runs and fails
+    Then no pending session is stored for the current head
+    When the Soqrates check runs
+    Then the check is Pending
+    And the questions were posted 1 time

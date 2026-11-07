@@ -54,6 +54,20 @@ async fn check_runs(w: &mut SpecWorld) {
     w.status = Some(status);
 }
 
+#[given("posting the questions fails once")]
+fn posting_fails_once(w: &mut SpecWorld) {
+    w.scm.state.lock().unwrap().fail_next_post = true;
+}
+
+#[when("the Soqrates check runs and fails")]
+async fn check_runs_and_fails(w: &mut SpecWorld) {
+    let pr = w.current_pr().clone();
+    assert!(
+        run_check(&w.app, &w.scm, &pr).await.is_err(),
+        "expected the check run to fail"
+    );
+}
+
 #[given(regex = r"^the author replies with (correct|wrong) answers$")]
 fn replies(w: &mut SpecWorld, how: String) {
     let s = latest_posted(w);

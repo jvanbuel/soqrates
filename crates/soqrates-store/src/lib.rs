@@ -8,7 +8,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    Error, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, Result, Session, SessionKey,
+    Error, GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, Result,
+    Session, SessionKey,
 };
 
 #[derive(Debug, Default)]
@@ -17,6 +18,7 @@ struct Data {
     links: BTreeMap<Identity, IdentityLink>,
     codes: BTreeMap<String, LinkCode>,
     sessions: BTreeMap<SessionKey, Session>,
+    graded: BTreeMap<SessionKey, GradedSession>,
 }
 
 /// Keeps everything in memory. Useful for tests and for the MCP server's
@@ -91,6 +93,13 @@ impl StateStore for InMemoryStore {
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         self.with(|d| d.sessions.remove(key));
         Ok(())
+    }
+    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
+        self.with(|d| d.graded.insert(graded.key.clone(), graded.clone()));
+        Ok(())
+    }
+    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
+        Ok(self.with(|d| d.graded.get(key).cloned()))
     }
 }
 
@@ -211,6 +220,12 @@ impl StateStore for FileStore {
     }
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         self.remove("sessions", &key.0)
+    }
+    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
+        self.write("graded", &graded.key.0, graded)
+    }
+    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
+        self.read("graded", &key.0)
     }
 }
 

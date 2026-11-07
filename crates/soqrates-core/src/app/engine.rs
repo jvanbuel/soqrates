@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::events::DomainEvent;
 use crate::app::ports::{Clock, Examiner, StateStore};
 use crate::assessment::{Answer, Concept, ConceptScope, Diff, Grade};
-use crate::delivery::{Mode, Session};
+use crate::delivery::{GradedSession, Mode, Session};
 use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, Level, LinkCode, LinkRejection, policy};
 use crate::{Error, Result};
@@ -240,7 +240,18 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             }
         }
         due.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
-        Ok(due.into_iter().map(|(_, c, s)| (c, s)).collect())
+        // A concept can have a card in both stores if it was classified
+        // differently over time. Ask it once, at its earliest position, and
+        // keep the safer Project scope (ADR-0002 D6, ADR-0003 D5).
+        let mut unique: Vec<(ConceptId, ConceptScope)> = Vec::new();
+        for (_, concept, scope) in due {
+            match unique.iter_mut().find(|(c, _)| *c == concept) {
+                Some(existing) if scope == ConceptScope::Project => existing.1 = scope,
+                Some(_) => {}
+                None => unique.push((concept, scope)),
+            }
+        }
+        Ok(unique)
     }
 
     /// Concepts whose review is due for `author` (ADR-0001 D6, ADR-0002 D8).
@@ -331,6 +342,31 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         Ok(None)
     }
 
+    /// Remove the pending session `key` without grading it, e.g. when its
+    /// questions could not be posted.
+    pub async fn discard_session(&self, key: &SessionKey) -> Result<()> {
+        if let Some((_, store)) = self.find_session(key).await? {
+            store.delete_session(key).await?;
+        }
+        Ok(())
+    }
+
+    /// The record of the graded session `key`, if it was graded.
+    pub async fn graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
+        match self.store.load_graded(key).await {
+            Ok(Some(g)) => return Ok(Some(g)),
+            Ok(None) => {}
+            Err(Error::Port(_)) if !self.org_stores.is_empty() => {}
+            Err(e) => return Err(e),
+        }
+        for store in self.org_stores.values() {
+            if let Some(g) = store.load_graded(key).await? {
+                return Ok(Some(g));
+            }
+        }
+        Ok(None)
+    }
+
     /// The pending (not yet graded) session `key`, if any.
     pub async fn pending_session(&self, key: &SessionKey) -> Result<Option<Session>> {
         Ok(self.find_session(key).await?.map(|(s, _)| s))
@@ -356,7 +392,24 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         }
         let author = session.author().clone();
         let questions = session.questions().to_vec();
+        let pending = session.clone();
         let result = session.conclude(grades, self.config.pass_threshold, now);
+
+        // Grade at most once (ADR-0002 D6): end the session and record that
+        // it was graded before recording reviews, so a retry finds nothing
+        // to grade instead of recording the reviews twice.
+        session_store.delete_session(key).await?;
+        let correct = result.grades.iter().filter(|(_, g)| g.is_correct()).count();
+        session_store
+            .save_graded(&GradedSession {
+                key: key.clone(),
+                author: author.clone(),
+                correct,
+                total: result.grades.len(),
+                passed: result.passed,
+                at: now,
+            })
+            .await?;
 
         let place = self.place(&author).await?;
         let identity = author.identity()?;
@@ -380,11 +433,19 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         }
         events.push(result.event.into());
 
-        place.primary.save_profile(&primary).await?;
-        if let (Some(store), Some(p)) = (place.project, &project) {
-            store.save_profile(p).await?;
+        let saved = async {
+            place.primary.save_profile(&primary).await?;
+            if let (Some(store), Some(p)) = (place.project, &project) {
+                store.save_profile(p).await?;
+            }
+            Ok::<(), Error>(())
         }
-        session_store.delete_session(key).await?;
+        .await;
+        if let Err(e) = saved {
+            // Keep the session answerable if the reviews could not be saved.
+            let _ = session_store.save_session(&pending).await;
+            return Err(e);
+        }
 
         Ok(SessionOutcome {
             grades: result.grades,

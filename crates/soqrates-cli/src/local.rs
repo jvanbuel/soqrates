@@ -64,6 +64,23 @@ pub fn host_of_remote(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_lowercase())
 }
 
+/// Where git runs the pre-commit hook from. Asks git, so that linked
+/// worktrees, submodules and `core.hooksPath` are respected.
+pub fn git_hook_path(name: &str) -> Result<std::path::PathBuf, String> {
+    let path = run(
+        "git",
+        &["rev-parse", "--git-path", &format!("hooks/{name}")],
+    )?;
+    let path = std::path::PathBuf::from(path.trim());
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|e| e.to_string())?
+            .join(path)
+    })
+}
+
 /// The root of the repository the hook runs in.
 pub fn repo_root(vcs: Vcs) -> Option<std::path::PathBuf> {
     let root = match vcs {

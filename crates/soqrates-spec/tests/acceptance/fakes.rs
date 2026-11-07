@@ -11,8 +11,9 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
     Answer, AnswerBody, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error, Grade,
-    Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PullRequest, Question,
-    QuestionBody, QuestionFormat, QuestionId, Result, Session, SessionKey, SessionOutcome,
+    GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PullRequest,
+    Question, QuestionBody, QuestionFormat, QuestionId, Result, Session, SessionKey,
+    SessionOutcome,
 };
 use soqrates_store::{FileStore, InMemoryStore};
 
@@ -250,6 +251,8 @@ pub struct ScmState {
     pub summaries: Vec<(PrRef, String)>,
     /// Replies by the author, keyed by the session they answer.
     pub replies: HashMap<SessionKey, Vec<Answer>>,
+    /// Make the next `post_questions` call fail, as on a transient error.
+    pub fail_next_post: bool,
 }
 
 /// A fake forge. Records what Soqrates posts and lets steps inject the
@@ -327,11 +330,11 @@ impl ScmProvider for FakeScm {
     }
 
     async fn post_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
-        self.state
-            .lock()
-            .unwrap()
-            .posted
-            .push((pr.clone(), session.clone()));
+        let mut state = self.state.lock().unwrap();
+        if std::mem::take(&mut state.fail_next_post) {
+            return Err(Error::Port("the forge is unavailable".into()));
+        }
+        state.posted.push((pr.clone(), session.clone()));
         Ok(())
     }
 
@@ -469,6 +472,12 @@ impl StateStore for AnyStore {
     }
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         delegate!(self, delete_session(key))
+    }
+    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
+        delegate!(self, save_graded(graded))
+    }
+    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
+        delegate!(self, load_graded(key))
     }
 }
 

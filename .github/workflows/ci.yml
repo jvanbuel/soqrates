@@ -8,12 +8,17 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
 jobs:
   check:
     name: fmt, clippy, tests (incl. architecture + ADR traceability + acceptance ratchet)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       # rustup on the runner picks up rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
@@ -31,6 +36,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p soqrates-spec --test acceptance
         env:

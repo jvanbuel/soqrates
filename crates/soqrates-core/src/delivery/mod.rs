@@ -45,6 +45,20 @@ pub struct Session {
     created_at: DateTime<Utc>,
 }
 
+/// The record that a session was graded, kept so that grading happens at
+/// most once per session key (ADR-0002 D6) and a re-run of the CI check on
+/// the same head reports the result instead of asking again (ADR-0001 D8).
+/// Holds no question or answer text (ADR-0003 D5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GradedSession {
+    pub key: SessionKey,
+    pub author: AuthorId,
+    pub correct: usize,
+    pub total: usize,
+    pub passed: bool,
+    pub at: DateTime<Utc>,
+}
+
 /// The result of concluding a session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionResult {

@@ -35,6 +35,23 @@ where
     let pull = scm.pull_request(pr).await?;
     let key = session_key(&pull);
 
+    // Already graded for this head: report the result again, ask nothing.
+    if let Some(graded) = app.graded(&key).await? {
+        let status = final_status(graded.passed, app.config.mode);
+        let summary = format!(
+            "{} of {} answers correct: {}.",
+            graded.correct,
+            graded.total,
+            if graded.passed {
+                "passed"
+            } else {
+                "not passed"
+            }
+        );
+        scm.set_check(pr, status, &summary).await?;
+        return Ok(status);
+    }
+
     let Some(session) = app.pending_session(&key).await? else {
         let session = app
             .start_session(key.clone(), &pull.author, &pull.diff)
@@ -44,7 +61,11 @@ where
             let outcome = app.submit(&key, &[]).await?;
             return finish(app, scm, pr, &outcome).await;
         }
-        scm.post_questions(pr, &session).await?;
+        if let Err(e) = scm.post_questions(pr, &session).await {
+            // Don't leave a session whose questions nobody can see.
+            let _ = app.discard_session(&key).await;
+            return Err(e);
+        }
         let summary = format!(
             "Soqrates asked {} question(s) about this change. Reply to answer them.{}",
             session.questions().len(),
@@ -84,11 +105,7 @@ where
     C: Clock,
     P: ScmProvider,
 {
-    let status = match (outcome.passed, app.config.mode) {
-        (true, _) => CheckStatus::Success,
-        (false, Mode::Blocking) => CheckStatus::Failure,
-        (false, Mode::Advisory) => CheckStatus::Neutral,
-    };
+    let status = final_status(outcome.passed, app.config.mode);
     let correct = outcome
         .grades
         .iter()
@@ -106,6 +123,15 @@ where
     summary.push_str(&location_note(&outcome.profile_location));
     scm.set_check(pr, status, &summary).await?;
     Ok(status)
+}
+
+/// The status of a graded session (ADR-0001 D8).
+fn final_status(passed: bool, mode: Mode) -> CheckStatus {
+    match (passed, mode) {
+        (true, _) => CheckStatus::Success,
+        (false, Mode::Blocking) => CheckStatus::Failure,
+        (false, Mode::Advisory) => CheckStatus::Neutral,
+    }
 }
 
 /// Tells the learner when the learner store was unreachable (ADR-0003 D4).
