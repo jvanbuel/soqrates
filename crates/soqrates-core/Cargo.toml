@@ -1,0 +1,13 @@
+[package]
+name = "soqrates-core"
+description = "Domain core of Soqrates: learner model, question policy, FSRS scheduling and workflows. No I/O (ADR-0001 D2)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+rs-fsrs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

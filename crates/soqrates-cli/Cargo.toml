@@ -1,0 +1,18 @@
+[package]
+name = "soqrates-cli"
+description = "The `soqrates` binary: git/jj hooks, CI check and MCP server (ADR-0001 D1)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "soqrates"
+path = "src/main.rs"
+
+[dependencies]
+soqrates-core.workspace = true
+soqrates-store.workspace = true
+soqrates-llm.workspace = true
+soqrates-scm-github.workspace = true
+soqrates-mcp.workspace = true
+tokio.workspace = true

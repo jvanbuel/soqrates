@@ -1,0 +1,10 @@
+[package]
+name = "soqrates-scm-github"
+description = "ScmProvider adapter for GitHub (ADR-0001 D4)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+soqrates-core.workspace = true
+octocrab = "0.54"

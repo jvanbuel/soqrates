@@ -1,0 +1,10 @@
+[package]
+name = "soqrates-llm"
+description = "Examiner adapter on top of Rig (ADR-0001 D3)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+soqrates-core.workspace = true
+rig-core = "0.46"
