@@ -482,6 +482,9 @@ impl StateStore for AnyStore {
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         delegate!(self, delete_session(key))
     }
+    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
+        delegate!(self, take_session(key))
+    }
     async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
         delegate!(self, save_graded(graded))
     }

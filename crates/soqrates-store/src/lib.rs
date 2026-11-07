@@ -94,6 +94,9 @@ impl StateStore for InMemoryStore {
         self.with(|d| d.sessions.remove(key));
         Ok(())
     }
+    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
+        Ok(self.with(|d| d.sessions.remove(key)))
+    }
     async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
         self.with(|d| d.graded.insert(graded.key.clone(), graded.clone()));
         Ok(())
@@ -175,6 +178,9 @@ impl FileStore {
     }
 }
 
+/// Distinguishes claims made by one process.
+static CLAIMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn io(e: std::io::Error) -> Error {
     Error::Port(e.to_string())
 }
@@ -225,6 +231,25 @@ impl StateStore for FileStore {
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         self.remove("sessions", &key.0)
     }
+    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
+        // Claim by renaming: rename is atomic, so exactly one caller wins.
+        let path = self.path("sessions", &key.0);
+        let claim = path.with_extension(format!(
+            "json.claimed-{}-{}",
+            std::process::id(),
+            CLAIMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        match std::fs::rename(&path, &claim) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(io(e)),
+        }
+        let bytes = std::fs::read(&claim).map_err(io)?;
+        let _ = std::fs::remove_file(&claim);
+        serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| Error::Port(format!("corrupt session {:?}: {e}", key.0)))
+    }
     async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
         self.write("graded", &graded.key.0, graded)
     }
@@ -237,3 +262,60 @@ impl StateStore for FileStore {
 }
 
 impl LearnerStore for FileStore {}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use soqrates_core::{AuthorId, Session, SessionKey};
+
+    use super::*;
+
+    fn session() -> Session {
+        Session::open(
+            SessionKey("o/r#1@abc".into()),
+            AuthorId("github.com:1".into()),
+            Vec::new(),
+            3,
+            chrono::Utc::now(),
+        )
+        .unwrap()
+    }
+
+    /// Of many concurrent claims on one session, exactly one wins
+    /// (ADR-0002 D6).
+    async fn exactly_one_claim<S: StateStore + 'static>(store: Arc<S>) {
+        let key = session().key().clone();
+        store.save_session(&session()).await.unwrap();
+        let handles: Vec<_> = (0..16)
+            .map(|_| {
+                let (store, key) = (store.clone(), key.clone());
+                tokio::spawn(async move { store.take_session(&key).await.unwrap() })
+            })
+            .collect();
+        let mut won = 0;
+        for h in handles {
+            if h.await.unwrap().is_some() {
+                won += 1;
+            }
+        }
+        assert_eq!(won, 1);
+        assert!(store.load_session(&key).await.unwrap().is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn in_memory_claims_are_exclusive() {
+        exactly_one_claim(Arc::new(InMemoryStore::new())).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn file_claims_are_exclusive() {
+        let dir = std::env::temp_dir().join(format!(
+            "soqrates-store-claims-{}-{}",
+            std::process::id(),
+            CLAIMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        exactly_one_claim(Arc::new(FileStore::new(&dir))).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

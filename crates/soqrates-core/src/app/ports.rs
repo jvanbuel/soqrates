@@ -47,6 +47,12 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<Session>>> + Send;
     fn save_session(&self, session: &Session) -> impl Future<Output = Result<()>> + Send;
     fn delete_session(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
+    /// Atomically remove and return the pending session `key`. Of several
+    /// concurrent callers, at most one gets `Some` (ADR-0002 D6).
+    fn take_session(
+        &self,
+        key: &SessionKey,
+    ) -> impl Future<Output = Result<Option<Session>>> + Send;
 
     /// Record that a session was graded (ADR-0002 D6).
     fn save_graded(&self, graded: &GradedSession) -> impl Future<Output = Result<()>> + Send;

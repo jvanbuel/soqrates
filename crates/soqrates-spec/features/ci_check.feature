@@ -151,3 +151,10 @@ Feature: The CI check is an asynchronous round trip
     Then the check is Success
     And the questions were posted 1 time
     And the history of "github:1001" has 2 graded answers
+
+  @adr-0002-d6
+  Scenario: Two simultaneous submissions grade the session once
+    Given the Soqrates check has run
+    When the author's correct answers are submitted twice at the same time
+    Then the history of "github:1001" has 2 graded answers
+    And no pending session is stored for the current head

@@ -54,6 +54,27 @@ async fn check_runs(w: &mut SpecWorld) {
     w.status = Some(status);
 }
 
+#[when("the author's correct answers are submitted twice at the same time")]
+async fn submitted_twice_concurrently(w: &mut SpecWorld) {
+    let s = latest_posted(w);
+    let answers: Vec<_> = s
+        .questions()
+        .iter()
+        .map(|q| FakeExaminer::answer(q, true))
+        .collect();
+    let (a, b) = tokio::join!(
+        w.app.submit(s.key(), &answers),
+        w.app.submit(s.key(), &answers)
+    );
+    let ok = [a.is_ok(), b.is_ok()].iter().filter(|x| **x).count();
+    assert_eq!(ok, 1, "exactly one submission is graded: {a:?} / {b:?}");
+    let lost = if a.is_err() { a } else { b };
+    assert!(
+        matches!(lost, Err(soqrates_core::Error::NotFound(_))),
+        "the other submission finds no session: {lost:?}"
+    );
+}
+
 #[given("posting the questions fails once")]
 fn posting_fails_once(w: &mut SpecWorld) {
     w.scm.state.lock().unwrap().fail_next_post = true;

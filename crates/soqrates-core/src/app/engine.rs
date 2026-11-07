@@ -377,11 +377,51 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// `NotFound` for an unknown or already graded session and `Invalid`
     /// for answers that don't fit the session (ADR-0002 D6).
     pub async fn submit(&self, key: &SessionKey, answers: &[Answer]) -> Result<SessionOutcome> {
-        let now = self.clock.now();
+        // Claim the session atomically: of several concurrent submissions,
+        // exactly one gets it (ADR-0002 D6).
         let (session, session_store) = self
-            .find_session(key)
+            .take_session(key)
             .await?
             .ok_or_else(|| Error::NotFound(format!("session {:?}", key.0)))?;
+        let pending = session.clone();
+        let outcome = self
+            .grade_claimed(key, session, session_store, answers)
+            .await;
+        if outcome.is_err() {
+            // Nothing was recorded: give the session back so the author can
+            // answer again.
+            let _ = session_store.save_session(&pending).await;
+        }
+        outcome
+    }
+
+    /// Atomically remove the pending session `key` from whichever store
+    /// holds it.
+    async fn take_session(&self, key: &SessionKey) -> Result<Option<(Session, &S)>> {
+        match self.store.take_session(key).await {
+            Ok(Some(s)) => return Ok(Some((s, &self.store))),
+            Ok(None) => {}
+            Err(Error::Port(_)) if !self.org_stores.is_empty() => {}
+            Err(e) => return Err(e),
+        }
+        for store in self.org_stores.values() {
+            if let Some(s) = store.take_session(key).await? {
+                return Ok(Some((s, store)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Grade a session this caller has claimed. On error nothing stays
+    /// recorded; the caller restores the session.
+    async fn grade_claimed(
+        &self,
+        key: &SessionKey,
+        session: Session,
+        session_store: &S,
+        answers: &[Answer],
+    ) -> Result<SessionOutcome> {
+        let now = self.clock.now();
         session.validate_answers(answers)?;
 
         let mut grades = Vec::new();
@@ -392,11 +432,10 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         }
         let author = session.author().clone();
         let questions = session.questions().to_vec();
-        let pending = session.clone();
         let result = session.conclude(grades, self.config.pass_threshold, now);
 
         // Prepare every write before making any, so that a failure part-way
-        // can be rolled back (ADR-0002 D6).
+        // can be rolled back.
         let place = self.place(&author).await?;
         let identity = author.identity()?;
         let original_primary = Self::load_or_new(place.primary, &place.learner).await?;
@@ -430,12 +469,9 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             at: now,
         };
 
-        // Grade at most once (ADR-0002 D6): end the session and record that
-        // it was graded before saving reviews, so a retry finds nothing left
-        // to grade. If any write fails, undo them all so the author can
-        // answer again and is graded exactly once.
+        // Record that the session was graded, then save the reviews. If any
+        // write fails, undo them all (ADR-0002 D6).
         let committed = async {
-            session_store.delete_session(key).await?;
             session_store.save_graded(&graded).await?;
             place.primary.save_profile(&primary).await?;
             if let (Some(store), Some(p)) = (place.project, &project) {
@@ -450,7 +486,6 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 let _ = store.save_profile(p).await;
             }
             let _ = session_store.delete_graded(key).await;
-            let _ = session_store.save_session(&pending).await;
             return Err(e);
         }
 

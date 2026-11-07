@@ -9,3 +9,7 @@ license.workspace = true
 soqrates-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+tokio.workspace = true
