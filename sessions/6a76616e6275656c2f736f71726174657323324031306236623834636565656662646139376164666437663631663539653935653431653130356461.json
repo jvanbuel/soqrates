@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#2@10b6b84ceeefbda97adfd7f61f59e95e41e105da",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.concurrency.job-level/mc",
+      "concept": "github-actions.concurrency.job-level",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A deploy workflow is triggered by many events, but its single job has an `if` condition so that only some runs actually deploy. The author moves `concurrency: { group: deploy, cancel-in-progress: false }` from the workflow level down to the deploy job. What problem does this move avoid?",
+          "options": [
+            "The currently running deployment would be cancelled immediately, because `cancel-in-progress: false` only applies at job level.",
+            "Skipped runs would stay queued forever and block the group until someone cancels them manually.",
+            "The group would stop serializing deploy runs, so two real deployments could run at the same time.",
+            "A run that will be skipped by the job's `if` could still enter the workflow-level group and replace a pending real run, which then gets cancelled."
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "With a workflow-level group, every triggered run enters the group even if its job is later skipped by `if`, and since only one run can be pending, a skipped run can replace a pending real run. Putting the group on the job means a job skipped by `if` never acquires the group, so it cannot displace the pending real run."
+    },
+    {
+      "id": "github-actions.caching.conditional-steps/mc",
+      "concept": "github-actions.caching.conditional-steps",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow restores a compiled binary with actions/cache using a key built from hashFiles over only the main source directory, and skips the build steps when steps.<id>.outputs.cache-hit == 'true'. A developer then changes only Cargo.lock (a dependency version) and pushes. What is the most likely consequence?",
+          "options": [
+            "GitHub invalidates the cache automatically whenever any file in the repository changes, so the key contents do not matter for correctness.",
+            "The cache-hit output is 'true' only if the restored binary passes a checksum comparison against a fresh build, so stale binaries are detected.",
+            "A change to a source file or the lockfile not covered by hashFiles still produces a cache hit, so the build is skipped and the old binary is reused.",
+            "The build step still runs on a hit and simply overwrites the restored binary, so an incomplete key only wastes cache storage."
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "On a cache hit the build is skipped and the restored binary is used as-is, so the key must be derived from every input that changes the binary. If the key only hashes some files, a change to an unhashed input still hits the cache and silently ships a stale binary. Cache-hit gating does not rebuild or validate anything on its own."
+    },
+    {
+      "id": "github-actions.events.issue-comment-filtering/mc",
+      "concept": "github-actions.events.issue-comment-filtering",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow grades a pull request when a bot's own comment is edited to tick a \"grade\" checkbox. It is triggered by `issue_comment`. Without extra filtering, people tick other checkboxes, edit their own comments, and other bots post comments, and each of these starts a run. What is the right way to prevent those unwanted runs?",
+          "options": [
+            "Add a job-level `if` that checks the event action, the comment author login, and that the body contains the ticked grade box",
+            "Check the author and body inside a script step after checkout, since job-level `if` expressions cannot read the event payload",
+            "Add `types: [edited]` under the `issue_comment` trigger, since that alone limits runs to the bot's own comment",
+            "Rely on branch filters on the `issue_comment` trigger to restrict which comments start the workflow"
+          ],
+          "correct": 0
+        }
+      },
+      "explanation": "The `issue_comment` trigger fires for every comment on every issue or PR, so the workflow cannot narrow it at the event level. A job-level `if` that checks the action, the comment author login, and the body content skips runs for unrelated comments. Skipping them avoids wasted runs and unintended grading."
+    }
+  ],
+  "created_at": "2026-11-07T12:28:28.142951514Z"
+}
