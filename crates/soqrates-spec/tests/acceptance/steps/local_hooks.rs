@@ -32,13 +32,19 @@ fn will_answer(w: &mut SpecWorld, how: String) {
     w.prompter.answer_correctly = correctness(&how);
 }
 
-#[given(regex = r#"^"([^"]+)" (?:runs|ran) the (pre-commit|pre-push) hook on a change touching (.+)$"#)]
-#[when(regex = r#"^"([^"]+)" (?:runs|ran) the (pre-commit|pre-push) hook on a change touching (.+)$"#)]
+#[given(
+    regex = r#"^"([^"]+)" (?:runs|ran) the (pre-commit|pre-push) hook on a change touching (.+)$"#
+)]
+#[when(
+    regex = r#"^"([^"]+)" (?:runs|ran) the (pre-commit|pre-push) hook on a change touching (.+)$"#
+)]
 async fn runs_hook(w: &mut SpecWorld, id: String, hook: String, list: String) {
     run(w, &id, &hook, diff_touching(&quoted(&list))).await;
 }
 
-#[when(regex = r#"^"([^"]+)" runs the (pre-commit|pre-push) hook on (an empty change|a change with only whitespace)$"#)]
+#[when(
+    regex = r#"^"([^"]+)" runs the (pre-commit|pre-push) hook on (an empty change|a change with only whitespace)$"#
+)]
 async fn runs_hook_empty(w: &mut SpecWorld, id: String, hook: String, change: String) {
     let diff = match change.as_str() {
         "an empty change" => Diff(String::new()),
@@ -66,7 +72,11 @@ fn asked_n(w: &mut SpecWorld, n: usize) {
 
 #[then(regex = r"^the author was asked about (.+), in that order$")]
 fn asked_about(w: &mut SpecWorld, list: String) {
-    let asked: Vec<ConceptId> = last_run(w).asked.iter().map(|q| q.concept.clone()).collect();
+    let asked: Vec<ConceptId> = last_run(w)
+        .asked
+        .iter()
+        .map(|q| q.concept.clone())
+        .collect();
     assert_eq!(asked, concepts(&list));
 }
 

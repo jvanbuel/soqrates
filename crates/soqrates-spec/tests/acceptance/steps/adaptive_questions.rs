@@ -22,13 +22,21 @@ fn every_question(w: &mut SpecWorld, f: String) {
     let s = session(w);
     assert!(!s.questions.is_empty(), "the session asks nothing");
     let want = format(&f);
-    assert!(formats(s).iter().all(|g| *g == want), "formats: {:?}", formats(s));
+    assert!(
+        formats(s).iter().all(|g| *g == want),
+        "formats: {:?}",
+        formats(s)
+    );
 }
 
 #[then(regex = r"^the session contains at least one (multiple-choice|open) question$")]
 fn at_least_one(w: &mut SpecWorld, f: String) {
     let s = session(w);
-    assert!(formats(s).contains(&format(&f)), "formats: {:?}", formats(s));
+    assert!(
+        formats(s).contains(&format(&f)),
+        "formats: {:?}",
+        formats(s)
+    );
 }
 
 #[then("the session mixes multiple-choice and open questions")]
@@ -49,7 +57,9 @@ fn follow_policy(w: &mut SpecWorld, lvl: String) {
     assert_eq!(formats(s), want, "formats for a {lvl:?} author");
 }
 
-#[then(regex = r"^the first (\d+) questions for an? (\w+) author are (all multiple-choice|all open|a mix of multiple-choice and open)$")]
+#[then(
+    regex = r"^the first (\d+) questions for an? (\w+) author are (all multiple-choice|all open|a mix of multiple-choice and open)$"
+)]
 fn first_questions(_w: &mut SpecWorld, n: usize, lvl: String, expect: String) {
     let lvl = level(&lvl);
     let f: Vec<_> = (0..n).map(|i| format_for(lvl, i)).collect();

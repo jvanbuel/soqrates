@@ -11,8 +11,8 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::ports::{Clock, Examiner, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, CheckStatus, Concept, ConceptId, Diff, Error, Grade,
-    LearnerProfile, PrRef, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId,
-    Result, Session, SessionKey, SessionOutcome,
+    LearnerProfile, PrRef, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result,
+    Session, SessionKey, SessionOutcome,
 };
 use soqrates_store::{FileStore, InMemoryStore};
 
@@ -29,9 +29,8 @@ pub fn diff_touching(concepts: &[String]) -> Diff {
     if concepts.is_empty() {
         return Diff(String::new());
     }
-    let mut text = String::from(
-        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n",
-    );
+    let mut text =
+        String::from("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n");
     text.push_str(&format!("@@ -0,0 +1,{} @@\n", concepts.len()));
     for c in concepts {
         text.push_str(CONCEPT_MARKER);
@@ -88,7 +87,9 @@ impl FakeExaminer {
     pub fn answer(question: &Question, correct: bool) -> Answer {
         let body = match &question.body {
             QuestionBody::MultipleChoice {
-                options, correct: right, ..
+                options,
+                correct: right,
+                ..
             } => {
                 if correct {
                     AnswerBody::Choice(*right)
@@ -285,15 +286,17 @@ impl ScmProvider for FakeScm {
     }
 
     async fn fetch_answers(&self, _pr: &PrRef, session: &Session) -> Result<Option<Vec<Answer>>> {
-        Ok(self.state.lock().unwrap().replies.get(&session.key).cloned())
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .replies
+            .get(&session.key)
+            .cloned())
     }
 
     async fn set_check(&self, pr: &PrRef, status: CheckStatus) -> Result<()> {
-        self.state
-            .lock()
-            .unwrap()
-            .checks
-            .push((pr.clone(), status));
+        self.state.lock().unwrap().checks.push((pr.clone(), status));
         Ok(())
     }
 }

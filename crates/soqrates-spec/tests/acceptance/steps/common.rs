@@ -70,7 +70,11 @@ async fn starts_empty_session(w: &mut SpecWorld, id: String) {
 async fn answers_as_follows(w: &mut SpecWorld, id: String, step: &Step) {
     let key = answer_table(step);
     let session = w.session.clone().expect("no session started");
-    assert_eq!(session.author, author(&id), "the session belongs to someone else");
+    assert_eq!(
+        session.author,
+        author(&id),
+        "the session belongs to someone else"
+    );
     let answers: Vec<_> = session
         .questions
         .iter()
@@ -88,7 +92,11 @@ async fn answers_as_follows(w: &mut SpecWorld, id: String, step: &Step) {
 #[when(regex = r#"^"([^"]+)" answers every question (correctly|wrongly)$"#)]
 async fn answers_every_question(w: &mut SpecWorld, id: String, how: String) {
     let session = w.session.clone().expect("no session started");
-    assert_eq!(session.author, author(&id), "the session belongs to someone else");
+    assert_eq!(
+        session.author,
+        author(&id),
+        "the session belongs to someone else"
+    );
     w.submit_all(&session, correctness(&how)).await;
 }
 

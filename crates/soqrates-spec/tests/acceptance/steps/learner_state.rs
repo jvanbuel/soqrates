@@ -31,8 +31,16 @@ async fn at_level_relative(w: &mut SpecWorld, id: String, dir: String, lvl: Stri
     let p = w.profile(&author(&id)).await;
     let reference = level(&lvl);
     match dir.as_str() {
-        "higher" => assert!(p.level > reference, "{id} is {:?}, not above {reference:?}", p.level),
-        _ => assert!(p.level < reference, "{id} is {:?}, not below {reference:?}", p.level),
+        "higher" => assert!(
+            p.level > reference,
+            "{id} is {:?}, not above {reference:?}",
+            p.level
+        ),
+        _ => assert!(
+            p.level < reference,
+            "{id} is {:?}, not below {reference:?}",
+            p.level
+        ),
     }
 }
 
@@ -98,7 +106,10 @@ fn json_documents(dir: &Path) -> Vec<String> {
 
 #[then(regex = r#"^the state directory holds exactly one JSON document mentioning "([^"]+)"$"#)]
 fn one_document(w: &mut SpecWorld, id: String) {
-    let dir = w.state_dir.as_ref().expect("no file store in this scenario");
+    let dir = w
+        .state_dir
+        .as_ref()
+        .expect("no file store in this scenario");
     let n = json_documents(dir)
         .iter()
         .filter(|d| d.contains(&id))
@@ -106,9 +117,14 @@ fn one_document(w: &mut SpecWorld, id: String) {
     assert_eq!(n, 1, "JSON documents mentioning {id}");
 }
 
-#[then(regex = r#"^no JSON document in the state directory mentions both "([^"]+)" and "([^"]+)"$"#)]
+#[then(
+    regex = r#"^no JSON document in the state directory mentions both "([^"]+)" and "([^"]+)"$"#
+)]
 fn no_shared_document(w: &mut SpecWorld, a: String, b: String) {
-    let dir = w.state_dir.as_ref().expect("no file store in this scenario");
+    let dir = w
+        .state_dir
+        .as_ref()
+        .expect("no file store in this scenario");
     assert!(
         !json_documents(dir)
             .iter()

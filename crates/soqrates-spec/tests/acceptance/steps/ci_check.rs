@@ -25,8 +25,17 @@ fn latest_posted(w: &SpecWorld) -> Session {
         .expect("no questions were posted on the pull request")
 }
 
-#[given(regex = r##"^a pull request "([^"#]+)#(\d+)" by "([^"]+)" at head "([^"]+)" touching (.+)$"##)]
-fn pull_request(w: &mut SpecWorld, repo: String, number: u64, id: String, head: String, list: String) {
+#[given(
+    regex = r##"^a pull request "([^"#]+)#(\d+)" by "([^"]+)" at head "([^"]+)" touching (.+)$"##
+)]
+fn pull_request(
+    w: &mut SpecWorld,
+    repo: String,
+    number: u64,
+    id: String,
+    head: String,
+    list: String,
+) {
     let pr = pr_ref(&repo, number);
     w.scm.open(PullRequest {
         pr: pr.clone(),
@@ -140,7 +149,9 @@ fn key_stable(w: &mut SpecWorld) {
     assert_eq!(session_key(&pr), session_key(&pr.clone()));
 }
 
-#[then(regex = r#"^the session key for head "([^"]+)" differs from the session key for head "([^"]+)"$"#)]
+#[then(
+    regex = r#"^the session key for head "([^"]+)" differs from the session key for head "([^"]+)"$"#
+)]
 fn key_per_head(w: &mut SpecWorld, a: String, b: String) {
     let pr = w.scm.pull_request_now(w.current_pr());
     let at = |head: &str| PullRequest {
@@ -150,7 +161,9 @@ fn key_per_head(w: &mut SpecWorld, a: String, b: String) {
     assert_ne!(session_key(&at(&a)), session_key(&at(&b)));
 }
 
-#[then(regex = r##"^the session key for pull request "([^"#]+)#(\d+)" differs from the one for "([^"#]+)#(\d+)" at the same head$"##)]
+#[then(
+    regex = r##"^the session key for pull request "([^"#]+)#(\d+)" differs from the one for "([^"#]+)#(\d+)" at the same head$"##
+)]
 fn key_per_pr(w: &mut SpecWorld, repo_a: String, a: u64, repo_b: String, b: u64) {
     let pr = w.scm.pull_request_now(w.current_pr());
     let on = |repo: &str, n: u64| PullRequest {

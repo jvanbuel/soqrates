@@ -20,7 +20,11 @@ fn asks_n(w: &mut SpecWorld, n: usize) {
 
 #[then(regex = r#"^the session asks about (.+), in (that|any) order$"#)]
 fn asks_about(w: &mut SpecWorld, list: String, order: String) {
-    let asked: Vec<ConceptId> = session(w).questions.iter().map(|q| q.concept.clone()).collect();
+    let asked: Vec<ConceptId> = session(w)
+        .questions
+        .iter()
+        .map(|q| q.concept.clone())
+        .collect();
     let want = concepts(&list);
     if order == "that" {
         assert_eq!(asked, want, "concepts asked");
@@ -35,7 +39,10 @@ fn asks_about(w: &mut SpecWorld, list: String, order: String) {
 #[then(regex = r#"^"([^"]+)" is due for review by "([^"]+)"$"#)]
 async fn is_due(w: &mut SpecWorld, concept: String, id: String) {
     let due = w.app.due_reviews(&author(&id)).await.expect("due_reviews");
-    assert!(due.contains(&ConceptId(concept.clone())), "{concept} not due for {id}: {due:?}");
+    assert!(
+        due.contains(&ConceptId(concept.clone())),
+        "{concept} not due for {id}: {due:?}"
+    );
 }
 
 #[then(regex = r#"^no reviews are due for "([^"]+)"$"#)]
@@ -50,7 +57,9 @@ async fn due_in_order(w: &mut SpecWorld, id: String, list: String) {
     assert_eq!(due, concepts(&list), "due reviews for {id}");
 }
 
-#[then(regex = r#"^the next review of "([^"]+)" for "([^"]+)" is later than the next review of "([^"]+)"$"#)]
+#[then(
+    regex = r#"^the next review of "([^"]+)" for "([^"]+)" is later than the next review of "([^"]+)"$"#
+)]
 async fn later_than(w: &mut SpecWorld, a: String, id: String, b: String) {
     let p = w.profile(&author(&id)).await;
     let due = |c: &str| {
