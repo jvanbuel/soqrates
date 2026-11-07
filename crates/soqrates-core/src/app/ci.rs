@@ -67,7 +67,7 @@ where
             return Err(e);
         }
         let summary = format!(
-            "Soqrates asked {} question(s) about this change. Reply to answer them.{}",
+            "Soqrates asked {} question(s) about this change. Answer them in the Soqrates comment.{}",
             session.questions().len(),
             location_note(&app.profile_location(&pull.author).await?)
         );
