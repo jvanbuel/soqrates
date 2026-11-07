@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#9@103b5f7aeed13bf2fcd7e90c0cf157379aff3a00",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "rust.cargo.optional-features/mc",
+      "concept": "rust.cargo.optional-features",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A library crate gates its SQL backend behind an optional feature using `#[cfg(feature = \"sql\")]` and `#[cfg(not(feature = \"sql\"))]`. Two consumer crates in the same workspace depend on it: one enables `sql`, the other does not. Both end up in the same build (e.g. `cargo build --workspace`, or a binary depending on both). What happens to the library's SQL code in this build?",
+          "options": [
+            "The build fails with an error because two consumers request conflicting feature sets for the same dependency.",
+            "Each crate gets its own private copy of the library compiled with exactly the features that crate requested, so the SQL code stays excluded for the second consumer.",
+            "The library is compiled once with the union of requested features, so the SQL code is compiled in and available to both consumers, including the one that did not request it.",
+            "The `cfg(feature = ...)` checks are evaluated at runtime per caller, so the SQL path is only taken for the consumer that enabled it."
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "Cargo unifies features across the dependency graph: if any crate in the build enables a feature on a shared dependency, it is compiled with that feature for everyone. Since `cfg(feature = ...)` is evaluated against that unified set, the SQL code is compiled in even for a consumer that did not ask for it, whereas the other options assume per-consumer isolation or a runtime check that does not exist."
+    },
+    {
+      "id": "rust.async.enum-dispatch-trait/mc",
+      "concept": "rust.async.enum-dispatch-trait",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A project has several backends that each implement a trait with async methods, and the backend is chosen at runtime from configuration. The author wraps the backends in an enum that implements the trait by matching on its variants and forwarding each call, instead of using Box<dyn Trait>. What is the main reason this approach is needed?",
+          "options": [
+            "Because async fn in a trait is not dyn-compatible, so a Box<dyn Trait> cannot be used; an enum of the concrete implementations lets the backend be chosen at runtime with static dispatch",
+            "Because the async runtime requires every future to be a single concrete enum type before it can be polled",
+            "Because a match on an enum is always faster than any virtual call, and Box<dyn Trait> would work but be slower",
+            "Because enums are the only Rust type that can hold values of different structs, and traits cannot be implemented for more than one type"
+          ],
+          "correct": 0
+        }
+      },
+      "explanation": "Async fn in traits returns an opaque future type, so the trait cannot be used as a trait object. An enum with one variant per backend, forwarding via match, gives runtime selection with static dispatch; thinking that Box<dyn Trait> merely adds allocation overhead misses that it is not allowed for such traits at all."
+    },
+    {
+      "id": "rust.sqlx.any-driver/mc",
+      "concept": "rust.sqlx.any-driver",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A service builds an `AnyPool` from a database URL that may start with `sqlite:` or `postgres:`, and the same query code runs against whichever backend is configured. What is the key consequence of using the Any driver for how the queries must be written?",
+          "options": [
+            "Calling install_default_drivers makes SQLite and PostgreSQL share one SQL dialect, so portability only matters for column types.",
+            "Any is selected at compile time by a feature flag, so only one backend's SQL has to be valid in a given build.",
+            "Any automatically rewrites placeholders and dialect-specific syntax, so SQL written for PostgreSQL will run unchanged on SQLite.",
+            "The backend is chosen at runtime from the URL scheme, so each query must be valid SQL for both SQLite and PostgreSQL, or the code must branch per backend."
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "With the Any driver the concrete backend is chosen at runtime from the URL scheme, so a single query string must run on both SQLite and PostgreSQL. Placeholder syntax and other dialect features differ, so the SQL must be written in a portable form (or branched per backend) and tested on both. Compile-time checks do not catch dialect differences, and installing drivers does not translate SQL."
+    }
+  ],
+  "created_at": "2026-11-07T15:07:11.457424257Z"
+}
