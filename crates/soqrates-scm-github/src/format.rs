@@ -244,13 +244,21 @@ final; a new push asks new questions.
 /// The Markdown comment putting the session's questions to the author
 /// (ADR-0004 D3, D4). Multiple-choice options are task-list boxes, followed
 /// by the "Grade my answers" box. It never contains the correct option, the
-/// rubric or the explanation.
+/// rubric or the explanation. A session without questions gets a short note
+/// with no boxes, which earlier question comments can link to (ADR-0004 D7).
 pub fn render_questions(session: &Session) -> String {
     let questions = session.questions();
     let total = questions.len();
     let mut out = String::new();
     out.push_str(&session_marker(session.key()));
     out.push_str("\n> [!NOTE]\n");
+    if questions.is_empty() {
+        out.push_str(
+            "> **Soqrates learning check: nothing to ask.** Soqrates found no \
+             questions to ask about this commit, so there is nothing to answer.\n",
+        );
+        return out;
+    }
     out.push_str(
         "> **Soqrates learning check.** A few questions about the concepts in \
          this change, to help you learn and remember them. It is advisory, not a \
@@ -558,13 +566,14 @@ pub fn render_graded_questions(session: &Session, results: &[QuestionResult]) ->
 
 /// The question comment of `key` once a newer push superseded it (ADR-0004
 /// D7): it says its answers no longer count and links the newer question
-/// comment at `newer_url`, if known. The questions of `session`, if still
-/// stored, are collapsed with options as plain text, so no box can be
-/// ticked any more.
+/// comment at `newer_url`, if known, saying whether that one asks anything.
+/// The questions of `session`, if still stored, are collapsed with options
+/// as plain text, so no box can be ticked any more.
 pub fn render_superseded_questions(
     key: &SessionKey,
     session: Option<&Session>,
     newer_url: Option<&str>,
+    newer_asks: bool,
 ) -> String {
     let mut out = String::new();
     out.push_str(&session_marker(key));
@@ -573,16 +582,17 @@ pub fn render_superseded_questions(
         "> **Soqrates learning check: superseded.** A newer commit was pushed, \
          so answers to these questions no longer count. ",
     );
-    match newer_url {
-        // The URL comes from the forge, not from the model; it is still
-        // kept out of the markdown if it could break the link.
-        Some(url) if is_plain_url(url) => {
-            out.push_str(&format!(
-                "Please answer the [new questions]({url}) instead.\n\n"
-            ));
+    // The URL comes from the forge, not from the model; it is still kept
+    // out of the markdown if it could break the link.
+    let url = newer_url.filter(|u| is_plain_url(u));
+    out.push_str(&match (url, newer_asks) {
+        (Some(url), true) => format!("Please answer the [new questions]({url}) instead.\n\n"),
+        (Some(url), false) => {
+            format!("Soqrates found [nothing to ask]({url}) about the newer commit.\n\n")
         }
-        _ => out.push_str("Please answer the newer Soqrates comment instead.\n\n"),
-    }
+        (None, true) => "Please answer the newer Soqrates comment instead.\n\n".into(),
+        (None, false) => "Soqrates found nothing to ask about the newer commit.\n\n".into(),
+    });
     if let Some(session) = session {
         push_collapsed_questions(session.questions(), None, &mut out);
     }
@@ -1358,7 +1368,7 @@ mod tests {
     // @adr-0004-d7
     #[test]
     fn superseded_question_comment_links_the_new_questions_and_has_no_boxes() {
-        let s = render_superseded_questions(session().key(), Some(&session()), Some(NEWER));
+        let s = render_superseded_questions(session().key(), Some(&session()), Some(NEWER), true);
         assert!(s.starts_with(
             "<!-- soqrates:session=o/r#1@abc -->\n> [!NOTE]\n> **Soqrates learning check: superseded.**"
         ));
@@ -1389,14 +1399,41 @@ mod tests {
     #[test]
     fn superseded_without_session_or_safe_link_still_freezes() {
         let key = SessionKey("o/r#1@old".into());
-        let s = render_superseded_questions(&key, None, None);
+        let s = render_superseded_questions(&key, None, None, true);
         assert!(s.contains("superseded.**") && !s.contains("<details>"));
         assert!(s.contains("newer Soqrates comment"));
         assert_eq!(marker_key(&s), Some(key.clone()));
+        let s = render_superseded_questions(&key, Some(&session()), Some(NEWER), false);
+        assert!(s.contains(&format!("[nothing to ask]({NEWER}) about the newer commit")));
+        assert!(!s.contains("answer the"), "{s}");
+        assert!(!takes_answers(&s));
         for bad in ["javascript:alert(1)", "https://x/a)[b](c", "https://x/<b>"] {
-            let s = render_superseded_questions(&key, None, Some(bad));
+            let s = render_superseded_questions(&key, None, Some(bad), true);
             assert!(!s.contains(bad) && !s.contains("]("), "{s}");
         }
+    }
+
+    // @adr-0004-d7
+    #[test]
+    fn a_round_with_nothing_to_ask_is_a_short_note_without_boxes() {
+        let empty = Session::open(
+            SessionKey("o/r#1@typo".into()),
+            AuthorId("github.com:42".into()),
+            vec![],
+            10,
+            Utc.timestamp_opt(0, 0).unwrap(),
+        )
+        .unwrap();
+        let s = render_questions(&empty);
+        assert_eq!(
+            s,
+            "<!-- soqrates:session=o/r#1@typo -->\n> [!NOTE]\n> **Soqrates learning check: \
+             nothing to ask.** Soqrates found no questions to ask about this commit, so there \
+             is nothing to answer.\n"
+        );
+        assert!(!takes_answers(&s));
+        assert_eq!(marker_key(&s), Some(empty.key().clone()));
+        assert!(tags(&s).is_empty());
     }
 
     // @adr-0004-d7
@@ -1504,8 +1541,8 @@ mod tests {
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
             render_results(&nasty, &nasty_results, false),
-            render_superseded_questions(session().key(), Some(&session()), Some(NEWER)),
-            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER)),
+            render_superseded_questions(session().key(), Some(&session()), Some(NEWER), true),
+            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true),
         ];
         for s in &rendered {
             let tags = tags(s);
@@ -1530,7 +1567,7 @@ mod tests {
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
             render_results(&nasty, &nasty_results, false),
-            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER)),
+            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true),
         ] {
             assert_eq!(s.matches("<!--").count(), 1, "one marker only:\n{s}");
             assert!(!s.contains("<script") && !s.contains("<img"));

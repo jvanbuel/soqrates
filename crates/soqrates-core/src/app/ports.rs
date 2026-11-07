@@ -89,7 +89,9 @@ pub trait Examiner: Send + Sync {
 /// A forge/CI provider (D4). Implemented by `soqrates-scm-github` and friends.
 pub trait ScmProvider: Send + Sync {
     fn pull_request(&self, pr: &PrRef) -> impl Future<Output = Result<PullRequest>> + Send;
-    /// Post the session's questions on the PR, e.g. as a comment.
+    /// Post the session's questions on the PR, e.g. as a comment. A session
+    /// without questions is posted too, saying there is nothing to answer
+    /// (ADR-0004 D7).
     fn post_questions(
         &self,
         pr: &PrRef,

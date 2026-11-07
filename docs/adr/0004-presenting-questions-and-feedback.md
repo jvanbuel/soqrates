@@ -109,8 +109,12 @@ Graded comments stay as they are.
 Only comments posted by the same account as the current question comment,
 and only sessions of the same PR, are touched, so copying a marker into
 another comment can't make Soqrates rewrite it. A failed edit is retried by
-the next run. A push that asks no questions has no comment to link to and
-leaves earlier comments as they are.
+the next run.
+
+A push that asks no questions still gets a short comment, with no boxes,
+saying there is nothing to answer, and the earlier comments link to it.
+Otherwise an earlier comment would stay live, and answers to it would be
+silently ignored.
 
 ## Consequences
 

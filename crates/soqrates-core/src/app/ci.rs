@@ -20,8 +20,9 @@ fn key_prefix(pr: &PrRef) -> String {
 /// replies.
 ///
 /// - No session for the current head yet: start one, post the questions,
-///   set `Pending` and freeze the question comments of earlier heads that
-///   were never graded (ADR-0004 D7).
+///   freeze the question comments of earlier heads that were never graded
+///   (ADR-0004 D7) and set `Pending`. With nothing to ask, the comment says
+///   so and the empty session is graded right away.
 /// - Session exists but no answers yet: keep `Pending`.
 /// - Answers present: grade them and set `Success`, or `Failure` (`Neutral`
 ///   in `Advisory` mode).
@@ -62,15 +63,18 @@ where
         let session = app
             .start_session(key.clone(), &pull.author, &pull.diff)
             .await?;
-        if session.questions().is_empty() {
-            // Nothing to ask: grade the empty session right away.
-            let outcome = app.submit(&key, &[]).await?;
-            return finish(app, scm, pr, &outcome).await;
-        }
+        // Also when there is nothing to ask: the comment then says so, and
+        // earlier question comments can point to it (ADR-0004 D7).
         if let Err(e) = scm.post_questions(pr, &session).await {
             // Don't leave a session whose questions nobody can see.
             let _ = app.discard_session(&key).await;
             return Err(e);
+        }
+        if session.questions().is_empty() {
+            // Nothing to ask: grade the empty session right away.
+            supersede_earlier(app, scm, pr, &session).await?;
+            let outcome = app.submit(&key, &[]).await?;
+            return finish(app, scm, pr, &outcome).await;
         }
         let summary = format!(
             "Soqrates asked {} question(s) about this change. Answer them in the Soqrates comment.{}",
@@ -83,8 +87,12 @@ where
     };
 
     // Also on later runs, so that a run that failed to freeze the earlier
-    // comments is made good by the next one.
+    // comments, or to grade an empty session, is made good by the next one.
     supersede_earlier(app, scm, pr, &session).await?;
+    if session.questions().is_empty() {
+        let outcome = app.submit(&key, &[]).await?;
+        return finish(app, scm, pr, &outcome).await;
+    }
     match scm.fetch_answers(pr, &session).await? {
         None => {
             let summary = format!(

@@ -347,7 +347,12 @@ impl ScmProvider for GitHubProvider {
                     .as_deref()
                     .is_some_and(|b| marker_key(b).as_ref() == Some(superseded) && takes_answers(b))
         });
-        let body = render_superseded_questions(superseded, session, Some(ours.html_url.as_str()));
+        let body = render_superseded_questions(
+            superseded,
+            session,
+            Some(ours.html_url.as_str()),
+            !current.questions().is_empty(),
+        );
         for c in old {
             self.edit_comment(
                 pr,

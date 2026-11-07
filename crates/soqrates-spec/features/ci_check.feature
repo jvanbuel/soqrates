@@ -204,3 +204,40 @@ Feature: The CI check is an asynchronous round trip
     And the questions were posted 2 times
     And the question comment for head "abc123" was marked superseded 1 time
     And no pending session is stored for head "abc123"
+
+  @adr-0004-d7 @adr-0001-d8
+  Scenario: A push with nothing to ask says so and freezes the earlier question comment
+    Given the Soqrates check has run
+    When the author pushes head "fix001" touching nothing
+    And the Soqrates check runs
+    Then the check is Success
+    And the questions were posted 2 times
+    And the latest posted session is for the current head and asks nothing
+    And the question comment for head "abc123" was marked superseded 1 time
+    And no pending session is stored for head "abc123"
+    And no pending session is stored for the current head
+
+  @adr-0004-d7 @adr-0001-d8
+  Scenario: After a push with nothing to ask, answering the earlier questions has no effect
+    Given the Soqrates check has run
+    And the author pushes head "fix001" touching nothing
+    And the Soqrates check has run
+    When the author answers the questions for head "abc123" correctly
+    And the Soqrates check runs
+    Then the check is Success
+    And the questions were posted 2 times
+    And the history of "github:1001" has 0 graded answers
+    And the question comment for head "abc123" was marked superseded 1 time
+
+  @adr-0004-d7 @adr-0001-d8
+  Scenario: When freezing fails after a push with nothing to ask, the next run freezes and grades
+    Given the Soqrates check has run
+    And the author pushes head "fix001" touching nothing
+    And freezing superseded question comments fails once
+    When the Soqrates check runs and fails
+    Then a pending session is stored for head "abc123"
+    When the Soqrates check runs
+    Then the check is Success
+    And the questions were posted 2 times
+    And the question comment for head "abc123" was marked superseded 1 time
+    And no pending session is stored for the current head

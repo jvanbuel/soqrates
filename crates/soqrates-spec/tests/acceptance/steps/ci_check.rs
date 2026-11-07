@@ -133,7 +133,11 @@ fn replies_table(w: &mut SpecWorld, step: &Step) {
 fn pushes(w: &mut SpecWorld, head: String, list: String) {
     let mut pr = w.scm.pull_request_now(w.current_pr());
     pr.head_sha = head;
-    pr.diff = diff_touching(&quoted(&list));
+    pr.diff = if list == "nothing" {
+        diff_touching(&[])
+    } else {
+        diff_touching(&quoted(&list))
+    };
     w.scm.open(pr);
 }
 
@@ -297,4 +301,10 @@ async fn pending_at_head(w: &mut SpecWorld, which: String, head: String) {
         .expect("load_session")
         .is_some();
     assert_eq!(stored, which == "a", "pending session for head {head:?}");
+}
+
+#[then("the latest posted session is for the current head and asks nothing")]
+fn posted_empty_for_head(w: &mut SpecWorld) {
+    posted_for_head(w);
+    assert_eq!(latest_posted(w).questions(), &[]);
 }
