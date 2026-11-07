@@ -27,6 +27,129 @@ diff, load the profile, ask, grade, reschedule). Rust gives a single static
 binary with no runtime to install, which matters most for git hooks, and FSRS's
 reference implementations are in Rust.
 
+## Architecture overview
+
+Solid arrows are calls or dependencies. Dotted arrows mean "implements a
+port". Only `soqrates-core` sits in the middle, and it knows nothing about
+the outside world (D2).
+
+```mermaid
+flowchart TB
+    subgraph entry["Entry points"]
+        git["git pre-commit"]
+        jj["jj pre-push"]
+        gha["GitHub Actions<br/>PR check"]
+        harness["Other agent harness<br/>(Claude Code, ...)"]
+    end
+
+    skills["skills/name/SKILL.md<br/>(D11)"]
+
+    subgraph bin["soqrates binary (soqrates-cli, D1)"]
+        hookcmd["soqrates hook"]
+        cicmd["soqrates ci"]
+        mcpcmd["soqrates mcp"]
+    end
+
+    mcp["soqrates-mcp (rmcp, D10)<br/>start_session · submit_answers<br/>get_learner_profile · due_reviews"]
+
+    subgraph core["soqrates-core (no I/O, D2)"]
+        direction TB
+        hookwf["hook workflow (D9)"]
+        ciwf["CI workflow (D8)"]
+        engine["engine: sessions,<br/>grading, profiles"]
+        policy["question policy:<br/>level to format (D7)"]
+        sched["FSRS schedule<br/>(rs-fsrs, D6)"]
+        subgraph ports["Ports"]
+            pstore[["StateStore"]]
+            pexam[["Examiner"]]
+            pscm[["ScmProvider"]]
+            pclock[["Clock"]]
+            pprompt[["Prompter"]]
+        end
+        hookwf --> engine
+        ciwf --> engine
+        engine --> policy
+        engine --> sched
+    end
+
+    subgraph adapters["Adapters"]
+        store["soqrates-store<br/>InMemory · File (D5)"]
+        llm["soqrates-llm<br/>Rig (D3)"]
+        gh["soqrates-scm-github<br/>octocrab (D4)"]
+        tty["terminal prompter"]
+    end
+
+    subgraph ext["External systems"]
+        models["LLM providers<br/>Anthropic · OpenAI · Gemini · Ollama"]
+        github["GitHub API<br/>comments · checks"]
+        state[("Learner state<br/>JSON files / git branch")]
+    end
+
+    subgraph verify["Verification"]
+        spec["soqrates-spec (D12, D15)<br/>architecture tests · traceability<br/>BDD features with fakes"]
+        evals["evals/ (Inspect AI, D13)<br/>black-box benchmarks"]
+    end
+
+    git --> hookcmd
+    jj --> hookcmd
+    gha --> cicmd
+    harness --> mcpcmd
+    harness -. loads .-> skills
+    skills -. calls tools of .-> mcp
+
+    hookcmd --> hookwf
+    cicmd --> ciwf
+    mcpcmd --> mcp
+    mcp --> engine
+
+    hookwf --> pprompt
+    ciwf --> pscm
+    engine --> pstore
+    engine --> pexam
+    engine --> pclock
+
+    store -.-> pstore
+    llm -.-> pexam
+    gh -.-> pscm
+    tty -.-> pprompt
+
+    llm --> models
+    gh --> github
+    store --> state
+
+    spec -. drives with fakes .-> core
+    evals -. drives .-> bin
+```
+
+The CI check (D8) is asynchronous: questions and answers pass through PR
+comments over several workflow runs.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Author
+    participant GH as GitHub
+    participant CI as soqrates ci
+    participant Core as soqrates-core
+    participant Store as StateStore
+    participant LLM as Examiner (Rig)
+
+    Author->>GH: open PR / push
+    GH->>CI: workflow run
+    CI->>Core: run_check(pr)
+    Core->>Store: load profile and session for this head
+    Core->>LLM: extract_concepts(diff), write_question(concept, format)
+    Core->>Store: save session
+    Core->>GH: post questions (comment), check = Pending
+    Author->>GH: reply with answers
+    GH->>CI: workflow run (issue_comment)
+    CI->>Core: run_check(pr)
+    Core->>GH: fetch_answers
+    Core->>LLM: grade(question, answer)
+    Core->>Store: update FSRS cards and level, save profile
+    Core->>GH: check = Success / Failure (Neutral if Advisory)
+```
+
 ## Decisions
 
 Every decision has an ID. An `automated` decision must be covered by at least

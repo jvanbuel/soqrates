@@ -8,6 +8,24 @@ agent harness through its skills and MCP server.
 
 > Status: architecture skeleton. Behaviour is specified, not yet implemented.
 
+## Architecture
+
+See [ADR-0001](docs/adr/0001-agent-framework-and-architecture.md#architecture-overview)
+for the decisions and the full diagrams.
+
+```mermaid
+flowchart LR
+    hooks["git / jj hooks"] --> cli
+    ci["CI (GitHub Actions)"] --> cli
+    harness["other harnesses"] --> mcp
+    cli["soqrates binary"] --> core
+    mcp["soqrates-mcp"] --> core
+    core["soqrates-core<br/>domain + ports"]
+    store["soqrates-store"] -. StateStore .-> core
+    llm["soqrates-llm (Rig)"] -. Examiner .-> core
+    gh["soqrates-scm-github"] -. ScmProvider .-> core
+```
+
 ## Layout
 
 | Path | What |
