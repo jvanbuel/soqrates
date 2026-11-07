@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#10@357ef2dfb152b8ea1835bf6fc0c93c5d39b5d0c7",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github.actions.composite-action/mc",
+      "concept": "github.actions.composite-action",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A team packages its lint and test steps as a composite action in an action.yml at the root of a shared repository. Another repository wants to run these steps only on pull requests, with read-only token permissions. What must the consuming repository do?",
+          "options": [
+            "Add a `permissions:` block and job-level `if:` filter inside action.yml so the action controls who may run it",
+            "Nothing more is needed; once action.yml exists at the repository root, GitHub runs it automatically on every push",
+            "Create a workflow file in the consuming repository that declares the `on:` triggers and permissions, and add a job that calls the action with `uses:`",
+            "Add an `on: pull_request` block to the action.yml so the action triggers itself whenever it is added to a repository"
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "A composite action only bundles steps; triggers, permissions and job-level conditions belong to the workflow that calls it. So the consumer keeps a small workflow file declaring those and invoking the action with `uses:`. Putting `on:` in action.yml is invalid and has no effect, which is the tempting misconception."
+    },
+    {
+      "id": "security.ci.untrusted-pr-code-and-secrets/mc",
+      "concept": "security.ci.untrusted-pr-code-and-secrets",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow triggered by pull requests (including ones from forks) has access to repository secrets, such as an LLM API key, and needs to analyze the PR's changes. Why is it safer for this workflow to read the diff through the platform API and run a prebuilt, checksum-verified binary, rather than checking out the PR branch and building the tool from source there?",
+          "options": [
+            "Compiling in the workflow would make the build slower, and slow jobs are more likely to leak secrets through timeouts.",
+            "Compiling or running the PR's code in a job with secrets lets the PR author execute arbitrary code, such as a build script, that can read and exfiltrate those secrets.",
+            "The PR diff might be too large for the runner's disk, causing the workflow to fail before it can post results.",
+            "Checking out the PR would overwrite the base branch's workflow file, so the secrets would no longer be injected."
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "A PR author controls the files in their branch, including build scripts, build.rs, package manifests and tests. If the workflow checks out and builds that code while secrets are available, the attacker's code can read and exfiltrate them. Reading the diff via the API and running a checksum-verified prebuilt binary means no PR-controlled code ever executes in the privileged context; the idea that a read-only diff is the only risk, or that forks are harmless, is a misconception."
+    },
+    {
+      "id": "github.actions.bot-identity-and-tokens/mc",
+      "concept": "github.actions.bot-identity-and-tokens",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A team's workflow posts review comments on pull requests using the default workflow token, so they appear as github-actions[bot]. The team wants the comments to appear under their own branded app name and logo. What is the correct approach?",
+          "options": [
+            "Set the git user.name config in the runner before posting the comment through the API",
+            "Generate an installation token for the team's own GitHub App in the workflow and use it to post the comment",
+            "Rename the workflow file so the comment author takes the workflow's name",
+            "Grant the workflow token additional permissions such as contents: write, which changes the displayed author to a custom name"
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "Comments made with the default workflow token are attributed to github-actions[bot]. An installation token minted for the team's own GitHub App makes the comment appear under that app's name and logo, which is how a custom identity is achieved. Permissions on the workflow token only control what it may do, not who it appears as."
+    }
+  ],
+  "created_at": "2026-11-07T17:25:54.326707650Z"
+}
