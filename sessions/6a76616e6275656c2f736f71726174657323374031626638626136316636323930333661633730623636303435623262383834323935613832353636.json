@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#7@1bf8ba61f629036ac70b66045b2b884295a82566",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "soqrates.ci.superseding-question-comments/mc",
+      "concept": "soqrates.ci.superseding-question-comments",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A developer pushes a second commit to a PR after Soqrates already posted question comments for the first head SHA, and some of those questions are still unanswered. What should the check do with the earlier comments and sessions when it runs on the new head, and why?",
+          "options": [
+            "Delete the earlier question comments entirely so the PR thread only ever contains questions for the latest head",
+            "Keep the old comments open and grade answers against whichever session was created first, since the original questions are the most authoritative",
+            "Freeze the earlier ungraded comments with a link to the newest comment and discard their sessions, so answers to a stale head are never graded",
+            "Keep all earlier sessions alive and grade each answer against the session whose comment it replied to, then average the scores across pushes"
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "Sessions are keyed by PR and head SHA, so a new push creates a new session. Freezing older ungraded comments with a link to the newer one and discarding their sessions means answers tied to a stale head can never be graded, and the author is pointed to the current questions. Editing or deleting the old comment would lose that pointer, and grading against the old head would score understanding of code that is no longer being submitted."
+    },
+    {
+      "id": "soqrates.ci.idempotent-retry-ordering/mc",
+      "concept": "soqrates.ci.idempotent-retry-ordering",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A supersede step must both freeze an old forge comment and discard the stored session that tracks it. The step may crash partway and the CI job will be re-run. Which ordering of these two side effects makes the retry safe, and why?",
+          "options": [
+            "Run both operations concurrently, so neither can fail without the other and no partial state is possible",
+            "Discard the stored session first, because removing the old state guarantees the next run begins clean and cannot act on stale data",
+            "Wrap both in a try/catch that swallows errors, so the step always appears to succeed and is never retried",
+            "Freeze the forge comment first and discard the stored session afterward, so a crash between them leaves a session the next run will find and finish cleaning up"
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "If the comment is frozen first and the session is discarded afterward, a crash in between leaves a session that the next run still finds and discards, so the step is repaired by simply running again. Discarding first could lose the only link needed to know which comment to freeze, leaving stale content with no way to repair it."
+    },
+    {
+      "id": "soqrates.scm.marker-trust-boundary/mc",
+      "concept": "soqrates.scm.marker-trust-boundary",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "Soqrates identifies its own question comments by a marker, and only accepts a marker that appears strictly at the start of the body in a comment from the same account that posted the current question comment. What is the main risk this strictness guards against?",
+          "options": [
+            "Soqrates would post duplicate question comments, because it could no longer tell whether a comment had already been created in an earlier run.",
+            "Session keys from other pull requests would be deleted, because the marker would no longer include the PR number.",
+            "The comment would render incorrectly in the PR, because markers placed after the first line are displayed as raw text instead of being hidden.",
+            "A reviewer or other user could quote or copy the marker into their own comment, and Soqrates would treat it as its own and rewrite or act on it."
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "Soqrates edits or reads state based on a marker, so it must only trust markers that it itself wrote. Requiring the marker at the very start of the body and from the same account means a copied or quoted marker in someone else's comment (or later in the text) is ignored, whereas matching anywhere or by marker alone would let others steer which comments get rewritten."
+    }
+  ],
+  "created_at": "2026-11-07T14:23:54.116758154Z"
+}
