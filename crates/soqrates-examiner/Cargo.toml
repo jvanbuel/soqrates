@@ -1,0 +1,16 @@
+[package]
+name = "soqrates-examiner"
+description = "Examiner adapter on top of Rig (ADR-0001 D3)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+soqrates-core.workspace = true
+rig-core = { version = "0.46", features = ["reqwest"] }
+schemars = "1"
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

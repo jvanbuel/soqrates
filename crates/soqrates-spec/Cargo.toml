@@ -1,0 +1,24 @@
+[package]
+name = "soqrates-spec"
+description = "Executable ADRs: architecture fitness tests, ADR traceability and BDD acceptance tests."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+soqrates-core.workspace = true
+soqrates-store.workspace = true
+soqrates-mcp.workspace = true
+chrono.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+cargo_metadata = "0.23"
+cucumber = "0.23"
+regex = "1"
+
+[[test]]
+name = "acceptance"
+harness = false

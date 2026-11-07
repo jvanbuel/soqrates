@@ -1,0 +1,4 @@
+# Project configuration for Soqrates (overrides ~/.config/soqrates/config.toml).
+# Dogfooding starts advisory (ADR-0001 D14).
+mode = "advisory"
+max_questions = 3

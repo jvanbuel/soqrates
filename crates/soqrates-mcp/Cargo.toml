@@ -1,0 +1,17 @@
+[package]
+name = "soqrates-mcp"
+description = "MCP server exposing the Soqrates core (ADR-0001 D10)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+soqrates-core.workspace = true
+rmcp = { version = "3.9", features = ["server", "transport-io"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+
+[dev-dependencies]
+soqrates-store.workspace = true
+chrono.workspace = true

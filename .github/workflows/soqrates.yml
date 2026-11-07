@@ -1,0 +1,89 @@
+# Dogfooding (ADR-0001 D14): Soqrates checks its own pull requests.
+#
+# - Runs on PR open/push, when someone comments `/soqrates ...` on a PR,
+#   and when a Soqrates question comment is edited (ticking a checkbox edits
+#   the comment, ADR-0004 D3). Edits made with the workflow's own token
+#   don't trigger workflows, so posting results doesn't loop.
+# - Advisory mode: a failed session reports a success status with an
+#   "Advisory:" note, so it never blocks a merge.
+# - Learner state is kept on the `soqrates-state` branch (one JSON document
+#   per profile/link/session, see soqrates-store's FileStore).
+# - Needs the repository secret ANTHROPIC_API_KEY; without it the job skips.
+#
+# Note: GitHub runs `issue_comment` workflows from the default branch, so
+# answering by comment works once this file is on the default branch.
+name: soqrates
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: write       # push the soqrates-state branch
+  pull-requests: write  # read the PR and its diff
+  issues: write         # post the questions as a PR comment
+  statuses: write       # set the `soqrates` commit status
+
+# One run at a time, so state-branch updates never race.
+concurrency:
+  group: soqrates-state
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request && (
+        (github.event.action == 'created' && startsWith(github.event.comment.body, '/soqrates')) ||
+        (github.event.action == 'edited' && contains(github.event.comment.body, 'soqrates:session='))
+      ))
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Skip without an API key
+        id: key
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::notice::ANTHROPIC_API_KEY is not set; skipping the Soqrates check."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # For issue_comment events this checks out the default branch, so no
+      # code from the PR runs with the secrets.
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.skip != 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.key.outputs.skip != 'true'
+
+      - name: Build soqrates
+        if: steps.key.outputs.skip != 'true'
+        run: cargo build --release --locked -p soqrates-cli
+
+      - name: Check out learner state
+        if: steps.key.outputs.skip != 'true'
+        run: |
+          if git fetch --depth=1 origin soqrates-state; then
+            git worktree add --detach .soqrates-state FETCH_HEAD
+          else
+            git worktree add --orphan -b soqrates-state .soqrates-state
+          fi
+
+      - name: Run Soqrates
+        if: steps.key.outputs.skip != 'true'
+        run: ./target/release/soqrates ci --mode advisory --state-dir .soqrates-state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save learner state
+        if: always() && steps.key.outputs.skip != 'true'
+        run: |
+          cd .soqrates-state
+          git add -A
+          if git diff --cached --quiet; then exit 0; fi
+          git -c user.name="soqrates[bot]" -c user.email="soqrates@users.noreply.github.com" \
+            commit -q -m "soqrates: update learner state (${{ github.event_name }})"
+          git push origin HEAD:refs/heads/soqrates-state
