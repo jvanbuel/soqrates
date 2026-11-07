@@ -30,7 +30,11 @@ use crate::config::ModeName;
 use crate::local::Vcs;
 
 #[derive(Parser)]
-#[command(version, about = "Soqrates: learn the concepts in your own changes")]
+#[command(
+    version,
+    about = "Soqrates: the unexamined PR is not worth merging.",
+    long_about = "Soqrates: the unexamined PR is not worth merging.\n\nSoqrates asks the author of a change about the concepts in it, adapts to their level, and schedules reviews with spaced repetition."
+)]
 struct Cli {
     /// Directory of the learner store (default: the platform data dir).
     #[arg(long, global = true, env = "SOQRATES_STATE_DIR")]

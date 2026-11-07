@@ -1,5 +1,7 @@
 # soqrates
 
+> *The unexamined PR is not worth merging.*
+
 A learning companion for code changes. Soqrates quizzes the author of a change
 about the concepts in it, adapting to their level and using spaced
 repetition, so that changes don't pile up cognitive debt. It runs as a PR
