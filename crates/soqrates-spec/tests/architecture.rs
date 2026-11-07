@@ -611,6 +611,9 @@ struct Decision {
     title: String,
     automated: bool,
     reason: String,
+    /// `false` for a proposed ADR: its tags are valid, but its decisions
+    /// need not be enforced yet.
+    accepted: bool,
 }
 
 impl Decision {
@@ -619,7 +622,8 @@ impl Decision {
     }
 }
 
-/// All decisions of accepted ADRs in docs/adr.
+/// All decisions of accepted and proposed ADRs in docs/adr. Rejected and
+/// superseded ADRs are ignored, so tags pointing at them become dangling.
 fn decisions() -> Vec<Decision> {
     let heading = Regex::new(r"^### (D\d+): (.+)$").unwrap();
     let enforcement = Regex::new(r"^\*\*Enforcement:\*\* (automated|manual)(.*)$").unwrap();
@@ -637,9 +641,13 @@ fn decisions() -> Vec<Decision> {
             continue;
         };
         let text = read(&path);
-        if !text.contains("**Status:** Accepted") {
+        let accepted = if text.contains("**Status:** Accepted") {
+            true
+        } else if text.contains("**Status:** Proposed") {
+            false
+        } else {
             continue;
-        }
+        };
         let mut current: Option<(String, String)> = None;
         for line in text.lines() {
             if let Some(c) = heading.captures(line) {
@@ -657,6 +665,7 @@ fn decisions() -> Vec<Decision> {
                     title,
                     automated: &c[1] == "automated",
                     reason: c[2].trim_start_matches(['.', ' ']).trim().to_string(),
+                    accepted,
                 });
             }
         }
@@ -734,6 +743,7 @@ fn every_automated_decision_is_enforced_by_a_test() {
     for d in &decisions {
         let places = refs.get(&d.tag()).map(Vec::len).unwrap_or(0);
         let status = match (d.automated, places) {
+            _ if !d.accepted => format!("proposed: {places} test(s)"),
             (true, 0) => {
                 unenforced.push(format!("ADR-{} {}: {}", d.adr, d.id, d.title));
                 "MISSING".to_string()
