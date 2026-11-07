@@ -185,38 +185,73 @@ fn assert_confined(dep: &str, owner: &str, decision: &str) {
     assert_eq!(
         dependents_of(dep),
         set(&[owner]),
-        "ADR-0001 {decision}: `{dep}` may only (and must) be a dependency of `{owner}`"
+        "{decision}: `{dep}` may only (and must) be a dependency of `{owner}`"
     );
 }
 
 // @adr-0001-d3
 #[test]
 fn rig_is_confined_to_soqrates_examiner() {
-    assert_confined("rig-core", "soqrates-examiner", "D3");
+    assert_confined("rig-core", "soqrates-examiner", "ADR-0001 D3");
 }
 
 // @adr-0001-d4
 #[test]
 fn octocrab_is_confined_to_soqrates_scm_github() {
-    assert_confined("octocrab", "soqrates-scm-github", "D4");
+    assert_confined("octocrab", "soqrates-scm-github", "ADR-0001 D4");
 }
 
 // @adr-0001-d10
 #[test]
 fn rmcp_is_confined_to_soqrates_mcp() {
-    assert_confined("rmcp", "soqrates-mcp", "D10");
+    assert_confined("rmcp", "soqrates-mcp", "ADR-0001 D10");
 }
 
-// @adr-0001-d5
+// @adr-0001-d5 @adr-0005-d1
 #[test]
 fn store_adapters_live_in_soqrates_store() {
-    let store = read(workspace_root().join("crates/soqrates-store/src/lib.rs"));
-    for adapter in ["InMemoryStore", "FileStore"] {
+    let dir = workspace_root().join("crates/soqrates-store/src");
+    let store = read(dir.join("lib.rs")) + &read(dir.join("sql.rs"));
+    for adapter in ["InMemoryStore", "FileStore", "SqlStore"] {
         assert!(
             store.contains(&format!("impl StateStore for {adapter}")),
-            "ADR-0001 D5: soqrates-store must provide `{adapter}`"
+            "ADR-0001 D5, ADR-0005 D1: soqrates-store must provide `{adapter}`"
         );
     }
+}
+
+// @adr-0005-d1
+#[test]
+fn sqlx_is_confined_to_soqrates_store() {
+    assert_confined("sqlx", "soqrates-store", "ADR-0005 D1");
+}
+
+// @adr-0005-d1 @adr-0005-d6
+#[test]
+fn database_backends_are_features_and_spec_uses_sqlite_only() {
+    let store = package("soqrates-store");
+    for feature in ["sqlite", "postgres"] {
+        assert!(
+            store.features.contains_key(feature),
+            "ADR-0005 D1: soqrates-store must have a `{feature}` feature"
+        );
+    }
+    let sqlx = store
+        .dependencies
+        .iter()
+        .find(|d| d.name == "sqlx")
+        .expect("soqrates-store depends on sqlx");
+    assert!(sqlx.optional, "ADR-0005 D1: sqlx must be optional");
+    let spec_store = package("soqrates-spec")
+        .dependencies
+        .iter()
+        .find(|d| d.name == "soqrates-store")
+        .expect("soqrates-spec depends on soqrates-store");
+    assert_eq!(
+        spec_store.features,
+        ["sqlite"],
+        "ADR-0005 D6: soqrates-spec builds the SQLite backend only"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +260,7 @@ fn store_adapters_live_in_soqrates_store() {
 // @adr-0001-d6
 #[test]
 fn scheduling_uses_rs_fsrs_without_the_training_crate() {
-    assert_confined("rs-fsrs", "soqrates-core", "D6");
+    assert_confined("rs-fsrs", "soqrates-core", "ADR-0001 D6");
     assert!(
         dependents_of("fsrs").is_empty(),
         "ADR-0001 D6: use the scheduler-only `rs-fsrs`, not `fsrs` (pulls in an ML training stack)"

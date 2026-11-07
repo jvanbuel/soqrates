@@ -1,6 +1,6 @@
 [package]
 name = "soqrates-store"
-description = "StateStore adapters: in-memory and JSON file store (ADR-0001 D5)."
+description = "StateStore adapters: in-memory, JSON file and SQL database stores (ADR-0001 D5, ADR-0005)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -9,6 +9,13 @@ license.workspace = true
 soqrates-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sqlx = { workspace = true, optional = true }
+
+[features]
+# The SQL database store (ADR-0005) with an embedded SQLite backend.
+sqlite = ["dep:sqlx", "sqlx/sqlite-bundled"]
+# The SQL database store with a PostgreSQL backend, over TLS when asked.
+postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/tls-rustls-aws-lc-rs"]
 
 [dev-dependencies]
 chrono.workspace = true

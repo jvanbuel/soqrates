@@ -93,14 +93,17 @@ async fn session_not_pending(w: &mut SpecWorld) {
     assert!(stored.is_none(), "session {key:?} is still pending");
 }
 
-#[given("Soqrates keeps state in a file store in a fresh directory")]
-fn file_store(w: &mut SpecWorld) {
-    w.use_file_store();
+#[given(regex = r"^Soqrates keeps state in (a file store|a SQLite database) in a fresh directory$")]
+async fn store_in_fresh_dir(w: &mut SpecWorld, kind: String) {
+    match kind.as_str() {
+        "a file store" => w.use_file_store(),
+        _ => w.use_sqlite_store().await,
+    }
 }
 
-#[when("Soqrates restarts with the same state directory")]
-fn restart(w: &mut SpecWorld) {
-    w.restart();
+#[when(regex = r"^Soqrates restarts with the same (?:state directory|database)$")]
+async fn restart(w: &mut SpecWorld) {
+    w.restart().await;
 }
 
 fn json_documents(dir: &Path) -> Vec<String> {

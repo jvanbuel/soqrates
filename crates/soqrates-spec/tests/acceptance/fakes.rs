@@ -15,7 +15,7 @@ use soqrates_core::{
     PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result, Session, SessionKey,
     SessionOutcome,
 };
-use soqrates_store::{FileStore, InMemoryStore};
+use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
 // ---------------------------------------------------------------------------
 // Diffs
@@ -490,6 +490,8 @@ impl Prompter for ScriptedPrompter {
 pub enum AnyStore {
     Memory(InMemoryStore),
     File(FileStore),
+    /// The SQL database store on SQLite (ADR-0005).
+    Sql(SqlStore),
     /// The wrapped store, as seen from a forge that cannot reach it: every
     /// call fails with `Error::Port` (ADR-0003 D4). Steps can still inspect
     /// the wrapped store with [`AnyStore::inner`].
@@ -502,6 +504,12 @@ pub enum AnyStore {
 impl AnyStore {
     pub fn file(root: &Path) -> Self {
         AnyStore::File(FileStore::new(root))
+    }
+
+    /// The SQLite database `state.db` in `dir`, created if missing.
+    pub async fn sqlite(dir: &Path) -> Self {
+        let url = format!("sqlite://{}?mode=rwc", dir.join("state.db").display());
+        AnyStore::Sql(SqlStore::connect(&url).await.expect("connect to SQLite"))
     }
 
     pub fn memory() -> Self {
@@ -534,6 +542,7 @@ macro_rules! delegate {
         match $self {
             AnyStore::Memory(s) => s.$method($($arg),*).await,
             AnyStore::File(s) => s.$method($($arg),*).await,
+            AnyStore::Sql(s) => s.$method($($arg),*).await,
             AnyStore::Unreachable(_) => Err(unreachable()),
             AnyStore::FailingProfileSave(s, _) => s.$method($($arg),*).await,
         }

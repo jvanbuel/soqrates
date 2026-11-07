@@ -98,6 +98,15 @@ pub fn default_state_dir() -> PathBuf {
 mod tests {
     use super::*;
 
+    /// A database URL may carry a password, so no config file, which may be
+    /// committed, can hold one (ADR-0005 D5).
+    // @adr-0005-d5
+    #[test]
+    fn config_files_cannot_hold_a_database_url() {
+        let err = toml::from_str::<File>(r#"database_url = "postgres://u:pw@h/db""#).unwrap_err();
+        assert!(err.to_string().contains("database_url"), "{err}");
+    }
+
     #[test]
     fn project_file_overrides_user_file() {
         let user: File = toml::from_str(
