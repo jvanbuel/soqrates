@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 soqrates-core.workspace = true
 octocrab = "0.54"
+chrono.workspace = true
