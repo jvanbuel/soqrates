@@ -7,30 +7,23 @@ affected, what is missing, and a proposed fix.
 
 ## G1: MCP tools cannot be called in-process (D10), blocking
 
+> **Resolved**: `soqrates_mcp::SoqratesMcp::new(Arc<Soqrates<S, E, C>>)` and
+> `SoqratesMcp::call_tool(&self, name, args: serde_json::Value) ->
+> Result<serde_json::Value>` dispatch a tool call in-process, exactly as the
+> rmcp handler behind `SoqratesMcp::serve_stdio` does. The scenario "An MCP
+> client gets the same learner profile as the engine" now runs (no longer
+> `@wip @blocked`): `SpecWorld::call_mcp` lends the world's engine to a
+> `SoqratesMcp` for the call and takes it back afterwards.
+
 - **Scenario:** `mcp_server.feature`, "An MCP client gets the same learner
-  model as the engine" (tagged `@blocked`).
-- **Missing:** `soqrates-mcp` only offers `tool_names()` and `serve_stdio()`.
-  `serve_stdio` builds its own engine and talks over real stdio, so a test
-  cannot hand it a `Soqrates` with fakes (D12) or call a tool and read the
-  result. The tests can only check the tool names, not that "other harnesses
-  get the same learner model and scheduling".
-- **Proposed signature:**
-
-  ```rust
-  pub struct SoqratesMcp<S, E, C> { /* wraps Soqrates<S, E, C> */ }
-  impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
-      pub fn new(app: Soqrates<S, E, C>) -> Self;
-      /// Dispatch one tool call, as the rmcp handler would.
-      pub async fn call_tool(&self, name: &str, args: serde_json::Value)
-          -> soqrates_core::Result<serde_json::Value>;
-  }
-  pub async fn serve<S, E, C, T>(server: SoqratesMcp<S, E, C>, transport: T) -> Result<()>;
-  ```
-
-  The spec crate would also need `serde_json` as a dev-dependency to build the
-  arguments.
-- **Current steps:** the `When`/`Then` steps exist but panic with
-  "blocked by API gap G1".
+  profile as the engine".
+- **Was missing:** `soqrates-mcp` only offered `tool_names()` and a free
+  `serve_stdio()` that built its own engine and talked over real stdio, so a
+  test could not hand it a `Soqrates` with fakes (D12) or call a tool and
+  read the result.
+- **Differences from the proposal:** `new` takes the engine in an `Arc`
+  (the CLI and the rmcp handler share it), and there is no generic
+  `serve(server, transport)`; the public transport is `serve_stdio(self)`.
 
 ## G2: "Sustained" is not quantified (D7), spec ambiguity
 

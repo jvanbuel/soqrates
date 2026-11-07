@@ -27,7 +27,7 @@ Feature: The core is exposed as an MCP server
       | get_learner_profile |
       | due_reviews         |
 
-  @adr-0001-d10 @wip @blocked
+  @adr-0001-d10
   Scenario: An MCP client gets the same learner profile as the engine
     Given "github:1001" has answered questions about "rust.ownership" correctly
     When an MCP client calls "get_learner_profile" for "github:1001"

@@ -15,4 +15,11 @@ soqrates-store.workspace = true
 soqrates-examiner.workspace = true
 soqrates-scm-github.workspace = true
 soqrates-mcp.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
+clap = { version = "4.6", features = ["derive", "env"] }
+dirs = "7"
+getrandom = "0.4"
+toml = "1"

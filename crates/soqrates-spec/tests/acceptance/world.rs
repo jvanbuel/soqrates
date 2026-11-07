@@ -121,6 +121,8 @@ pub struct SpecWorld {
     pub recomputed: Option<Level>,
     pub domain: DomainState,
     pub identity: IdentityState,
+    /// The result of the most recent MCP tool call (ADR-0001 D10).
+    pub mcp_result: Option<soqrates_core::Result<serde_json::Value>>,
     sessions_started: usize,
 }
 
@@ -171,6 +173,7 @@ impl SpecWorld {
             recomputed: None,
             domain: DomainState::default(),
             identity: IdentityState::default(),
+            mcp_result: None,
             sessions_started: 0,
         }
     }
@@ -256,6 +259,30 @@ impl SpecWorld {
             .save_profile(&profile)
             .await
             .expect("save_profile");
+    }
+
+    /// Call the MCP tool `name` in-process against this world's engine
+    /// (ADR-0001 D10). The engine is lent to a `SoqratesMcp` for the call
+    /// and put back afterwards, so every other step keeps owning it.
+    pub async fn call_mcp(
+        &mut self,
+        name: &str,
+        args: serde_json::Value,
+    ) -> soqrates_core::Result<serde_json::Value> {
+        let placeholder = Soqrates::new(
+            AnyStore::Memory(soqrates_store::InMemoryStore::new()),
+            self.examiner.clone(),
+            self.clock.clone(),
+            Config::default(),
+        );
+        let app = std::sync::Arc::new(std::mem::replace(&mut self.app, placeholder));
+        let mcp = soqrates_mcp::SoqratesMcp::new(app.clone());
+        let result = mcp.call_tool(name, args).await;
+        drop(mcp);
+        self.app = std::sync::Arc::try_unwrap(app)
+            .ok()
+            .expect("the MCP server released the engine");
+        result
     }
 
     pub fn current_pr(&self) -> &PrRef {

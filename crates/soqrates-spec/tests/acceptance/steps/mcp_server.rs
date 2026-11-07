@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 
 use cucumber::gherkin::Step;
 use cucumber::{then, when};
+use serde_json::json;
+use soqrates_core::AuthorId;
 
 use crate::world::SpecWorld;
 
@@ -34,18 +36,38 @@ fn exposes(w: &mut SpecWorld, tool: String) {
     assert!(w.tools.contains(&tool), "{tool} missing from {:?}", w.tools);
 }
 
-// Blocked: soqrates-mcp has no in-process way to call a tool against a given
-// engine. See API_GAPS.md (G1).
+// G1 (resolved): tools are called in-process with `SoqratesMcp::call_tool`
+// against the world's engine. See API_GAPS.md.
 
 #[when(regex = r#"^an MCP client calls "([^"]+)" for "([^"]+)"$"#)]
-fn mcp_call(_w: &mut SpecWorld, tool: String, id: String) {
-    panic!(
-        "blocked by API gap G1 (see crates/soqrates-spec/API_GAPS.md): \
-         cannot call MCP tool {tool:?} for {id:?} in-process"
-    );
+async fn mcp_call(w: &mut SpecWorld, tool: String, id: String) {
+    let result = w.call_mcp(&tool, json!({ "author": id })).await;
+    w.mcp_result = Some(result);
 }
 
 #[then(regex = r#"^the MCP result matches the engine's profile of "([^"]+)"$"#)]
-fn mcp_matches(_w: &mut SpecWorld, id: String) {
-    panic!("blocked by API gap G1 (see crates/soqrates-spec/API_GAPS.md): profile of {id:?}");
+async fn mcp_matches(w: &mut SpecWorld, id: String) {
+    let result = match w.mcp_result.take().expect("no MCP call in this scenario") {
+        Ok(v) => v,
+        Err(e) => panic!("MCP call failed: {e}"),
+    };
+    let profile = w.profile(&AuthorId(id)).await;
+    let cards: Vec<_> = profile
+        .cards()
+        .iter()
+        .map(|(concept, card)| {
+            json!({
+                "concept": concept.0,
+                "due": card.due().to_rfc3339(),
+                "reps": card.reps(),
+            })
+        })
+        .collect();
+    assert!(!cards.is_empty(), "the engine's profile has no reviews");
+    let want = json!({
+        "level": serde_json::to_value(profile.level()).unwrap(),
+        "cards": cards,
+        "reviews": profile.history().len(),
+    });
+    assert_eq!(result, want);
 }
