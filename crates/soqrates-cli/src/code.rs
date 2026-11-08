@@ -45,23 +45,8 @@ fn git(
     args: &[&str],
     stdin: Option<&[u8]>,
 ) -> Result<Option<Vec<u8>>> {
-    let mut command = Command::new("git");
-    command.current_dir(dir);
-    if let Some(git_dir) = git_dir {
-        command.arg("--git-dir").arg(git_dir);
-    }
-    // Repository content must not steer git: no pager, no external diff or
-    // text conversion, no prompts.
+    let mut command = git_command(dir, git_dir, args);
     command
-        .args([
-            "--no-pager",
-            "-c",
-            "core.quotepath=off",
-            "-c",
-            "diff.external=",
-        ])
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -81,6 +66,83 @@ fn git(
         .wait_with_output()
         .map_err(|e| Error::Port(format!("running git: {e}")))?;
     Ok(out.status.success().then_some(out.stdout))
+}
+
+/// `git args`, run in `dir`, against `git_dir` if given.
+fn git_command(dir: &Path, git_dir: Option<&Path>, args: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(dir);
+    if let Some(git_dir) = git_dir {
+        command.arg("--git-dir").arg(git_dir);
+    }
+    // Repository content must not steer git: no pager, no external diff or
+    // text conversion, no prompts.
+    command
+        .args([
+            "--no-pager",
+            "-c",
+            "core.quotepath=off",
+            "-c",
+            "diff.external=",
+        ])
+        .args(args)
+        .env("GIT_TERMINAL_PROMPT", "0");
+    command
+}
+
+/// The first `limit` lines `git args` prints, read as they come: git is
+/// stopped once there are enough, so a broad search never fills memory.
+/// `Ok(None)` when git exits with status 1 (`git grep`: nothing found); an
+/// error with git's message for any other failure, e.g. an invalid
+/// regular expression.
+fn git_lines(
+    dir: &Path,
+    git_dir: Option<&Path>,
+    args: &[&str],
+    limit: usize,
+) -> Result<Option<Vec<String>>> {
+    use std::io::{BufRead, BufReader, Read};
+    let mut child = git_command(dir, git_dir, args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Port(format!("running git: {e}")))?;
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let mut lines = Vec::new();
+    for line in BufReader::new(stdout).split(b'\n') {
+        let line = line.map_err(|e| Error::Port(format!("reading from git: {e}")))?;
+        lines.push(String::from_utf8_lossy(&line).into_owned());
+        if lines.len() >= limit {
+            // Enough: what git would print next is never read.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(Some(lines));
+        }
+    }
+    let mut stderr = String::new();
+    if let Some(mut pipe) = child.stderr.take() {
+        let _ = pipe.read_to_string(&mut stderr);
+    }
+    let status = child
+        .wait()
+        .map_err(|e| Error::Port(format!("running git: {e}")))?;
+    match status.code() {
+        Some(0) => Ok(Some(lines)),
+        Some(1) => Ok(None),
+        _ => {
+            let why = stderr
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("git failed")
+                .trim()
+                .to_owned();
+            Err(Error::Port(format!(
+                "git {}: {why}",
+                args.first().unwrap_or(&"")
+            )))
+        }
+    }
 }
 
 fn text(bytes: Vec<u8>) -> Option<String> {
@@ -251,16 +313,18 @@ impl Codebase for GitCodebase {
         if let Some(spec) = &spec {
             args.push(spec);
         }
-        // No match is a failure to git; to us it's an empty result.
-        let Some(out) = self.run(&args, None)? else {
+        // Status 1 is "nothing found"; any other failure, such as an invalid
+        // expression, is reported, so the model doesn't take it for "no
+        // such code".
+        let Some(lines) = git_lines(&self.dir, self.git_dir.as_deref(), &args, limit)? else {
             return Ok(Vec::new());
         };
         let prefix = match &self.revision {
             Revision::Index => String::new(),
             Revision::Commit(id) => format!("{id}:"),
         };
-        Ok(String::from_utf8_lossy(&out)
-            .lines()
+        Ok(lines
+            .iter()
             .filter_map(|line| {
                 let mut parts = line.splitn(3, '\0');
                 let path = parts.next()?;
@@ -516,6 +580,16 @@ mod tests {
             }]
         );
         assert_eq!(code.grep("fn", None, false, 1).await.unwrap().len(), 1);
+        assert!(
+            code.grep("no such code", None, false, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // An invalid expression is an error the model is told about, not
+        // "no matches".
+        let invalid = code.grep("fn(", None, false, 10).await.unwrap_err();
+        assert!(invalid.to_string().contains("git grep"), "{invalid}");
         let blame = code.blame("src/lib.rs", 1, 1).await.unwrap().unwrap();
         assert_eq!(blame[0].text, "fn one() {}");
         assert_eq!(blame[0].commit, head[..12]);
