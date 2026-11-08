@@ -226,15 +226,15 @@
     },
     "soqrates.ci.idempotent-retry-ordering": {
       "card": {
-        "due": "2026-11-08T14:37:58.663945921Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
+        "due": "2026-11-09T15:09:26.049766993Z",
+        "stability": 0.27491830347692675,
+        "difficulty": 9.198653481986167,
+        "elapsed_days": 1,
         "scheduled_days": 1,
-        "reps": 1,
-        "lapses": 0,
+        "reps": 2,
+        "lapses": 1,
         "state": "Review",
-        "last_review": "2026-11-07T14:37:58.663945921Z"
+        "last_review": "2026-11-08T15:09:26.049766993Z"
       }
     },
     "soqrates.ci.superseding-question-comments": {
@@ -423,6 +423,13 @@
       "format": "MultipleChoice",
       "grade": "Good",
       "at": "2026-11-08T12:41:36.866343819Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.ci.idempotent-retry-ordering",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-08T15:09:26.049766993Z",
       "via": "github.com:16427728"
     }
   ],
