@@ -29,6 +29,32 @@
         "last_review": "2026-11-08T17:18:45.049315465Z"
       }
     },
+    "design.validation.brief-check": {
+      "card": {
+        "due": "2026-11-11T19:05:13.474387986Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T19:05:13.474387986Z"
+      }
+    },
+    "diff.unified.new-side-hunks": {
+      "card": {
+        "due": "2026-11-09T19:05:13.474387986Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T19:05:13.474387986Z"
+      }
+    },
     "distributed.write-ahead-journal.recovery": {
       "card": {
         "due": "2026-11-11T17:37:59.141682093Z",
@@ -289,6 +315,19 @@
         "last_review": "2026-11-07T12:25:42.551353684Z"
       }
     },
+    "rust.serde.backward-compat-defaults": {
+      "card": {
+        "due": "2026-11-10T19:05:13.474387986Z",
+        "stability": 1.1829,
+        "difficulty": 6.508547223894037,
+        "elapsed_days": 0,
+        "scheduled_days": 2,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T19:05:13.474387986Z"
+      }
+    },
     "rust.sqlx.any-driver": {
       "card": {
         "due": "2026-11-09T16:24:56.473686819Z",
@@ -365,6 +404,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-07T21:59:16.462401418Z"
+      }
+    },
+    "security.untrusted-input.inert-code": {
+      "card": {
+        "due": "2026-11-09T19:05:13.474387986Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T19:05:13.474387986Z"
       }
     },
     "soqrates.ci.answer-validity": {
@@ -804,6 +856,34 @@
       "format": "MultipleChoice",
       "grade": "Good",
       "at": "2026-11-08T17:46:07.459156615Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "design.validation.brief-check",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T19:05:13.474387986Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "diff.unified.new-side-hunks",
+      "format": "Open",
+      "grade": "Again",
+      "at": "2026-11-08T19:05:13.474387986Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "security.untrusted-input.inert-code",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-08T19:05:13.474387986Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.serde.backward-compat-defaults",
+      "format": "Open",
+      "grade": "Hard",
+      "at": "2026-11-08T19:05:13.474387986Z",
       "via": "github.com:16427728"
     }
   ],
