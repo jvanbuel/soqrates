@@ -18,7 +18,7 @@ organisation **Settings** → **Developer settings** → **GitHub Apps**).
 | GitHub App name | e.g. `<your-org>-soqrates` (it must be unique on GitHub; the bot is named after it) |
 | Homepage URL | your organisation's page, or `https://github.com/jvanbuel/soqrates` |
 | Webhook | untick **Active** (the workflow drives everything) |
-| Repository permissions | **Commit statuses**: Read and write · **Issues**: Read and write · **Pull requests**: Read and write · **Contents**: Read-only · **Metadata**: Read-only (default) |
+| Repository permissions | **Commit statuses**: Read and write · **Issues**: Read and write · **Pull requests**: Read and write · **Contents**: Read-only · **Metadata**: Read-only (default). For this repository's own app, **Contents: Read and write**, so release-plz can open release PRs with it ([releasing.md](releasing.md)). |
 | Where can this app be installed? | Only on this account |
 
 Click **Create GitHub App**. Then, on the app's page:
