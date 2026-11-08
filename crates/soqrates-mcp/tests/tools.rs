@@ -6,8 +6,9 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde_json::{Value, json};
 use soqrates_core::ports::{Clock, Examiner};
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, Concept, ConceptId, ConceptScope, Config, Diff, Error, Grade,
-    Grading, Question, QuestionBody, QuestionFormat, QuestionId, Result, Soqrates, Weight,
+    Answer, AnswerBody, AuthorId, CodeSnippet, Concept, ConceptId, ConceptScope, Config, Diff,
+    Error, Grade, Grading, Question, QuestionBody, QuestionBrief, QuestionFormat, QuestionId,
+    QuestionKind, Result, SnippetOrigin, Soqrates, Weight,
 };
 use soqrates_mcp::SoqratesMcp;
 use soqrates_store::InMemoryStore;
@@ -32,20 +33,36 @@ impl Examiner for FakeExaminer {
                 summary: String::new(),
                 scope: ConceptScope::General,
                 weight: Weight::Core,
+                locations: Vec::new(),
             })
             .collect())
     }
 
-    async fn write_question(&self, concept: &Concept, format: QuestionFormat) -> Result<Question> {
+    async fn write_question(&self, concept: &Concept, brief: &QuestionBrief) -> Result<Question> {
+        let format = brief.format;
+        // The brief's first kind, with a general snippet when it shows code;
+        // a scenario instead of the kinds that need more (ADR-0007 D2).
+        let kind = match brief.kinds[0] {
+            QuestionKind::ChooseTheFix | QuestionKind::ExplainYourChange => QuestionKind::Scenario,
+            kind => kind,
+        };
+        let code = kind.shows_code().then(|| CodeSnippet {
+            language: "rust".into(),
+            text: format!("let {0} = {0}();", concept.title),
+            origin: SnippetOrigin::General,
+        });
         let body = match format {
             QuestionFormat::MultipleChoice => QuestionBody::MultipleChoice {
                 prompt: format!("Which is true of {}?", concept.title),
+                code,
                 options: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+                options_language: None,
                 correct: RIGHT,
                 reasons: Vec::new(),
             },
             QuestionFormat::Open => QuestionBody::Open {
                 prompt: format!("Explain {}.", concept.title),
+                code,
                 rubric: RUBRIC.into(),
             },
         };
@@ -53,6 +70,7 @@ impl Examiner for FakeExaminer {
             id: QuestionId(format!("{}#{format:?}", concept.id.0)),
             concept: concept.id.clone(),
             scope: concept.scope,
+            kind,
             body,
             explanation: EXPLANATION.into(),
         })
@@ -176,7 +194,12 @@ async fn start_session_never_reveals_the_answer_key() {
         if q["format"] == "MultipleChoice" {
             assert_eq!(q["options"].as_array().unwrap().len(), 4);
         }
+        // The kind, and code in its own field (ADR-0007 D5).
+        let kind = q["kind"].as_str().expect("kind");
+        assert_eq!(q["code"]["text"].is_string(), kind != "scenario", "{q}");
+        assert_eq!(q["code"]["language"].is_string(), kind != "scenario", "{q}");
     }
+    assert!(questions.iter().any(|q| q["code"].is_object()), "{out}");
 
     let mut all = Vec::new();
     keys(&out, &mut all);

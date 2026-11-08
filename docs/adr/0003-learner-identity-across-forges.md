@@ -126,6 +126,8 @@ the organisation whose code they came from. The learner store never
 contains repository names, diffs, question text, answers or PR references.
 It holds concept IDs, grades, formats, timestamps and the identity each
 review came through, and nothing else.
+Code snippets shown with questions are question text: they never reach
+it either (ADR-0007 D6).
 
 A `Project` concept is never reclassified as `General`, not even when an
 engagement ends.

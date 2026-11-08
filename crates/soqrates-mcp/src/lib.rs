@@ -214,6 +214,7 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
                     "id": q.id.0,
                     "concept": q.concept.0,
                     "format": q.format(),
+                    "kind": q.kind.name(),
                 });
                 match &q.body {
                     QuestionBody::MultipleChoice {
@@ -225,6 +226,14 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
                     QuestionBody::Open { prompt, .. } => {
                         out["prompt"] = json!(prompt);
                     }
+                }
+                // Code is its own field, never part of the prompt
+                // (ADR-0007 D3, D5).
+                if let Some(code) = q.body.code() {
+                    out["code"] = json!({"language": code.language, "text": code.text});
+                }
+                if let Some(language) = q.body.options_language() {
+                    out["options_language"] = json!(language);
                 }
                 out
             })
@@ -508,7 +517,7 @@ mod wire {
     //! JSON-RPC, as an MCP client would.
 
     use super::*;
-    use soqrates_core::{Answer, Concept, Question, QuestionFormat};
+    use soqrates_core::{Answer, Concept, Question, QuestionBrief};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     struct NoExaminer;
@@ -516,7 +525,7 @@ mod wire {
         async fn extract_concepts(&self, _: &Diff) -> Result<Vec<Concept>> {
             Ok(Vec::new())
         }
-        async fn write_question(&self, _: &Concept, _: QuestionFormat) -> Result<Question> {
+        async fn write_question(&self, _: &Concept, _: &QuestionBrief) -> Result<Question> {
             Err(Error::Invalid("no questions".into()))
         }
         async fn grade(&self, _: &Question, _: &Answer) -> Result<soqrates_core::Grading> {

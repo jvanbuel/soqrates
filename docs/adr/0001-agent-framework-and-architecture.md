@@ -103,7 +103,7 @@ sequenceDiagram
     GH->>CI: workflow run
     CI->>Core: run_check(pr)
     Core->>Store: load profile and session for this head
-    Core->>LLM: extract_concepts(diff), write_question(concept, format)
+    Core->>LLM: extract_concepts(diff), write_question(concept, brief)
     Core->>Store: save session
     Core->>GH: post questions (comment), check = Pending
     Author->>GH: reply with answers

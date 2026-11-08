@@ -92,7 +92,9 @@ Comments use GitHub-flavoured markdown and these HTML elements only:
 `details`, `summary`, `sub`, `sup`, `kbd`, `br`, `b`, `i`, `code`. Alerts
 introduce the comment and the results. Instructions and explanations are
 collapsed in `<details>`. A test fails if rendered output contains any
-other tag.
+other tag. The only fenced code blocks are a question's code snippets and
+code options, rendered as ADR-0007 D5 says; fenced code in model prose
+still becomes inline `<code>`.
 
 ### D5: Results are a new comment, and the questions are frozen
 **Enforcement:** automated

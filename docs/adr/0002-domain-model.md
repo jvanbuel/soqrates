@@ -38,6 +38,10 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Concept scope | `ConceptScope` | assessment | `General` (a technology concept, e.g. `rust.async.cancellation`) or `Project` (specific to one organisation's code, ADR-0003). | |
 | Question | `Question` | assessment | A question about one concept, in one format. | exercise |
 | Format | `QuestionFormat` | assessment | Multiple choice or open. | |
+| Kind | `QuestionKind` | assessment | What a question asks of the author, e.g. predict an outcome or explain their change (ADR-0007). Separate from the format. | |
+| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and at most 15 lines, from the change or written by the examiner (ADR-0007). | |
+| Hunk | `Hunk` | assessment | A contiguous piece of a change in one file, as it is after the change. | |
+| Brief | `QuestionBrief` | assessment | What the examiner is asked to write for one concept: the format, the kinds allowed and the hunks (ADR-0007). | |
 | Answer | `Answer` | assessment | The author's response to a question. | reply |
 | Grade | `Grade` | assessment | Again (wrong), Hard, Good or Easy. Only Again is incorrect. | score, mark |
 | Examiner | `Examiner` | assessment | Extracts concepts, writes questions and grades answers. An LLM in production. | grader, model |
@@ -142,6 +146,9 @@ This defines the "mix" from ADR-0001 D7 (gap G3). The `i`-th question
 | Novice | always multiple choice |
 | Intermediate | multiple choice when `i` is even, open when `i` is odd |
 | Expert | always open |
+
+The kind of each question is chosen by the examiner, steered by the level
+(ADR-0007 D2).
 
 ### D6: Session rules
 **Enforcement:** automated

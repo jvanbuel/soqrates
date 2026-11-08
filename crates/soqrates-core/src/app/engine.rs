@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use crate::app::events::DomainEvent;
 use crate::app::ports::{Clock, Examiner, StateStore};
 use crate::assessment::{
-    Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody, Weight,
+    Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody, QuestionBrief,
+    QuestionKind, Weight,
 };
 use crate::delivery::{
     GradedSession, GradingJournal, Mode, PrRef, PrRounds, QuestionResult, Session, StoreId,
@@ -340,6 +341,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 id,
                 scope,
                 weight: Weight::Core,
+                locations: Vec::new(),
             })
             .collect();
         let known = self.known_concepts(&place).await?;
@@ -365,11 +367,20 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             .take(n_reviews)
             .chain(new.into_iter().take(n_new));
         for concept in concepts {
-            let i = questions.len();
-            let mut q = self
-                .examiner
-                .write_question(&concept, policy::format_for(level, i))
-                .await?;
+            // The format follows the level (ADR-0002 D5); the kind is the
+            // examiner's choice among those the level allows, and the
+            // question must be what was asked for (ADR-0007 D2, D4).
+            let format = policy::format_for(level, questions.len());
+            let asked: Vec<QuestionKind> = questions.iter().map(|q| q.kind).collect();
+            let brief = QuestionBrief::new(
+                format,
+                &policy::kinds_for(level, format, &asked),
+                diff.hunks_at(&concept.locations),
+            );
+            let mut q = self.examiner.write_question(&concept, &brief).await?;
+            brief
+                .check(&q)
+                .map_err(|why| Error::Port(format!("examiner: {why}")))?;
             q.scope = concept.scope;
             questions.push(q);
         }

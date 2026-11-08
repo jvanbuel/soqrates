@@ -11,10 +11,11 @@ use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
 use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error,
-    Grade, GradedSession, Grading, GradingJournal, Identity, IdentityLink, LearnerId,
-    LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionFormat,
-    QuestionId, Result, Session, SessionKey, SessionOutcome, Weight,
+    Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
+    ConceptScope, Diff, Error, Grade, GradedSession, Grading, GradingJournal, Identity,
+    IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question,
+    QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind, Result, Session,
+    SessionKey, SessionOutcome, SnippetOrigin, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -56,6 +57,9 @@ pub const WRONG_TEXT: &str = "I don't know";
 /// - Concepts: one per `+// concept: <id>` line of the diff, in order.
 /// - Questions: id `<concept>#mc` or `<concept>#open`; multiple-choice
 ///   questions have four options and option 0 is correct.
+/// - Kinds (ADR-0007 D2): the first kind of the brief. `ExplainYourChange`
+///   shows the brief's first hunk; the other kinds that show code show
+///   [`FakeExaminer::general_snippet`].
 /// - Grading (the answer key): the correct choice, or an open answer starting
 ///   with `correct`, gets the configurable `correct_grade` (default `Good`);
 ///   anything else gets `Again`.
@@ -162,11 +166,9 @@ impl FakeExaminer {
 
 impl Examiner for FakeExaminer {
     async fn extract_concepts(&self, diff: &Diff) -> Result<Vec<Concept>> {
-        Ok(diff
-            .0
-            .lines()
-            .filter_map(|l| l.strip_prefix(CONCEPT_MARKER))
-            .map(|id| {
+        Ok(marker_lines(diff)
+            .into_iter()
+            .map(|(id, location)| {
                 let cid = ConceptId(id.trim().to_string());
                 Concept {
                     scope: self.scope_of(&cid),
@@ -174,12 +176,24 @@ impl Examiner for FakeExaminer {
                     id: cid,
                     title: id.trim().to_string(),
                     summary: format!("What the change does with {}", id.trim()),
+                    locations: location.into_iter().collect(),
                 }
             })
             .collect())
     }
 
-    async fn write_question(&self, concept: &Concept, format: QuestionFormat) -> Result<Question> {
+    /// Writes the brief's first kind (ADR-0007 D2): the author's first hunk
+    /// for `ExplainYourChange`, a general snippet for the other kinds that
+    /// show code, with code options for `ChooseTheFix`.
+    async fn write_question(&self, concept: &Concept, brief: &QuestionBrief) -> Result<Question> {
+        let format = brief.format;
+        let kind = brief.kinds[0];
+        let code = match kind {
+            QuestionKind::Scenario => None,
+            QuestionKind::ExplainYourChange => brief.hunks.first().map(|h| h.snippet()),
+            _ => Some(Self::general_snippet(&concept.id)),
+        };
+        let options_language = (kind == QuestionKind::ChooseTheFix).then(|| "rust".to_string());
         let id = Self::question_id(&concept.id, format);
         let body = match format {
             QuestionFormat::MultipleChoice => {
@@ -201,13 +215,16 @@ impl Examiner for FakeExaminer {
                     .collect();
                 QuestionBody::MultipleChoice {
                     prompt: format!("Which statement about {} is true?", concept.title),
+                    code,
                     options,
+                    options_language,
                     correct: 0,
                     reasons,
                 }
             }
             QuestionFormat::Open => QuestionBody::Open {
                 prompt: format!("Explain {} in this change.", concept.title),
+                code,
                 rubric: format!("Covers {}", concept.title),
             },
         };
@@ -215,6 +232,7 @@ impl Examiner for FakeExaminer {
             id,
             concept: concept.id.clone(),
             scope: concept.scope,
+            kind,
             body,
             explanation: Self::explanation(&concept.id),
         })
@@ -247,7 +265,59 @@ impl Examiner for FakeExaminer {
     }
 }
 
+/// The concept of each `+// concept: <id>` line of `diff`, with where it is
+/// on the new side (ADR-0007 D4), if it is under a file header: from its
+/// marker line to the line before the next marker, or the end of its hunk.
+fn marker_lines(diff: &Diff) -> Vec<(&str, Option<CodeLocation>)> {
+    let mut out: Vec<(&str, Option<CodeLocation>)> = Vec::new();
+    let mut file: Option<&str> = None;
+    let mut line = 0u32;
+    // The location still growing: that of the latest marker in this hunk.
+    let mut growing: Option<usize> = None;
+    for l in diff.0.lines() {
+        if let Some(header) = l.strip_prefix("diff --git ") {
+            file = header.rsplit_once(" b/").map(|(_, b)| b);
+            growing = None;
+        } else if let Some(hunk) = l.strip_prefix("@@ ") {
+            line = hunk
+                .split_whitespace()
+                .find_map(|w| w.strip_prefix('+'))
+                .and_then(|w| w.split(',').next()?.parse().ok())
+                .unwrap_or(1);
+            growing = None;
+        } else if let Some(id) = l.strip_prefix(CONCEPT_MARKER) {
+            let location = file.map(|f| CodeLocation {
+                file: f.to_string(),
+                start: line,
+                end: line,
+            });
+            growing = location.is_some().then_some(out.len());
+            out.push((id, location));
+            line += 1;
+        } else if l.starts_with(' ') || (l.starts_with('+') && !l.starts_with("+++")) {
+            if let Some(Some(loc)) = growing.map(|i| &mut out[i].1) {
+                loc.end = line;
+            }
+            line += 1;
+        }
+    }
+    out
+}
+
 impl FakeExaminer {
+    /// The general snippet the fake writes about `concept`: code it wrote
+    /// itself, never the author's.
+    pub fn general_snippet(concept: &ConceptId) -> CodeSnippet {
+        CodeSnippet {
+            language: "rust".into(),
+            text: format!(
+                "fn example() {{\n    // a general example of {}\n}}",
+                concept.0
+            ),
+            origin: SnippetOrigin::General,
+        }
+    }
+
     /// The explanation the fake writes for `concept`.
     pub fn explanation(concept: &ConceptId) -> String {
         format!("Because {} works that way.", concept.0)

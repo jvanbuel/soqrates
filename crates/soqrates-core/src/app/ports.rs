@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 
 use crate::Result;
 use crate::app::engine::SessionOutcome;
-use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionFormat};
+use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionBrief};
 use crate::delivery::{
     CheckStatus, GradedSession, GradingJournal, PrRef, PrRounds, PullRequest, Session,
 };
@@ -85,11 +85,16 @@ pub trait LearnerStore: StateStore {}
 /// The LLM-backed part of Soqrates: understands diffs, writes and grades
 /// questions (D3). Implemented by `soqrates-examiner` on top of Rig.
 pub trait Examiner: Send + Sync {
+    /// The concepts `diff` exercises, each with where in the diff it was
+    /// found (ADR-0007 D4).
     fn extract_concepts(&self, diff: &Diff) -> impl Future<Output = Result<Vec<Concept>>> + Send;
+    /// Write a question about `concept` as `brief` asks: its format, the
+    /// first of its kinds that suits the concept, and code from or
+    /// mirroring its hunks (ADR-0007 D2-D4).
     fn write_question(
         &self,
         concept: &Concept,
-        format: QuestionFormat,
+        brief: &QuestionBrief,
     ) -> impl Future<Output = Result<Question>> + Send;
     /// Grade `answer` and explain the grade to the author (ADR-0004 D1).
     fn grade(

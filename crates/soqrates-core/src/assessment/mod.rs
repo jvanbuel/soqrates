@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{ConceptId, QuestionId};
 
+mod code;
+pub use code::*;
+
 /// A change: the unified diff Soqrates asks about.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Diff(pub String);
@@ -42,7 +45,7 @@ impl Diff {
 
     /// The diff split at each `diff --git` header, with the header's new
     /// path (`None` for text before the first header).
-    fn sections(&self) -> impl Iterator<Item = (Option<&str>, &str)> {
+    pub(crate) fn sections(&self) -> impl Iterator<Item = (Option<&str>, &str)> {
         let text = self.0.as_str();
         let mut starts: Vec<usize> = text
             .match_indices("diff --git ")
@@ -106,6 +109,10 @@ pub struct Concept {
     /// due review, which is asked for its own sake.
     #[serde(default)]
     pub weight: Weight,
+    /// Where in the change it was found (ADR-0007 D4). Empty for a due
+    /// review, which is asked for its own sake.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locations: Vec<CodeLocation>,
 }
 
 /// The shape of a question (ADR-0001 D7, ADR-0002 D5).
@@ -119,7 +126,14 @@ pub enum QuestionFormat {
 pub enum QuestionBody {
     MultipleChoice {
         prompt: String,
+        /// Code shown with the prompt (ADR-0007 D3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<CodeSnippet>,
         options: Vec<String>,
+        /// When set, every option is code in this language, and renders as
+        /// code (ADR-0007 D3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        options_language: Option<String>,
         /// Index into `options`.
         correct: usize,
         /// Why each option is right or wrong, in option order (ADR-0004
@@ -131,6 +145,9 @@ pub enum QuestionBody {
     },
     Open {
         prompt: String,
+        /// Code shown with the prompt (ADR-0007 D3).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<CodeSnippet>,
         /// What a good answer must cover; used when grading.
         rubric: String,
     },
@@ -155,6 +172,39 @@ impl QuestionBody {
             QuestionBody::Open { .. } => QuestionFormat::Open,
         }
     }
+
+    /// The question as asked, without its code.
+    pub fn prompt(&self) -> &str {
+        match self {
+            QuestionBody::MultipleChoice { prompt, .. } | QuestionBody::Open { prompt, .. } => {
+                prompt
+            }
+        }
+    }
+
+    /// The code shown with the prompt, if any (ADR-0007 D3).
+    pub fn code(&self) -> Option<&CodeSnippet> {
+        match self {
+            QuestionBody::MultipleChoice { code, .. } | QuestionBody::Open { code, .. } => {
+                code.as_ref()
+            }
+        }
+    }
+
+    /// The language of the options, when they are code (ADR-0007 D3).
+    pub fn options_language(&self) -> Option<&str> {
+        match self {
+            QuestionBody::MultipleChoice {
+                options_language, ..
+            } => options_language.as_deref(),
+            QuestionBody::Open { .. } => None,
+        }
+    }
+
+    /// Whether the options are code.
+    pub fn options_are_code(&self) -> bool {
+        self.options_language().is_some()
+    }
 }
 
 /// A question about one concept, in one format.
@@ -165,6 +215,10 @@ pub struct Question {
     /// The scope of `concept`, which decides where its review is stored
     /// (ADR-0003 D5).
     pub scope: ConceptScope,
+    /// What the question asks of the author (ADR-0007 D1). `Scenario` for
+    /// questions stored before kinds existed.
+    #[serde(default)]
+    pub kind: QuestionKind,
     pub body: QuestionBody,
     /// Why the correct answer is correct (multiple choice) or what a good
     /// answer covers (open). Shown only after grading (ADR-0004 D1).
@@ -239,7 +293,9 @@ mod tests {
     fn a_reason_is_given_per_option() {
         let body = QuestionBody::MultipleChoice {
             prompt: "Q?".into(),
+            code: None,
             options: vec!["a".into(), "b".into(), "c".into()],
+            options_language: None,
             correct: 1,
             reasons: vec!["A is wrong.".into(), "B is right.".into(), "  ".into()],
         };

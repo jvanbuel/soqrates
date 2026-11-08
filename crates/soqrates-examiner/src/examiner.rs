@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use soqrates_core::{
     Answer, AnswerBody, Concept, Diff, Error, Grade, Grading, Question, QuestionBody,
-    QuestionFormat, QuestionId, Result,
+    QuestionBrief, QuestionFormat, QuestionId, Result,
 };
 
 use crate::output::{
@@ -110,19 +110,26 @@ impl<L: Llm> Core<L> {
     /// checked with a second, short prompt; one that fails the check counts
     /// as invalid output, so it is asked for again once, with the passages
     /// quoted, and fails like any other invalid output after that.
-    async fn multiple_choice(&self, concept: &Concept) -> Result<MultipleChoice> {
+    ///
+    /// The question is written as `brief` asks (ADR-0007), and the check
+    /// is shown its code too (D7).
+    async fn multiple_choice(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+    ) -> Result<MultipleChoice> {
         let schema = schemars::schema_for!(MultipleChoiceOutput);
         let schema = &schema;
         self.retrying(
             "a multiple-choice question",
-            prompts::write_multiple_choice(concept),
+            prompts::write_multiple_choice(concept, brief),
             |prompt| async move {
                 let mc = match self
                     .attempt(
                         prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
                         prompt,
                         schema,
-                        &output::validate_multiple_choice,
+                        &|out| output::validate_multiple_choice(out, brief),
                     )
                     .await?
                 {
@@ -147,7 +154,14 @@ impl<L: Llm> Core<L> {
             .llm
             .complete(LlmRequest {
                 system: prompts::CHECK_OPTIONS_SYSTEM,
-                user: prompts::check_options(&mc.prompt, &mc.options, &mc.reasons, mc.correct),
+                user: prompts::check_options(
+                    &mc.prompt,
+                    mc.code.as_ref(),
+                    &mc.options,
+                    mc.options_language.as_deref(),
+                    &mc.reasons,
+                    mc.correct,
+                ),
                 schema: schemars::schema_for!(OptionCheckOutput),
             })
             .await?;
@@ -160,57 +174,66 @@ impl<L: Llm> Core<L> {
         if diff.is_empty() {
             return Ok(Vec::new());
         }
+        let files = diff.files();
         self.structured(
             "concept extraction",
             prompts::EXTRACT_CONCEPTS_SYSTEM,
             prompts::extract_concepts(&diff.0),
-            |out: ConceptsOutput| output::validate_concepts(out),
+            |out: ConceptsOutput| output::validate_concepts(out, &files),
         )
         .await
     }
 
+    /// Write a question as `brief` asks (ADR-0007): its format, a kind it
+    /// offers, and code in its own field, copied from a hunk for
+    /// `explain_your_change`.
     pub async fn write_question(
         &self,
         concept: &Concept,
-        format: QuestionFormat,
+        brief: &QuestionBrief,
     ) -> Result<Question> {
-        let (body, explanation) = match format {
+        let format = brief.format;
+        let (kind, body, explanation) = match format {
             QuestionFormat::MultipleChoice => {
                 // One reason per option, written with the options and
                 // checked to discuss only those (issue #5).
-                let mc = self.multiple_choice(concept).await?;
+                let mc = self.multiple_choice(concept, brief).await?;
                 // The reasons name options by content, so they survive the
                 // shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
                 let explanation = mc.explanation().to_owned();
                 let body = QuestionBody::MultipleChoice {
                     prompt: mc.prompt,
+                    code: mc.code,
                     options: mc.options,
+                    options_language: mc.options_language,
                     correct: mc.correct,
                     reasons: mc.reasons,
                 };
-                (body, explanation)
+                (mc.kind, body, explanation)
             }
             QuestionFormat::Open => {
                 let open = self
                     .structured(
                         "an open question",
                         prompts::WRITE_OPEN_SYSTEM,
-                        prompts::write_open(concept),
-                        |out: OpenOutput| output::validate_open(out),
+                        prompts::write_open(concept, brief),
+                        |out: OpenOutput| output::validate_open(out, brief),
                     )
                     .await?;
                 let body = QuestionBody::Open {
                     prompt: open.prompt,
+                    code: open.code,
                     rubric: open.rubric,
                 };
-                (body, open.explanation)
+                (open.kind, body, open.explanation)
             }
         };
         Ok(Question {
             id: question_id(concept, format),
             concept: concept.id.clone(),
             scope: concept.scope,
+            kind,
             body,
             explanation,
         })
@@ -240,7 +263,14 @@ impl<L: Llm> Core<L> {
                 Some(picked) if picked < options.len() => grade_choice(picked, *correct),
                 _ => Grade::Again,
             })),
-            (QuestionBody::Open { prompt, rubric }, AnswerBody::Text(text)) => {
+            (
+                QuestionBody::Open {
+                    prompt,
+                    code,
+                    rubric,
+                },
+                AnswerBody::Text(text),
+            ) => {
                 if text.trim().is_empty() {
                     return Ok(Grading {
                         grade: Grade::Again,
@@ -250,7 +280,7 @@ impl<L: Llm> Core<L> {
                 self.structured(
                     "grading",
                     prompts::GRADE_OPEN_SYSTEM,
-                    prompts::grade_open(prompt, rubric, text),
+                    prompts::grade_open(prompt, code.as_ref(), rubric, text),
                     |out: GradeOutput| output::validate_grade(out),
                 )
                 .await

@@ -1,6 +1,7 @@
-//! Adaptive question policy (ADR-0001 D7, ADR-0002 D4 and D5).
+//! Adaptive question policy (ADR-0001 D7, ADR-0002 D4 and D5, ADR-0007
+//! D2).
 
-use crate::assessment::QuestionFormat;
+use crate::assessment::{QuestionFormat, QuestionKind};
 use crate::learner::{GradedAnswer, Level};
 
 /// Consecutive correct reviews since the last level change that promote an
@@ -21,6 +22,31 @@ pub fn format_for(level: Level, index: usize) -> QuestionFormat {
         Level::Intermediate => QuestionFormat::Open,
         Level::Expert => QuestionFormat::Open,
     }
+}
+
+/// The kinds a question in `format` for an author at `level` may have,
+/// most preferred first (ADR-0007 D2). Kinds in `asked` (those of the
+/// session's earlier questions) move to the back, keeping their order, so
+/// that a round mixes kinds. The examiner picks the first that suits the
+/// concept.
+pub fn kinds_for(
+    level: Level,
+    format: QuestionFormat,
+    asked: &[QuestionKind],
+) -> Vec<QuestionKind> {
+    use QuestionFormat::{MultipleChoice, Open};
+    use QuestionKind::*;
+    let preferred: &[QuestionKind] = match (level, format) {
+        (Level::Novice, _) => &[PredictOutcome, SpotTheBug, Scenario, ChooseTheFix],
+        (Level::Intermediate, MultipleChoice) => {
+            &[SpotTheBug, ChooseTheFix, PredictOutcome, Scenario]
+        }
+        (Level::Intermediate, Open) => &[ExplainYourChange, PredictOutcome, Scenario, SpotTheBug],
+        (Level::Expert, _) => &[ExplainYourChange, SpotTheBug, Scenario, PredictOutcome],
+    };
+    let fitting = preferred.iter().copied().filter(|k| k.fits(format));
+    let (fresh, repeated): (Vec<_>, Vec<_>) = fitting.partition(|k| !asked.contains(k));
+    fresh.into_iter().chain(repeated).collect()
 }
 
 /// How `open` slots of a session are split between `reviews` due reviews
@@ -65,7 +91,43 @@ pub fn next_level(current: Level, recent: &[GradedAnswer]) -> Level {
 
 #[cfg(test)]
 mod tests {
-    use super::split_slots;
+    use super::{kinds_for, split_slots};
+    use crate::assessment::{QuestionFormat, QuestionKind};
+    use crate::learner::Level;
+
+    // @adr-0007-d2
+    #[test]
+    fn the_level_steers_the_kind_and_rounds_mix_kinds() {
+        use QuestionFormat::{MultipleChoice, Open};
+        use QuestionKind::*;
+        assert_eq!(
+            kinds_for(Level::Novice, MultipleChoice, &[])[0],
+            PredictOutcome
+        );
+        assert_eq!(kinds_for(Level::Expert, Open, &[])[0], ExplainYourChange);
+        assert_eq!(
+            kinds_for(Level::Intermediate, MultipleChoice, &[])[0],
+            SpotTheBug
+        );
+        assert_eq!(
+            kinds_for(Level::Intermediate, Open, &[])[0],
+            ExplainYourChange
+        );
+        // Choose the fix is never offered for an open question.
+        for level in [Level::Novice, Level::Intermediate, Level::Expert] {
+            assert!(!kinds_for(level, Open, &[]).contains(&ChooseTheFix));
+            assert!(kinds_for(level, MultipleChoice, &[]).contains(&Scenario));
+        }
+        // A kind already asked moves to the back.
+        assert_eq!(
+            kinds_for(Level::Novice, MultipleChoice, &[PredictOutcome]),
+            [SpotTheBug, Scenario, ChooseTheFix, PredictOutcome]
+        );
+        assert_eq!(
+            kinds_for(Level::Expert, Open, &[ExplainYourChange, SpotTheBug]),
+            [Scenario, PredictOutcome, ExplainYourChange, SpotTheBug]
+        );
+    }
 
     // @adr-0002-d10
     #[test]

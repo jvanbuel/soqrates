@@ -16,7 +16,8 @@ use soqrates_core::ports::Clock;
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, ConceptId, ConceptScope, DomainEvent, Error, Grade, GradedAnswer,
     Identity, LearnerEvent, LearnerId, LearnerProfile, Level, Question, QuestionBody,
-    QuestionFormat, QuestionId, Session, SessionEvent, SessionKey, SessionOutcome, SessionResult,
+    QuestionFormat, QuestionId, QuestionKind, Session, SessionEvent, SessionKey, SessionOutcome,
+    SessionResult,
 };
 
 use super::{author, concepts, format, grade, level};
@@ -88,9 +89,12 @@ fn mc_question(concept: &ConceptId) -> Question {
         id: FakeExaminer::question_id(concept, QuestionFormat::MultipleChoice),
         concept: concept.clone(),
         scope: ConceptScope::General,
+        kind: QuestionKind::Scenario,
         body: QuestionBody::MultipleChoice {
             prompt: format!("Which statement about {} is true?", concept.0),
+            code: None,
             options: vec!["right".into(), "wrong".into(), "also wrong".into()],
+            options_language: None,
             correct: 0,
             reasons: Vec::new(),
         },
@@ -103,8 +107,10 @@ fn open_question(concept: &ConceptId) -> Question {
         id: FakeExaminer::question_id(concept, QuestionFormat::Open),
         concept: concept.clone(),
         scope: ConceptScope::General,
+        kind: QuestionKind::Scenario,
         body: QuestionBody::Open {
             prompt: format!("Explain {} in this change.", concept.0),
+            code: None,
             rubric: format!("Covers {}", concept.0),
         },
         explanation: FakeExaminer::explanation(concept),

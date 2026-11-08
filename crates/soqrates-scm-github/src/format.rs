@@ -207,9 +207,104 @@ fn question_heading(n: usize, total: usize) -> String {
 }
 
 fn prompt_of(q: &Question) -> &str {
-    match &q.body {
-        QuestionBody::MultipleChoice { prompt, .. } | QuestionBody::Open { prompt, .. } => prompt,
+    q.body.prompt()
+}
+
+// ---------------------------------------------------------------------------
+// Code snippets (ADR-0007 D5)
+
+/// A fence for `code`: backticks, one more than the longest run of
+/// backticks in it and at least three, so that no line of the code can
+/// close it.
+fn fence_for(code: &str) -> String {
+    let mut longest = 0;
+    let mut run = 0;
+    for c in code.chars() {
+        run = if c == '`' { run + 1 } else { 0 };
+        longest = longest.max(run);
     }
+    "`".repeat((longest + 1).max(3))
+}
+
+/// A language tag safe to put after a fence: lowercase letters, digits and
+/// `+#._-` only, at most 20 characters; `text` if nothing is left.
+fn fence_language(language: &str) -> String {
+    let tag: String = language
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || "+#._-".contains(*c))
+        .take(20)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if tag.is_empty() { "text".into() } else { tag }
+}
+
+/// Append `code` as a fenced block tagged `language`, every line prefixed
+/// with `indent` (to nest it in a list item). Inside the block the code is
+/// shown as is and is inert: no tag, mention, box or marker in it means
+/// anything. Carriage returns and control characters other than tabs are
+/// dropped.
+fn push_fenced(code: &str, language: &str, indent: &str, out: &mut String) {
+    let code: String = code
+        .chars()
+        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+        .collect();
+    let fence = fence_for(&code);
+    out.push_str(&format!("{indent}{fence}{}\n", fence_language(language)));
+    for line in code.trim_end().lines() {
+        out.push_str(indent);
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&format!("{indent}{fence}\n"));
+}
+
+/// The question's snippet as a fenced block, followed by a blank line.
+fn push_snippet(q: &Question, out: &mut String) {
+    if let Some(code) = q.body.code() {
+        push_fenced(&code.text, &code.language, "", out);
+        out.push('\n');
+    }
+}
+
+/// One option after its list marker (`- [ ] `, `- `): `a. text`, or for a
+/// code option `a.` with the code in a fenced block nested in the item.
+fn option_item(index: usize, option: &str, language: Option<&str>, bold: bool) -> String {
+    let letter = if bold {
+        format!("<b>{}.</b>", option_letter(index))
+    } else {
+        format!("{}.", option_letter(index))
+    };
+    match language {
+        Some(language) => {
+            let mut out = format!("{letter}\n");
+            push_fenced(option, language, "  ", &mut out);
+            out.pop();
+            out
+        }
+        None if bold => format!("<b>{}. {}</b>", option_letter(index), inline(option)),
+        None => format!("{letter} {}", inline(option)),
+    }
+}
+
+/// The lines of `body` outside fenced code blocks opened with backticks,
+/// fence lines excluded, as GitHub's markdown sees them. Only the renderer
+/// opens such blocks (prose has its backticks escaped), so this is how
+/// reading a comment ignores the code in it (ADR-0007 D5).
+fn outside_fences(body: &str) -> Vec<&str> {
+    let mut open: Option<usize> = None;
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let run = trimmed.chars().take_while(|&c| c == '`').count();
+        match open {
+            Some(n) if run >= n && trimmed[run..].trim().is_empty() => open = None,
+            Some(_) => {}
+            None if run >= 3 => open = Some(run),
+            None => out.push(line),
+        }
+    }
+    out
 }
 
 const HOW_TO_ANSWER: &str = "<details>
@@ -268,10 +363,15 @@ pub fn render_questions(session: &Session) -> String {
         out.push_str("\n\n");
         out.push_str(&inline(prompt_of(q)));
         out.push_str("\n\n");
+        push_snippet(q, &mut out);
         match &q.body {
             QuestionBody::MultipleChoice { options, .. } => {
+                let language = q.body.options_language();
                 for (j, option) in options.iter().enumerate() {
-                    out.push_str(&format!("- [ ] {}. {}\n", option_letter(j), inline(option)));
+                    out.push_str(&format!(
+                        "- [ ] {}\n",
+                        option_item(j, option, language, false)
+                    ));
                 }
                 out.push('\n');
             }
@@ -348,7 +448,8 @@ fn heading_number(line: &str) -> Option<usize> {
 /// Read the boxes of a question comment rendered by [`render_questions`].
 /// A box belongs to the question whose section it is in, and an option is
 /// identified by its position in that section, never by its text. The
-/// "How to answer" section and anything after it are ignored.
+/// "How to answer" section and anything after it are ignored, and so is
+/// everything inside fenced code blocks (ADR-0007 D5).
 pub fn parse_checkboxes(body: &str, questions: &[Question]) -> Checkboxes {
     let mut boxes = Checkboxes {
         done: false,
@@ -356,7 +457,7 @@ pub fn parse_checkboxes(body: &str, questions: &[Question]) -> Checkboxes {
     };
     // The current question, and the position of the next box in it.
     let mut current: Option<(usize, usize)> = None;
-    for line in body.lines() {
+    for line in outside_fences(body) {
         let trimmed = line.trim();
         if trimmed.starts_with("<details") {
             break;
@@ -478,17 +579,18 @@ pub fn results_marker(key: &SessionKey) -> String {
     format!("<!-- soqrates:results={} -->", key.0)
 }
 
-fn option_text(options: &[String], index: usize) -> String {
+/// Option `index` in a list item; a code option as code (ADR-0007 D5).
+fn option_text(options: &[String], index: usize, language: Option<&str>) -> String {
     match options.get(index) {
-        Some(o) => format!("{}. {}", option_letter(index), inline(o)),
+        Some(o) => option_item(index, o, language, false),
         None => format!("option {}", index + 1),
     }
 }
 
-fn answer_text(result: &QuestionResult) -> String {
+fn answer_text(result: &QuestionResult, language: Option<&str>) -> String {
     match &result.answer {
         None => "_No answer_".into(),
-        Some(AnswerBody::Choice(i)) => option_text(&result.options, *i),
+        Some(AnswerBody::Choice(i)) => option_text(&result.options, *i, language),
         Some(AnswerBody::Text(t)) if t.trim().is_empty() => "_No answer_".into(),
         Some(AnswerBody::Text(t)) => inline(t),
     }
@@ -532,11 +634,20 @@ pub fn render_results(
         out.push_str(&format!("{} {mark}\n\n", question_heading(i + 1, total)));
         out.push_str(&inline(&r.prompt));
         out.push_str("\n\n");
-        out.push_str(&format!("- **Your answer:** {}\n", answer_text(r)));
+        // The code shown with the question, from the session's question.
+        let question = session.questions().iter().find(|q| q.id == r.question);
+        if let Some(q) = question {
+            push_snippet(q, &mut out);
+        }
+        let language = question.and_then(|q| q.body.options_language());
+        out.push_str(&format!(
+            "- **Your answer:** {}\n",
+            answer_text(r, language)
+        ));
         if let Some(c) = r.correct_option {
             out.push_str(&format!(
                 "- **Correct answer:** {}\n",
-                option_text(&r.options, c)
+                option_text(&r.options, c, language)
             ));
         }
         out.push('\n');
@@ -632,15 +743,21 @@ fn push_collapsed_questions(
         out.push_str(&format!("**Question {} of {total}**\n\n", i + 1));
         out.push_str(&inline(prompt_of(q)));
         out.push_str("\n\n");
+        push_snippet(q, out);
         match &q.body {
             QuestionBody::MultipleChoice { options, .. } => {
+                let language = q.body.options_language();
                 for (j, option) in options.iter().enumerate() {
-                    let text = format!("{}. {}", option_letter(j), inline(option));
-                    if answer == Some(&AnswerBody::Choice(j)) {
-                        out.push_str(&format!("- <b>{text}</b> (your answer)\n"));
-                    } else {
-                        out.push_str(&format!("- {text}\n"));
-                    }
+                    let picked = answer == Some(&AnswerBody::Choice(j));
+                    let item = option_item(j, option, language, picked);
+                    // "(your answer)" goes on the item's first line, before
+                    // any code nested in it.
+                    let item = match item.split_once('\n') {
+                        Some((first, code)) if picked => format!("{first} (your answer)\n{code}"),
+                        None if picked => format!("{item} (your answer)"),
+                        _ => item,
+                    };
+                    out.push_str(&format!("- {item}\n"));
                 }
                 if let Some(AnswerBody::Text(t)) = answer {
                     out.push_str(&format!("\nYour answer: {}\n", inline(t)));
@@ -666,7 +783,8 @@ pub fn marker_key(body: &str) -> Option<SessionKey> {
 /// Whether a question comment still takes answers: it still has the
 /// "Grade my answers" box, which the graded and superseded renderings drop.
 pub fn takes_answers(body: &str) -> bool {
-    body.lines()
+    outside_fences(body)
+        .into_iter()
         .filter_map(task_item)
         .any(|(_, text)| text == DONE_BOX)
 }
@@ -882,16 +1000,22 @@ pub fn diff_of_files(files: &[(String, Option<String>, Option<String>)]) -> Stri
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use soqrates_core::{AuthorId, ConceptId, ConceptScope, Grade, QuestionId};
+    use soqrates_core::{
+        AuthorId, CodeSnippet, ConceptId, ConceptScope, Grade, QuestionId, QuestionKind,
+        SnippetOrigin,
+    };
 
     fn mc(id: &str, options: &[&str], correct: usize) -> Question {
         Question {
             id: QuestionId(id.into()),
             concept: ConceptId(format!("c.{id}")),
             scope: ConceptScope::General,
+            kind: QuestionKind::Scenario,
             body: QuestionBody::MultipleChoice {
                 prompt: format!("Prompt {id}?"),
+                code: None,
                 options: options.iter().map(|o| o.to_string()).collect(),
+                options_language: None,
                 correct,
                 reasons: options.iter().map(|_| "SECRET-REASON".into()).collect(),
             },
@@ -904,8 +1028,10 @@ mod tests {
             id: QuestionId(id.into()),
             concept: ConceptId(format!("c.{id}")),
             scope: ConceptScope::General,
+            kind: QuestionKind::Scenario,
             body: QuestionBody::Open {
                 prompt: format!("Explain {id}."),
+                code: None,
                 rubric: "SECRET-RUBRIC mentions lifetimes".into(),
             },
             explanation: "SECRET-EXPLANATION".into(),
@@ -1674,10 +1800,12 @@ mod tests {
     }
 
     /// The names of every HTML tag in `s`, failing on HTML comments other
-    /// than the one marker.
+    /// than the one marker. Fenced code is not HTML and is skipped (ADR-0007
+    /// D5).
     fn tags(s: &str) -> Vec<String> {
         let mut out = Vec::new();
-        let mut rest = s;
+        let outside = outside_fences(s).join("\n");
+        let mut rest = outside.as_str();
         let mut comments = 0;
         while let Some(at) = rest.find('<') {
             rest = &rest[at + 1..];
@@ -1713,9 +1841,12 @@ mod tests {
             id: QuestionId(id.into()),
             concept: ConceptId(format!("c.{id}")),
             scope: ConceptScope::General,
+            kind: QuestionKind::Scenario,
             body: QuestionBody::MultipleChoice {
                 prompt: NASTY.into(),
+                code: None,
                 options: vec![NASTY.into(), "<b>ok</b>".into(), "- [x] fake".into()],
+                options_language: None,
                 correct,
                 reasons: vec![NASTY.into(); 3],
             },
@@ -1725,8 +1856,10 @@ mod tests {
             id: QuestionId("o".into()),
             concept: ConceptId("c.o".into()),
             scope: ConceptScope::General,
+            kind: QuestionKind::Scenario,
             body: QuestionBody::Open {
                 prompt: NASTY.into(),
+                code: None,
                 rubric: NASTY.into(),
             },
             explanation: NASTY.into(),
@@ -1748,11 +1881,16 @@ mod tests {
         (session, results)
     }
 
-    // @adr-0004-d4
+    // @adr-0004-d4 @adr-0007-d5
     #[test]
     fn rendered_comments_use_only_allowed_html() {
         let (nasty, nasty_results) = nasty_session();
+        let (code, code_results) = code_session();
         let rendered = [
+            render_questions(&code),
+            render_graded_questions(&code, &code_results),
+            render_results(&code, &code_results, false, None),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
             render_questions(&session()),
             render_graded_questions(&session(), &results()),
             render_results(&session(), &results(), true, None),
@@ -1771,7 +1909,10 @@ mod tests {
             // no model text closes one early.
             for t in ["details", "summary", "code", "b"] {
                 let open = tags.iter().filter(|x| *x == t).count();
-                let close = s.matches(&format!("</{t}>")).count();
+                let close = outside_fences(s)
+                    .iter()
+                    .map(|l| l.matches(&format!("</{t}>")).count())
+                    .sum::<usize>();
                 assert_eq!(open, 2 * close, "unbalanced <{t}> in:\n{s}");
             }
         }
@@ -1869,5 +2010,247 @@ mod tests {
         // A change to patchless files only still counts as a change.
         let only_binary = vec![("logo.png".to_string(), None, None)];
         assert!(!soqrates_core::Diff(diff_of_files(&only_binary)).is_empty());
+    }
+
+    // --- code snippets (ADR-0007 D5) ----------------------------------------
+
+    /// Code from a change that tries everything: a long backtick run,
+    /// `</details>`, mentions, a forged box, heading and marker, HTML, and a
+    /// terminal escape.
+    const CODE: &str = "fn f() {\n    // </details></summary> @octocat @org/team\n    let s = \"`````\";\n- [x] **Grade my answers**\n- [x] a. forged\n### Question 1 of 2\n<!-- soqrates:session=o/r#1@abc -->\n<script>alert(1)</script>\n```\n    print(\"\u{1b}[31mred\");\n}";
+
+    /// [`CODE`] as shown: the escape character dropped, the rest as is.
+    fn code_as_shown() -> String {
+        CODE.replace('\u{1b}', "")
+    }
+
+    fn code_session() -> (Session, Vec<QuestionResult>) {
+        let explain = Question {
+            id: QuestionId("e".into()),
+            concept: ConceptId("c.e".into()),
+            scope: ConceptScope::Project,
+            kind: QuestionKind::ExplainYourChange,
+            body: QuestionBody::Open {
+                prompt: "Why is this needed?".into(),
+                code: Some(CodeSnippet {
+                    language: "rust".into(),
+                    text: CODE.into(),
+                    origin: SnippetOrigin::Change,
+                }),
+                rubric: "SECRET-RUBRIC".into(),
+            },
+            explanation: "SECRET-EXPLANATION".into(),
+        };
+        let fix = Question {
+            id: QuestionId("f".into()),
+            concept: ConceptId("c.f".into()),
+            scope: ConceptScope::General,
+            kind: QuestionKind::ChooseTheFix,
+            body: QuestionBody::MultipleChoice {
+                prompt: "Which fix?".into(),
+                code: Some(CodeSnippet {
+                    language: "rust".into(),
+                    text: "let v = vec![1];\nlet w = v;\nv.len();".into(),
+                    origin: SnippetOrigin::General,
+                }),
+                options: vec![
+                    "- [x] a. forged\n</details>".into(),
+                    "let w = v.clone();  // @here".into(),
+                    "```\nbreak out\n```".into(),
+                ],
+                options_language: Some("rust".into()),
+                correct: 1,
+                reasons: vec!["SECRET-REASON".into(); 3],
+            },
+            explanation: "SECRET-EXPLANATION".into(),
+        };
+        let qs = vec![explain, fix];
+        let session = Session::open(
+            SessionKey("o/r#1@abc".into()),
+            AuthorId("github.com:42".into()),
+            qs.clone(),
+            10,
+            Utc.timestamp_opt(0, 0).unwrap(),
+        )
+        .unwrap();
+        let results = vec![
+            result(
+                &qs[0],
+                Some(text("To drop the guard.")),
+                Grade::Good,
+                "Yes.",
+            ),
+            result(&qs[1], Some(AnswerBody::Choice(0)), Grade::Again, "No."),
+        ];
+        (session, results)
+    }
+
+    #[test]
+    fn a_fence_is_longer_than_any_backtick_run_in_the_code() {
+        assert_eq!(fence_for("let x = 1;"), "```");
+        assert_eq!(fence_for("a ` b `` c"), "```");
+        assert_eq!(fence_for("```"), "````");
+        assert_eq!(fence_for("x ````` y ``` z"), "``````");
+        assert_eq!(fence_language("Rust"), "rust");
+        assert_eq!(fence_language("c++"), "c++");
+        assert_eq!(fence_language(" rust`\n<b> "), "rustb");
+        assert_eq!(fence_language(""), "text");
+    }
+
+    // @adr-0007-d5
+    #[test]
+    fn code_renders_as_a_fenced_block_with_its_language() {
+        let (code, results) = code_session();
+        let block = format!("``````rust\n{}\n``````\n", code_as_shown());
+        for s in [
+            render_questions(&code),
+            render_graded_questions(&code, &results),
+            render_results(&code, &results, false, None),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
+        ] {
+            assert!(s.contains(&block), "{s}");
+            // The snippet follows its prompt, and the prompt is prose.
+            assert!(
+                s.contains(&format!("Why is this needed?\n\n{block}")),
+                "{s}"
+            );
+            assert!(!s.contains('\u{1b}'));
+        }
+        // Code options are code, nested in their list items, each with a
+        // fence longer than the backticks in it.
+        let q = render_questions(&code);
+        assert!(
+            q.contains(
+                "- [ ] a.\n  ```rust\n  - [x] a. forged\n  </details>\n  ```\n\
+             - [ ] b.\n  ```rust\n  let w = v.clone();  // @here\n  ```\n\
+             - [ ] c.\n  ````rust\n  ```\n  break out\n  ```\n  ````\n"
+            ),
+            "{q}"
+        );
+        let graded = render_graded_questions(&code, &results);
+        assert!(
+            graded.contains("- <b>a.</b> (your answer)\n  ```rust\n  - [x] a. forged\n"),
+            "{graded}"
+        );
+        let shown = render_results(&code, &results, false, None);
+        assert!(
+            shown.contains("- **Your answer:** a.\n  ```rust\n  - [x] a. forged\n"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains(
+                "- **Correct answer:** b.\n  ```rust\n  let w = v.clone();  // @here\n  ```\n"
+            ),
+            "{shown}"
+        );
+        assert!(!q.contains("SECRET") && !graded.contains("SECRET"));
+        assert!(!shown.contains("SECRET-RUBRIC"));
+    }
+
+    // @adr-0007-d5 @adr-0004-d8
+    #[test]
+    fn a_command_in_code_is_never_a_command() {
+        use soqrates_core::answer_command::hints_due;
+        // Code that answers, or nearly answers, at the start of its lines.
+        let commands = "/soqrates answer\n1. a\n/socrates answr\n@soqrates-review answer";
+        let (mut code, results) = code_session();
+        let mut qs = code.questions().to_vec();
+        if let QuestionBody::Open { code: c, .. } = &mut qs[0].body {
+            c.as_mut().unwrap().text = commands.into();
+        }
+        code = Session::open(
+            code.key().clone(),
+            code.author().clone(),
+            qs,
+            10,
+            Utc.timestamp_opt(0, 0).unwrap(),
+        )
+        .unwrap();
+        let slug = Some("soqrates-review");
+        let comments = [
+            render_questions(&code),
+            render_graded_questions(&code, &results),
+            render_results(&code, &results, false, None),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
+            // An author's comment that starts with code.
+            format!("```\n{commands}\n```"),
+            format!("    {}", commands.replace('\n', "\n    ")),
+        ];
+        for body in &comments {
+            assert!(body.contains("/soqrates answer\n") || body.contains("    /soqrates answer"));
+            assert_eq!(read_command(body, slug), Command::NotACommand, "{body}");
+            assert_eq!(
+                soqrates_core::answer_command::parse_answers(body, code.questions(), slug),
+                None
+            );
+        }
+        let listed: Vec<(usize, &str)> = comments.iter().map(String::as_str).enumerate().collect();
+        assert_eq!(hints_due(&listed, &[], slug), Vec::<usize>::new());
+        // The question comment's boxes are untouched by the code.
+        assert_eq!(
+            parse_checkboxes(&comments[0], code.questions()),
+            checkboxes(false, &[Ticked::None, Ticked::None])
+        );
+    }
+
+    // @adr-0007-d5 @adr-0004-d3 @adr-0004-d4
+    #[test]
+    fn code_cannot_break_out_of_its_fence() {
+        let (code, results) = code_session();
+        let live = render_questions(&code);
+        for s in [
+            live.clone(),
+            render_graded_questions(&code, &results),
+            render_results(&code, &results, false, None),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
+        ] {
+            // Outside the fences there is nothing of the code: no tag,
+            // mention, box, heading or second marker.
+            let outside = outside_fences(&s).join("\n");
+            assert_eq!(outside.matches("<!--").count(), 1, "{outside}");
+            for forged in [
+                "<script",
+                "</details></summary>",
+                "@octocat",
+                "@org",
+                "@here",
+                "- [x]",
+                "### Question 1 of 2\n<!--",
+                "break out",
+            ] {
+                assert!(
+                    !outside.contains(forged),
+                    "{forged:?} outside a fence:\n{s}"
+                );
+            }
+            // Every fence that opens closes, so the end of the comment is
+            // not code.
+            assert_eq!(outside_fences(&s).last().copied(), s.lines().last(), "{s}");
+        }
+        // The boxes are exactly the renderer's: 3 options and the done box.
+        let boxes = outside_fences(&live)
+            .into_iter()
+            .filter(|l| task_item(l).is_some())
+            .count();
+        assert_eq!(boxes, 3 + 1);
+        assert_eq!(
+            parse_checkboxes(&live, code.questions()),
+            checkboxes(false, &[Ticked::None, Ticked::None])
+        );
+        assert!(takes_answers(&live));
+        // Ticking a real box counts; the forged ones in the code never do.
+        let ticked = live.replacen("- [ ] b.", "- [x] b.", 1);
+        assert_eq!(
+            parse_checkboxes(&ticked, code.questions()),
+            checkboxes(false, &[Ticked::None, Ticked::One(1)])
+        );
+        // A frozen comment takes no answers, even with a done box in its code.
+        assert!(!takes_answers(&render_graded_questions(&code, &results)));
+        assert!(!takes_answers(&render_superseded_questions(
+            code.key(),
+            Some(&code),
+            Some(NEWER),
+            true
+        )));
     }
 }

@@ -47,8 +47,19 @@ pub enum Command<'a> {
 /// Read the command a comment `body` starts with, after leading whitespace.
 /// `app_slug` is the slug of the app that posts Soqrates' comments, if any:
 /// `@<app_slug> answer` then counts as the command too.
+///
+/// A comment that starts with code, a fenced block or a line indented as
+/// code, is not a command and not a near miss: code is inert, whatever it
+/// says (ADR-0007 D5).
 pub fn read_command<'a>(body: &'a str, app_slug: Option<&str>) -> Command<'a> {
+    let first_line = body.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    if first_line.starts_with("    ") || first_line.starts_with('\t') {
+        return Command::NotACommand;
+    }
     let body = body.trim_start();
+    if fence_of(body.lines().next().unwrap_or("")).is_some() {
+        return Command::NotACommand;
+    }
     let (first, rest) = split_word(body);
     if first.is_empty() {
         return Command::NotACommand;
@@ -154,6 +165,19 @@ pub fn hints_due<I: Copy + PartialEq>(
     due
 }
 
+/// The fence a line opens or closes, `(character, length)`: a run of at
+/// least three backticks or tildes at its start, after up to three spaces.
+fn fence_of(line: &str) -> Option<(char, usize)> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    if indent > 3 {
+        return None;
+    }
+    let rest = &line[indent..];
+    let c = rest.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let n = rest.chars().take_while(|&x| x == c).count();
+    (n >= 3).then_some((c, n))
+}
+
 /// `N. text`, `N: text` or `N) text` → `(N, text)`.
 fn numbered_line(line: &str) -> Option<(usize, &str)> {
     let line = line.trim_start();
@@ -191,7 +215,9 @@ fn choice_index(text: &str, options: usize) -> Option<usize> {
 ///
 /// Numbers are 1-based in question order; out-of-range numbers are ignored
 /// and for a duplicate number the last one wins. Lines without a number
-/// continue the previous answer. Answers come back in question order.
+/// continue the previous answer, and so does every line of a fenced code
+/// block, numbered or not: code in an answer is part of it (ADR-0007 D5).
+/// Answers come back in question order.
 pub fn parse_answers(
     body: &str,
     questions: &[Question],
@@ -204,7 +230,29 @@ pub fn parse_answers(
     // The answer that unnumbered lines continue; `None` before the first
     // number and after an out-of-range one.
     let mut current: Option<usize> = None;
+    // The fence of the code block the line is in, if any.
+    let mut fence: Option<(char, usize)> = None;
     for line in rest.lines() {
+        let in_code = match (fence, fence_of(line)) {
+            (None, Some(open)) => {
+                fence = Some(open);
+                true
+            }
+            (Some((c, n)), Some((d, m))) if c == d && m >= n && line.trim()[m..].is_empty() => {
+                fence = None;
+                true
+            }
+            (Some(_), _) => true,
+            (None, None) => false,
+        };
+        if in_code {
+            if let Some(i) = current {
+                let t = texts[i].get_or_insert_with(String::new);
+                t.push('\n');
+                t.push_str(line.trim_end());
+            }
+            continue;
+        }
         if let Some((n, text)) = numbered_line(line) {
             current = (1..=questions.len()).contains(&n).then(|| n - 1);
             if let Some(i) = current {
@@ -323,6 +371,63 @@ mod tests {
         assert_eq!(hints_due(&comments, &[1, 4], None), Vec::<i32>::new());
         // A repeat of an earlier, already hinted comment gets none.
         assert_eq!(hints_due(&comments[2..], &[], None), vec![3, 4]);
+    }
+
+    // @adr-0007-d5
+    #[test]
+    fn code_is_never_a_command() {
+        for body in [
+            "```\n/soqrates answer\n1. a\n```",
+            "~~~text\n/socrates answr\n~~~",
+            "\n````rust\n/soqrates answer\n````\n/soqrates answer\n1. a",
+            "    /soqrates answer\n    1. a",
+            "\t/soqrate answer",
+            "<!-- soqrates:session=k -->\n```\n/soqrates answer\n```",
+        ] {
+            assert_eq!(read_command(body, SLUG), Command::NotACommand, "{body:?}");
+        }
+        let comments = [
+            (1, "```\n/socrates answr\n```"),
+            (2, "    /soqrates answers"),
+        ];
+        assert_eq!(hints_due(&comments, &[], SLUG), Vec::<i32>::new());
+        // Leading blank lines and a little indentation are still fine.
+        assert!(matches!(
+            read_command("  \n  /soqrates answer", SLUG),
+            Command::Answer(_)
+        ));
+    }
+
+    // @adr-0007-d5
+    #[test]
+    fn numbered_lines_in_code_belong_to_the_answer() {
+        use crate::assessment::{ConceptScope, QuestionKind};
+        use crate::ids::{ConceptId, QuestionId};
+        let open = |id: &str| Question {
+            id: QuestionId(id.into()),
+            concept: ConceptId(format!("c.{id}")),
+            scope: ConceptScope::General,
+            kind: QuestionKind::Scenario,
+            body: QuestionBody::Open {
+                prompt: "Why?".into(),
+                code: None,
+                rubric: "R".into(),
+            },
+            explanation: "E".into(),
+        };
+        let qs = [open("a"), open("b")];
+        let body = "/soqrates answer\n1. Like this:\n```\n2. not an answer\n/soqrates answer\n```\n2. The second.";
+        let answers = parse_answers(body, &qs, None).unwrap();
+        assert_eq!(
+            answers[0].body,
+            AnswerBody::Text("Like this:\n```\n2. not an answer\n/soqrates answer\n```".into())
+        );
+        assert_eq!(answers[1].body, AnswerBody::Text("The second.".into()));
+        // A fence before any number answers nothing, and its numbers neither.
+        let body = "/soqrates answer\n```\n1. x\n```\n2. y";
+        let answers = parse_answers(body, &qs, None).unwrap();
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].question, QuestionId("b".into()));
     }
 
     #[test]
