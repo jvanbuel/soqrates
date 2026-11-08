@@ -3,6 +3,19 @@
   "starting_level": "Novice",
   "level": "Intermediate",
   "cards": {
+    "git.unified-diff.format": {
+      "card": {
+        "due": "2026-11-09T12:41:36.866343819Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T12:41:36.866343819Z"
+      }
+    },
     "github-actions.composite-action.design": {
       "card": {
         "due": "2026-11-11T07:35:32.673791591Z",
@@ -81,6 +94,19 @@
         "last_review": "2026-11-07T21:59:16.462401418Z"
       }
     },
+    "github.api.compare-files-patch": {
+      "card": {
+        "due": "2026-11-11T12:41:36.866343819Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T12:41:36.866343819Z"
+      }
+    },
     "project.release.rebuild-from-tag-guard": {
       "card": {
         "due": "2026-11-11T11:19:21.919639663Z",
@@ -118,6 +144,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-07T15:40:54.957182562Z"
+      }
+    },
+    "rust.control-flow.option-match-filter": {
+      "card": {
+        "due": "2026-11-09T12:41:36.866343819Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T12:41:36.866343819Z"
       }
     },
     "rust.error-handling.map-err-question-mark": {
@@ -363,6 +402,27 @@
       "format": "MultipleChoice",
       "grade": "Good",
       "at": "2026-11-08T11:19:21.919639663Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "git.unified-diff.format",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-08T12:41:36.866343819Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.control-flow.option-match-filter",
+      "format": "Open",
+      "grade": "Again",
+      "at": "2026-11-08T12:41:36.866343819Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "github.api.compare-files-patch",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T12:41:36.866343819Z",
       "via": "github.com:16427728"
     }
   ],
