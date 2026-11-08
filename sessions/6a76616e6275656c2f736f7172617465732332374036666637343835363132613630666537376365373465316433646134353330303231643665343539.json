@@ -1,0 +1,69 @@
+{
+  "key": "jvanbuel/soqrates#27@6ff7485612a60fe77ce74e1d3da4530021d6e459",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "distributed.write-ahead-journal.recovery/mc",
+      "concept": "distributed.write-ahead-journal.recovery",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A grading step must update several files so they are consistent with each other. The new design writes a complete journal of the intended end state in one atomic step, then applies it, and every later operation first replays any leftover journal. Why must the individual writes applied from the journal be idempotent?",
+          "options": [
+            "Running recovery only at process startup, since a leftover journal can exist only after the whole process has died.",
+            "Taking a snapshot of the original state before each write, so a crash can be undone by restoring it.",
+            "Replaying the journal may run the same writes more than once, so each write must produce the same final state when repeated; otherwise a crash during recovery could corrupt state.",
+            "Deleting the journal before applying its writes, so a leftover journal can never be replayed twice.",
+            "Writing the journal as a sequence of small appended records, one per file to be changed, so each record can be applied as soon as it is written."
+          ],
+          "correct": 2,
+          "reasons": [
+            "A write can fail without the process dying, leaving a journal behind within a live process. Recovering at the start of each operation handles both crashes and failed writes.",
+            "This is the rollback approach the change replaces. It needs extra bookkeeping about prior state and does not let a later operation simply finish the intended update.",
+            "Recovery can itself crash and be rerun, and a crash can occur after some writes were applied. Idempotent writes of the full end state make repeated replay converge to the same result, so recovery is safe to retry at any point.",
+            "If the journal is deleted first, a crash during application loses the plan and leaves a half-applied state with nothing to recover from. The journal must be removed only after all writes succeed.",
+            "Appending records one at a time means a crash can leave a partial plan. Replay would then apply only part of the intended end state, which is the inconsistency the journal is meant to prevent."
+          ]
+        }
+      },
+      "explanation": "Recovery can itself crash and be rerun, and a crash can occur after some writes were applied. Idempotent writes of the full end state make repeated replay converge to the same result, so recovery is safe to retry at any point."
+    },
+    {
+      "id": "concurrency.atomic-claim.mutual-exclusion/open",
+      "concept": "concurrency.atomic-claim.mutual-exclusion",
+      "scope": "General",
+      "body": {
+        "Open": {
+          "prompt": "Several concurrent callers, some in the same process and some in different processes, may try to finalize the same session at once. Exactly one of them must succeed, and the others must fail cleanly. Explain why a plain \"check whether the session is still open, then claim it\" approach is unsafe, and how an in-process mutex, an advisory file lock, and a SQL transaction that deletes the session row and inserts a journal entry each contribute to making the claim safe. What would go wrong if you kept only one of them?",
+          "rubric": "A good answer covers these key points:\n1. Check-then-act race (TOCTOU): two callers can both read \"open\" before either claims, so both proceed and the session is finalized twice, producing duplicate journal entries or conflicting results. The check and claim must be one atomic step.\n2. The in-process mutex (guarding a map) serializes callers within one process only. It does nothing across separate processes.\n3. The advisory file lock provides mutual exclusion across processes on the same host. It is advisory, so it works only if every participant honors it, and it does not help across machines.\n4. The SQL transaction makes the delete of the session row and the insert of the journal entry all-or-nothing. A crash or failure cannot leave the session deleted with no journal, or a journal with the session still open. Deleting the row and checking its affected-row count can also serve as the atomic claim: only one caller sees one row deleted.\n5. The layers are complementary, not redundant. With only the mutex, other processes can double-claim. With only the file lock, there is no atomicity or crash safety for the two writes. With only the transaction, correctness may hold depending on isolation level, but a lack of explicit exclusion can cause wasted work or conflicts and errors for losers.\n\nCommon misconceptions that make an answer wrong:\n- Saying a mutex is enough for multi-process safety.\n- Treating the file lock as a guarantee that holds against processes that ignore it.\n- Thinking the transaction alone stops the check-then-act race regardless of how the check is done, for example a plain SELECT outside the transaction.\n- Claiming the problem is only performance rather than correctness."
+        }
+      },
+      "explanation": "A good answer says that a separate check followed by a claim lets two callers both pass the check and both claim, so the check and claim must be one indivisible step. It also explains that each mechanism covers a different scope: the mutex covers goroutines in one process, the file lock covers separate processes, and the transaction keeps the delete and insert together."
+    },
+    {
+      "id": "project.grading.session-state-machine/mc",
+      "concept": "project.grading.session-state-machine",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A grading run has stored its journal for a session but has not finished, and a second CI check runs at that moment. Lookup tries pending first, then being graded, then graded. Suppose the being-graded step were removed, so only pending and graded were checked. What would go wrong, and what should the check do instead?",
+          "options": [
+            "It would block until the grading finishes, because the journal acts as a lock that the CI check must wait on.",
+            "It would report the session as Graded early, because a stored journal is treated as proof that grading has finished.",
+            "It would find no matching session, so it would wrongly treat the change as having none and open a new session, instead of seeing the unfinished grading and reporting Pending.",
+            "It would still find the session as pending, because storing a journal does not change the session's state."
+          ],
+          "correct": 2,
+          "reasons": [
+            "The journal is recorded state, not a lock. The CI check does not wait on it; it reports Pending and returns.",
+            "A journal marks a grading as started, not finished. Reporting Graded early is not what the lookup gap causes, since the graded lookup only matches finished sessions.",
+            "Correct. A journaled session is no longer pending and is not yet graded, so a lookup with only those two states falls through. Checking the being-graded state between them finds the overlapping run and reports Pending without opening a duplicate session.",
+            "Storing the journal does change how the session is classified. find_session treats a journaled session as not pending, so the pending lookup no longer matches it."
+          ]
+        }
+      },
+      "explanation": "Correct. A journaled session is no longer pending and is not yet graded, so a lookup with only those two states falls through. Checking the being-graded state between them finds the overlapping run and reports Pending without opening a duplicate session."
+    }
+  ],
+  "created_at": "2026-11-08T17:08:02.464910823Z"
+}

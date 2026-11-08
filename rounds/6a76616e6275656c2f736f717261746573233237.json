@@ -1,0 +1,18 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 27
+  },
+  "rounds": [
+    {
+      "head": "6ff7485612a60fe77ce74e1d3da4530021d6e459",
+      "session": "jvanbuel/soqrates#27@6ff7485612a60fe77ce74e1d3da4530021d6e459",
+      "concepts": [
+        "distributed.write-ahead-journal.recovery",
+        "concurrency.atomic-claim.mutual-exclusion",
+        "project.grading.session-state-machine"
+      ],
+      "at": "2026-11-08T17:08:02.464910823Z"
+    }
+  ]
+}
