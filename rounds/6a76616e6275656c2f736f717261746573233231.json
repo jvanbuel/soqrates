@@ -1,0 +1,18 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 21
+  },
+  "rounds": [
+    {
+      "head": "dbe9d7136595af15942831dca49df7ab71ddd0ce",
+      "session": "jvanbuel/soqrates#21@dbe9d7136595af15942831dca49df7ab71ddd0ce",
+      "concepts": [
+        "assessment.question_budget.slot_allocation",
+        "assessment.concepts.weight_filtering",
+        "delivery.ci.carried_questions"
+      ],
+      "at": "2026-11-08T15:39:52.859188661Z"
+    }
+  ]
+}
