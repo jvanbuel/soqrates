@@ -62,31 +62,21 @@ impl Prompter for TtyPrompter {
     fn ask(&mut self, question: &Question) -> Result<Answer> {
         self.asked += 1;
         let n = self.asked;
+        self.say(&render_question(n, question))?;
         let body = match &question.body {
-            QuestionBody::MultipleChoice {
-                prompt, options, ..
-            } => {
-                let mut text = format!("\n{n}. {prompt}\n");
-                for (i, o) in options.iter().enumerate() {
-                    text.push_str(&format!("   {}. {o}\n", letter(i)));
+            QuestionBody::MultipleChoice { options, .. } => loop {
+                self.say("   Your answer (letter): ")?;
+                let reply = self.line()?;
+                if let Some(i) = parse_choice(&reply, options.len()) {
+                    break AnswerBody::Choice(i);
                 }
-                self.say(&text)?;
-                loop {
-                    self.say("   Your answer (letter): ")?;
-                    let reply = self.line()?;
-                    if let Some(i) = parse_choice(&reply, options.len()) {
-                        break AnswerBody::Choice(i);
-                    }
-                    self.say(&format!(
-                        "   Please type a letter from a to {}.\n",
-                        letter(options.len() - 1)
-                    ))?;
-                }
-            }
-            QuestionBody::Open { prompt, .. } => {
                 self.say(&format!(
-                    "\n{n}. {prompt}\n   Answer in your own words; finish with an empty line.\n"
+                    "   Please type a letter from a to {}.\n",
+                    letter(options.len() - 1)
                 ))?;
+            },
+            QuestionBody::Open { .. } => {
+                self.say("   Answer in your own words; finish with an empty line.\n")?;
                 let mut lines = Vec::new();
                 loop {
                     self.say("   > ")?;
@@ -108,6 +98,52 @@ impl Prompter for TtyPrompter {
     fn report(&mut self, outcome: &SessionOutcome) {
         let text = render_results(outcome, chrono::Utc::now());
         let _ = self.say(&text);
+    }
+}
+
+/// `code` as it is, every line prefixed with `indent`, without control
+/// characters other than tabs, so that code from a change can't drive the
+/// terminal (ADR-0007 D5).
+pub fn indent_code(code: &str, indent: &str) -> String {
+    let mut out = String::new();
+    for line in code.trim_end().lines() {
+        out.push_str(indent);
+        out.extend(line.chars().filter(|&c| c == '\t' || !c.is_control()));
+        out.push('\n');
+    }
+    out
+}
+
+/// Question `n` as shown at the terminal: the prompt, then its code
+/// indented, then the options, code options indented under their letter
+/// (ADR-0007 D5).
+pub fn render_question(n: usize, question: &Question) -> String {
+    let mut text = format!("\n{n}. {}\n", question.body.prompt());
+    if let Some(code) = question.body.code() {
+        text.push('\n');
+        text.push_str(&indent_code(&code.text, "       "));
+        text.push('\n');
+    }
+    if let QuestionBody::MultipleChoice { options, .. } = &question.body {
+        for (i, o) in options.iter().enumerate() {
+            if question.body.options_are_code() {
+                text.push_str(&format!("   {}.\n", letter(i)));
+                text.push_str(&indent_code(o, "       "));
+            } else {
+                text.push_str(&format!("   {}. {o}\n", letter(i)));
+            }
+        }
+    }
+    text
+}
+
+/// An option in the results: inline, or on its own indented lines when it
+/// spans several (code options).
+fn option_line(o: &str) -> String {
+    if o.contains('\n') {
+        format!("\n{}", indent_code(o, "       ").trim_end_matches('\n'))
+    } else {
+        format!(" {o}")
     }
 }
 
@@ -135,7 +171,11 @@ pub fn render_results(outcome: &SessionOutcome, now: chrono::DateTime<chrono::Ut
             (None, _) => out.push_str("     Not answered.\n"),
             (Some(AnswerBody::Choice(c)), Some(right)) if *c != right => {
                 let yours = r.options.get(*c).map(String::as_str).unwrap_or("?");
-                out.push_str(&format!("     Your answer: {}. {yours}\n", letter(*c)));
+                out.push_str(&format!(
+                    "     Your answer: {}.{}\n",
+                    letter(*c),
+                    option_line(yours)
+                ));
             }
             _ => {}
         }
@@ -143,7 +183,11 @@ pub fn render_results(outcome: &SessionOutcome, now: chrono::DateTime<chrono::Ut
             && !r.is_correct()
         {
             let text = r.options.get(right).map(String::as_str).unwrap_or("?");
-            out.push_str(&format!("     Correct answer: {}. {text}\n", letter(right)));
+            out.push_str(&format!(
+                "     Correct answer: {}.{}\n",
+                letter(right),
+                option_line(text)
+            ));
         }
         for line in r.feedback.trim().lines() {
             out.push_str(&format!("     {line}\n"));
@@ -225,6 +269,46 @@ mod tests {
         // A correct answer doesn't repeat the correct option.
         let first = text.split("✗ 2.").next().unwrap();
         assert!(!first.contains("Correct answer"), "{text}");
+    }
+
+    // @adr-0007-d5
+    #[test]
+    fn terminal_shows_code_as_is_indented() {
+        use soqrates_core::{
+            CodeSnippet, ConceptScope, Question, QuestionBody, QuestionKind, SnippetOrigin,
+        };
+        let q = Question {
+            id: QuestionId("rust.borrow/mc".into()),
+            concept: ConceptId("rust.borrow".into()),
+            scope: ConceptScope::General,
+            kind: QuestionKind::ChooseTheFix,
+            body: QuestionBody::MultipleChoice {
+                prompt: "Which fix compiles?".into(),
+                code: Some(CodeSnippet {
+                    language: "rust".into(),
+                    text: "let v = vec![1];\nlet w = v;\n\tprintln!(\"{} `x` </details> @here\", v.len()); // \u{1b}[2J".into(),
+                    origin: SnippetOrigin::Change,
+                }),
+                options: vec!["let w = v.clone();".into(), "let w = &v;\nlet n = 1;".into()],
+                options_language: Some("rust".into()),
+                correct: 0,
+                reasons: vec![],
+            },
+            explanation: "E".into(),
+        };
+        let text = super::render_question(2, &q);
+        assert_eq!(
+            text,
+            "\n2. Which fix compiles?\n\n\
+             \x20      let v = vec![1];\n\
+             \x20      let w = v;\n\
+             \x20      \tprintln!(\"{} `x` </details> @here\", v.len()); // [2J\n\n\
+             \x20  a.\n\
+             \x20      let w = v.clone();\n\
+             \x20  b.\n\
+             \x20      let w = &v;\n\
+             \x20      let n = 1;\n"
+        );
     }
 
     #[test]

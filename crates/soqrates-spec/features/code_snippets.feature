@@ -8,7 +8,7 @@ Feature: Questions with code from the change
   not depend on (ADR-0001 D12). Code from the repository stays with the
   repository: it never reaches the learner store (ADR-0003 D5).
 
-  @wip @adr-0007-d4 @adr-0007-d5
+  @adr-0007-d4 @adr-0007-d5
   Scenario: A question of kind explain_your_change shows a hunk from the pull request's diff, in its language
     Given "github:1001" is a known Expert author
     And a pull request "jvanbuel/soqrates#15" by "github:1001" at head "abc123" whose change to "src/billing.rs" is:
@@ -22,7 +22,7 @@ Feature: Questions with code from the change
     And the posted question about "rust.errors.try-operator" shows the lines the change adds to "src/billing.rs", as "rust" code
     And the prompt of the posted question about "rust.errors.try-operator" contains none of its code
 
-  @wip @adr-0007-d3 @adr-0007-d5
+  @adr-0007-d3 @adr-0007-d5
   Scenario: Code with backticks, </details> or @mentions is posted as code, exactly as written
     Given "github:1001" is a known Expert author
     And a pull request "jvanbuel/soqrates#16" by "github:1001" at head "abc123" whose change to "web/notes.ts" is:
@@ -35,7 +35,7 @@ Feature: Questions with code from the change
     Then the posted question about "typescript.template-literals" shows the lines the change adds to "web/notes.ts", as "typescript" code
     And the prompt of the posted question about "typescript.template-literals" contains none of its code
 
-  @wip @adr-0007-d3
+  @adr-0007-d3
   Scenario: A long hunk is cut to 15 lines before it is shown
     Given "github:1001" is a known Expert author
     And a pull request by "github:1001" whose change to "src/long.rs" adds 30 lines about "rust.iterators.fold"
@@ -59,7 +59,7 @@ Feature: Questions with code from the change
         let total = InvoiceTotal::from_cents(cents, Rounding::HalfEven);
         """
 
-    @wip @adr-0007-d6
+    @adr-0007-d6
     Scenario: A question with a snippet from the repository is never stored in the learner store
       When the Soqrates check runs
       Then the posted question about "rust.floats.rounding" shows the lines the change adds to "src/invoice.rs", as "rust" code
@@ -67,7 +67,7 @@ Feature: Questions with code from the change
       And the pending session in the store of organisation "client" shows the code
       And the learner store contains none of the code shown with the questions
 
-    @wip @adr-0007-d6
+    @adr-0007-d6
     Scenario: Grading a question with a snippet from the repository stores none of it in the learner store
       Given the Soqrates check has run
       And the author replies with correct answers

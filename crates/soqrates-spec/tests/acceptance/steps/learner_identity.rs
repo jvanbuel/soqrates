@@ -204,7 +204,7 @@ async fn known_learners(w: &SpecWorld) -> BTreeSet<LearnerId> {
 
 /// Everything the scenario can find in `store` for the known learners and
 /// sessions, serialized (D5).
-async fn dump(w: &SpecWorld, store: &AnyStore) -> String {
+pub(super) async fn dump(w: &SpecWorld, store: &AnyStore) -> String {
     let mut parts = Vec::new();
     for l in known_learners(w).await {
         let profile = store.load_profile(&l).await.expect("load_profile");
@@ -224,7 +224,7 @@ fn has_review_of(profile: &Option<LearnerProfile>, concept: &ConceptId) -> bool 
         .is_some_and(|p| p.history().iter().any(|r| r.concept == *concept))
 }
 
-fn org_store<'a>(w: &'a SpecWorld, org: &str) -> &'a AnyStore {
+pub(super) fn org_store<'a>(w: &'a SpecWorld, org: &str) -> &'a AnyStore {
     w.app
         .org_stores
         .get(org)
@@ -794,10 +794,16 @@ async fn learner_store_contains_none(w: &mut SpecWorld, list: String) {
                 forbidden.extend(options.iter().cloned());
                 forbidden.extend(reasons.iter().cloned());
             }
-            soqrates_core::QuestionBody::Open { prompt, rubric } => {
+            soqrates_core::QuestionBody::Open { prompt, rubric, .. } => {
                 forbidden.push(prompt.clone());
                 forbidden.push(rubric.clone());
             }
+        }
+        // Code shown with a question is question text too (ADR-0007 D6),
+        // line by line, as the dump is JSON.
+        if let Some(code) = q.body.code() {
+            let lines = code.text.lines().map(str::trim).filter(|l| l.len() >= 10);
+            forbidden.extend(lines.map(str::to_string));
         }
     }
     assert!(!w.identity.questions.is_empty(), "no questions were asked");

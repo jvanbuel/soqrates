@@ -9,7 +9,10 @@ use std::collections::HashSet;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use soqrates_core::{Concept, ConceptId, ConceptScope, Grade, Grading, Weight};
+use soqrates_core::{
+    CodeLocation, CodeSnippet, Concept, ConceptId, ConceptScope, Grade, Grading, MAX_SNIPPET_LINES,
+    QuestionBrief, QuestionKind, SnippetOrigin, Weight,
+};
 
 use crate::prompts::MAX_CONCEPTS;
 
@@ -44,12 +47,48 @@ pub struct RawConcept {
     /// `core`, `supporting` or `incidental`.
     #[serde(default)]
     pub weight: String,
+    /// Where in the diff the concept is exercised (ADR-0007 D4).
+    #[serde(default)]
+    pub locations: Vec<RawLocation>,
+}
+
+/// A file and a range of lines on the new side of the diff.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RawLocation {
+    /// The file's path as in the diff's `+++ b/...` header, without `b/`.
+    pub file: String,
+    /// 1-based, inclusive, new-side line numbers.
+    pub start_line: u32,
+    pub end_line: u32,
+}
+
+/// The code of a question, in its own field: never parsed out of prose
+/// (ADR-0007 D3).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RawCode {
+    /// A language tag such as `rust` or `python`.
+    pub language: String,
+    /// At most 15 lines of code, as shown to the author.
+    pub text: String,
 }
 
 /// Reply to [`crate::prompts::WRITE_MULTIPLE_CHOICE_SYSTEM`].
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(title = "multiple_choice_question")]
 pub struct MultipleChoiceOutput {
+    /// One of the kinds offered, e.g. `predict_outcome` (ADR-0007 D2).
+    #[serde(default)]
+    pub kind: String,
+    /// For `explain_your_change`: the 1-based number of the hunk shown.
+    #[serde(default)]
+    pub hunk: Option<u32>,
+    /// For the other kinds that show code: the snippet.
+    #[serde(default)]
+    pub code: Option<RawCode>,
+    /// For `spot_the_bug` and `choose_the_fix`: the flawed line of the
+    /// code, quoted exactly.
+    #[serde(default)]
+    pub flawed_line: String,
     pub prompt: String,
     /// 3 to 5 distinct options, exactly one correct, each with the reason
     /// it is right or wrong.
@@ -71,6 +110,18 @@ pub struct RawOption {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(title = "open_question")]
 pub struct OpenOutput {
+    /// One of the kinds offered, e.g. `explain_your_change` (ADR-0007 D2).
+    #[serde(default)]
+    pub kind: String,
+    /// For `explain_your_change`: the 1-based number of the hunk shown.
+    #[serde(default)]
+    pub hunk: Option<u32>,
+    /// For the other kinds that show code: the snippet.
+    #[serde(default)]
+    pub code: Option<RawCode>,
+    /// For `spot_the_bug`: the flawed line of the code, quoted exactly.
+    #[serde(default)]
+    pub flawed_line: String,
     pub prompt: String,
     /// What a good answer must cover.
     pub rubric: String,
@@ -145,7 +196,10 @@ pub fn parse_weight(weight: &str) -> Weight {
 /// lowercase), drop invalid entries, dedupe by id keeping the first, and keep
 /// at most [`MAX_CONCEPTS`]. A reply with concepts of which none is valid is
 /// rejected, so that the caller retries.
-pub fn validate_concepts(output: ConceptsOutput) -> Result<Vec<Concept>, String> {
+///
+/// Locations in files that `files` (the diff's) doesn't list are dropped, as
+/// are line numbers below 1; a concept keeps its other locations.
+pub fn validate_concepts(output: ConceptsOutput, files: &[&str]) -> Result<Vec<Concept>, String> {
     let offered = output.concepts.len();
     let mut seen = HashSet::new();
     let mut rejected = Vec::new();
@@ -171,6 +225,7 @@ pub fn validate_concepts(output: ConceptsOutput) -> Result<Vec<Concept>, String>
             summary: summary.to_owned(),
             scope: parse_scope(&raw.scope),
             weight: parse_weight(&raw.weight),
+            locations: validate_locations(&raw.locations, files),
         });
     }
     if offered > 0 && concepts.is_empty() {
@@ -183,8 +238,12 @@ pub fn validate_concepts(output: ConceptsOutput) -> Result<Vec<Concept>, String>
 /// A validated multiple-choice question, before shuffling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultipleChoice {
+    pub kind: QuestionKind,
     pub prompt: String,
+    pub code: Option<CodeSnippet>,
     pub options: Vec<String>,
+    /// Set when the options are code (`choose_the_fix`).
+    pub options_language: Option<String>,
     pub correct: usize,
     /// Why each option is right or wrong, in option order.
     pub reasons: Vec<String>,
@@ -200,16 +259,47 @@ impl MultipleChoice {
 /// Check a multiple-choice reply: a prompt, 3 to 5 non-empty distinct
 /// options, a correct index in range, and for every option a reason that
 /// does not depend on the order of the options (see [`validate_reasons`]).
-pub fn validate_multiple_choice(output: MultipleChoiceOutput) -> Result<MultipleChoice, String> {
+/// Its kind and code must be what `brief` asks for (see [`validate_code`]);
+/// the options of `choose_the_fix` are code, at most [`MAX_SNIPPET_LINES`]
+/// lines each, and the correct one is not the flawed line.
+pub fn validate_multiple_choice(
+    output: MultipleChoiceOutput,
+    brief: &QuestionBrief,
+) -> Result<MultipleChoice, String> {
     let prompt = output.prompt.trim().to_owned();
     if prompt.is_empty() {
         return Err("the prompt is empty".to_owned());
     }
+    let kind = parse_kind(&output.kind, brief)?;
+    let (code, flawed) = validate_code(
+        kind,
+        output.hunk,
+        output.code.as_ref(),
+        &output.flawed_line,
+        brief,
+    )?;
+    let options_language = match (kind, &code) {
+        (QuestionKind::ChooseTheFix, Some(code)) => Some(code.language.clone()),
+        _ => None,
+    };
     let options: Vec<String> = output
         .options
         .iter()
-        .map(|o| o.text.trim().to_owned())
+        .map(|o| match options_language {
+            Some(_) => normalise_code(&o.text),
+            None => o.text.trim().to_owned(),
+        })
         .collect();
+    if options_language.is_some()
+        && let Some(long) = options
+            .iter()
+            .find(|o| o.lines().count() > MAX_SNIPPET_LINES)
+    {
+        return Err(format!(
+            "a code option has {} lines; options have at most {MAX_SNIPPET_LINES}",
+            long.lines().count()
+        ));
+    }
     if !(3..=5).contains(&options.len()) {
         return Err(format!(
             "there must be 3 to 5 options, not {}",
@@ -230,13 +320,186 @@ pub fn validate_multiple_choice(output: MultipleChoiceOutput) -> Result<Multiple
             options.len()
         ));
     }
+    if kind == QuestionKind::ChooseTheFix
+        && let Some(flawed) = &flawed
+        && options[correct].trim() == flawed.trim()
+    {
+        return Err(
+            "the correct option repeats the flawed line; the correct option must fix it".to_owned(),
+        );
+    }
     let reasons = validate_reasons(&output.options, &options, correct)?;
     Ok(MultipleChoice {
+        kind,
         prompt,
+        code,
         options,
+        options_language,
         correct,
         reasons,
     })
+}
+
+/// The locations of a concept that are in `files`, with line numbers of at
+/// least 1, ordered start to end.
+fn validate_locations(raw: &[RawLocation], files: &[&str]) -> Vec<CodeLocation> {
+    raw.iter()
+        .filter_map(|l| {
+            let file = l.file.trim();
+            let file = if files.contains(&file) {
+                file
+            } else {
+                file.strip_prefix("b/").filter(|f| files.contains(f))?
+            };
+            (l.start_line >= 1 && l.end_line >= 1).then(|| CodeLocation {
+                file: file.to_owned(),
+                start: l.start_line.min(l.end_line),
+                end: l.start_line.max(l.end_line),
+            })
+        })
+        .collect()
+}
+
+/// The kind a reply names, which must be one `brief` offers. A reply that
+/// names none is a `scenario`, as every question was before kinds existed.
+pub fn parse_kind(kind: &str, brief: &QuestionBrief) -> Result<QuestionKind, String> {
+    let offered = || {
+        brief
+            .kinds
+            .iter()
+            .map(|k| k.name())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let parsed = if kind.trim().is_empty() {
+        QuestionKind::Scenario
+    } else {
+        QuestionKind::from_name(kind)
+            .ok_or_else(|| format!("kind {kind:?} is not one of {}", offered()))?
+    };
+    if !brief.kinds.contains(&parsed) {
+        return Err(format!(
+            "kind {} was not offered; choose one of {}",
+            parsed.name(),
+            offered()
+        ));
+    }
+    Ok(parsed)
+}
+
+/// The code of a question of `kind` (ADR-0007 D3, D4, D7), and its flawed
+/// line when the kind has one:
+///
+/// - `scenario` shows no code; any code given is ignored.
+/// - `explain_your_change` shows one of the brief's hunks, chosen by its
+///   1-based number and copied from it, never retyped by the model.
+/// - The other kinds show the snippet the model wrote: 1 to
+///   [`MAX_SNIPPET_LINES`] lines. A longer one is rejected, never cut, so
+///   that the question is about the code as shown.
+/// - `spot_the_bug` and `choose_the_fix` quote their flawed line, which
+///   must be a line of the snippet as shown.
+pub fn validate_code(
+    kind: QuestionKind,
+    hunk: Option<u32>,
+    code: Option<&RawCode>,
+    flawed_line: &str,
+    brief: &QuestionBrief,
+) -> Result<(Option<CodeSnippet>, Option<String>), String> {
+    let snippet = match kind {
+        QuestionKind::Scenario => return Ok((None, None)),
+        QuestionKind::ExplainYourChange => {
+            let n = brief.hunks.len();
+            hunk.and_then(|h| (h as usize).checked_sub(1))
+                .and_then(|i| brief.hunks.get(i))
+                .ok_or_else(|| {
+                    format!("explain_your_change needs `hunk`: the number of one of the {n} hunks")
+                })?
+                .snippet()
+        }
+        _ => {
+            let code = code.ok_or_else(|| format!("a {} question needs `code`", kind.name()))?;
+            let text = normalise_code(&code.text);
+            if text.is_empty() {
+                return Err("the code is empty".to_owned());
+            }
+            let lines = text.lines().count();
+            if lines > MAX_SNIPPET_LINES {
+                return Err(format!(
+                    "the code has {lines} lines; write a snippet of at most {MAX_SNIPPET_LINES}"
+                ));
+            }
+            let language = match clean_language(&code.language) {
+                tag if tag == "text" => brief.hunks.first().map_or(tag, |h| h.language.clone()),
+                tag => tag,
+            };
+            CodeSnippet {
+                language,
+                text,
+                origin: SnippetOrigin::General,
+            }
+        }
+    };
+    if !kind.has_flawed_line() {
+        return Ok((Some(snippet), None));
+    }
+    let flawed = flawed_line.trim();
+    if flawed.is_empty() {
+        return Err(format!(
+            "a {} question needs `flawed_line`: the flawed line of the code, quoted",
+            kind.name()
+        ));
+    }
+    if !snippet.text.lines().any(|l| l.trim() == flawed) {
+        return Err(format!(
+            "`flawed_line` {flawed:?} is not a line of the code; quote one line of it exactly"
+        ));
+    }
+    Ok((Some(snippet), Some(flawed.to_owned())))
+}
+
+/// Code as shown: line endings unified, trailing spaces and blank lines at
+/// either end removed, and a markdown fence around all of it dropped.
+/// Indentation is kept.
+pub fn normalise_code(text: &str) -> String {
+    let unified = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut lines: Vec<&str> = unified.lines().map(str::trim_end).collect();
+    let fence = |l: &str| {
+        let t = l.trim_start();
+        t.starts_with("```") || t.starts_with("~~~")
+    };
+    let blank = |l: &&str| l.trim().is_empty();
+    let trim = |lines: &mut Vec<&str>| {
+        while lines.first().is_some_and(blank) {
+            lines.remove(0);
+        }
+        while lines.last().is_some_and(blank) {
+            lines.pop();
+        }
+    };
+    trim(&mut lines);
+    if lines.len() >= 2 && fence(lines[0]) && fence(lines[lines.len() - 1]) {
+        lines.remove(0);
+        lines.pop();
+        trim(&mut lines);
+    }
+    lines.join("\n")
+}
+
+/// A language tag safe to put after a fence: lowercase letters, digits
+/// and `+#._-`, at most 20 characters; `text` if nothing is left.
+pub fn clean_language(language: &str) -> String {
+    let tag: String = language
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || "+#._-".contains(*c))
+        .take(20)
+        .collect();
+    if tag.is_empty() {
+        "text".to_owned()
+    } else {
+        tag
+    }
 }
 
 /// Check the reason of every option: non-empty, cleaned to plain text (see
@@ -292,8 +555,8 @@ pub fn shuffle(question: MultipleChoice, seed: &str) -> MultipleChoice {
     MultipleChoice {
         options: permute(&question.options),
         reasons: permute(&question.reasons),
-        prompt: question.prompt,
         correct,
+        ..question
     }
 }
 
@@ -318,13 +581,18 @@ impl SplitMix64 {
 /// A validated open question.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Open {
+    pub kind: QuestionKind,
     pub prompt: String,
+    pub code: Option<CodeSnippet>,
     pub rubric: String,
     pub explanation: String,
 }
 
-/// Check an open-question reply: a non-empty prompt, rubric and explanation.
-pub fn validate_open(output: OpenOutput) -> Result<Open, String> {
+/// Check an open-question reply: a non-empty prompt, rubric and explanation,
+/// and the kind and code `brief` asks for (see [`validate_code`]). The
+/// flawed line, if any, is added to the rubric, so that the grader judges
+/// against the code the author saw (ADR-0007 D7).
+pub fn validate_open(output: OpenOutput, brief: &QuestionBrief) -> Result<Open, String> {
     let prompt = output.prompt.trim();
     let rubric = output.rubric.trim();
     if prompt.is_empty() {
@@ -335,9 +603,23 @@ pub fn validate_open(output: OpenOutput) -> Result<Open, String> {
     }
     let explanation = clean_text(&output.explanation, MAX_EXPLANATION_CHARS)
         .ok_or_else(|| "the explanation is empty".to_owned())?;
+    let kind = parse_kind(&output.kind, brief)?;
+    let (code, flawed) = validate_code(
+        kind,
+        output.hunk,
+        output.code.as_ref(),
+        &output.flawed_line,
+        brief,
+    )?;
+    let rubric = match flawed {
+        Some(line) => format!("{rubric}\nThe flawed line of the code shown: {line}"),
+        None => rubric.to_owned(),
+    };
     Ok(Open {
+        kind,
         prompt: prompt.to_owned(),
-        rubric: rubric.to_owned(),
+        code,
+        rubric,
         explanation,
     })
 }

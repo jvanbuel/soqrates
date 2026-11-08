@@ -1,6 +1,6 @@
 # ADR-0007: Question kinds and code snippets
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-08
 - **Refines:** ADR-0002 D5 (format rule), ADR-0003 D5 (only general
   concepts cross organisations), ADR-0004 D4 (GitHub's markdown subset),
