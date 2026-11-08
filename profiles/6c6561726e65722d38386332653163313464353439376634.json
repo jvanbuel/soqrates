@@ -315,6 +315,19 @@
         "last_review": "2026-11-08T17:18:45.049315465Z"
       }
     },
+    "rust.traits.default-methods-async": {
+      "card": {
+        "due": "2026-11-09T17:46:07.459156615Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T17:46:07.459156615Z"
+      }
+    },
     "rust.traits.from_str": {
       "card": {
         "due": "2026-11-10T12:25:42.551353684Z",
@@ -352,6 +365,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-07T21:59:16.462401418Z"
+      }
+    },
+    "soqrates.ci.answer-validity": {
+      "card": {
+        "due": "2026-11-09T17:46:07.459156615Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T17:46:07.459156615Z"
       }
     },
     "soqrates.ci.grade-before-new-round": {
@@ -393,6 +419,19 @@
         "last_review": "2026-11-08T15:09:26.049766993Z"
       }
     },
+    "soqrates.ci.round-carry-and-idempotency": {
+      "card": {
+        "due": "2026-11-11T17:46:07.459156615Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T17:46:07.459156615Z"
+      }
+    },
     "soqrates.ci.submitted-answers-semantics": {
       "card": {
         "due": "2026-11-09T17:12:25.279744332Z",
@@ -419,6 +458,19 @@
         "last_review": "2026-11-07T14:37:58.663945921Z"
       }
     },
+    "soqrates.delivery.answer-feedback-lifecycle": {
+      "card": {
+        "due": "2026-11-09T17:46:07.459156615Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T17:46:07.459156615Z"
+      }
+    },
     "soqrates.scm.marker-trust-boundary": {
       "card": {
         "due": "2026-11-10T14:37:58.663945921Z",
@@ -430,6 +482,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-07T14:37:58.663945921Z"
+      }
+    },
+    "soqrates.testing.fake-scm-port": {
+      "card": {
+        "due": "2026-11-11T17:46:07.459156615Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T17:46:07.459156615Z"
       }
     },
     "supply-chain.release-artifacts.checksum-provenance": {
@@ -704,6 +769,41 @@
       "format": "MultipleChoice",
       "grade": "Good",
       "at": "2026-11-08T17:37:59.141682093Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.traits.default-methods-async",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-08T17:46:07.459156615Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.delivery.answer-feedback-lifecycle",
+      "format": "Open",
+      "grade": "Again",
+      "at": "2026-11-08T17:46:07.459156615Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.testing.fake-scm-port",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T17:46:07.459156615Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.ci.answer-validity",
+      "format": "Open",
+      "grade": "Again",
+      "at": "2026-11-08T17:46:07.459156615Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.ci.round-carry-and-idempotency",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T17:46:07.459156615Z",
       "via": "github.com:16427728"
     }
   ],
