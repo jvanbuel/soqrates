@@ -1,0 +1,67 @@
+{
+  "key": "jvanbuel/soqrates#25@8d58ae00f4ada9a9c3010b8a8a5146a56e026356",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "llm.output.validate-and-retry/mc",
+      "concept": "llm.output.validate-and-retry",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A developer refactors code that asks an LLM for structured output into a reusable retry helper. Which behavior best reflects a sound validate-and-retry design for this helper?",
+          "options": [
+            "When the reply fails parsing or a semantic check, send one more request that explains what was wrong with the reply; if the call itself errors, let that error propagate instead of retrying here.",
+            "Keep resending the identical prompt in a loop with no limit until the model produces a valid reply, since the model is non-deterministic and will eventually succeed.",
+            "Accept any reply that parses as well-formed JSON, since a successful parse shows the content is correct and no semantic check is needed.",
+            "Retry the model call with the same prompt whenever any exception occurs, including network timeouts and parse failures, so that every kind of failure gets a second chance."
+          ],
+          "correct": 0,
+          "reasons": [
+            "Unusable output is a model-quality problem that can be fixed by telling the model what was wrong, so a single corrective retry is worthwhile. Errors from the call itself (network, auth, rate limit) are a separate failure class and should surface to the caller rather than be hidden in the validation loop. Treating a failed semantic check as invalid output means well-formed but wrong replies get the same corrective retry.",
+            "An open-ended loop with an unchanged prompt can run forever and burn cost and latency when the model keeps failing the same way. It also never tells the model what went wrong, so it is not a real corrective retry.",
+            "Syntactically valid output can still be wrong, for example a value outside the allowed range or a reference to something that does not exist. Without a semantic check, those replies would pass through as if they were trusted.",
+            "This lumps transport or API errors together with unusable output. Errors from the model call itself are a different failure class and are not handled by this loop, and blindly resending the same prompt gives the model no information about what was wrong with its reply."
+          ]
+        }
+      },
+      "explanation": "Unusable output is a model-quality problem that can be fixed by telling the model what was wrong, so a single corrective retry is worthwhile. Errors from the call itself (network, auth, rate limit) are a separate failure class and should surface to the caller rather than be hidden in the validation loop. Treating a failed semantic check as invalid output means well-formed but wrong replies get the same corrective retry."
+    },
+    {
+      "id": "examiner.multiple-choice.option-check/open",
+      "concept": "examiner.multiple-choice.option-check",
+      "scope": "Project",
+      "body": {
+        "Open": {
+          "prompt": "In a multiple-choice question generator, after a question passes normal validation, a second short model prompt asks it to quote any passages in the per-option reasons that discuss answers not among the listed options. What problem does this second-pass check address, what happens when it finds such a passage, and why is it reasonable to keep the question if the check's reply is empty or cannot be parsed?",
+          "rubric": "A good answer must cover:\n1. Problem: reasons (explanations for each option) sometimes mention or evaluate answers that are not among the listed options (e.g. a hidden or alternative correct answer). This confuses the learner, can contradict the options, or suggests the real answer is not offered. Ordinary structural validation does not catch this because it is a semantic issue.\n2. Action on detection: any quoted passage makes the question invalid; it is regenerated (once) with the offending passages quoted back to the model as feedback so it can fix them.\n3. Fail-open on unusable reply: an empty or unparseable check reply keeps the question, because the check is only a safeguard/best-effort layer. Failing closed would throw away questions that were already validated and may be fine, causing lost questions or failures due to flakiness of the checker rather than a real defect.\n\nCommon misconceptions that make an answer wrong: claiming the check verifies the correct option is actually correct; saying the question is dropped or the whole run fails on an unparseable reply; saying regeneration happens repeatedly without limit; describing the check as validating JSON schema or formatting; saying keeping the question on a failed check means the check is pointless."
+        }
+      },
+      "explanation": "A good answer says the check catches reasons that discuss answers outside the listed options, which would confuse the learner or leak or contradict the options. It also explains why a failed check regenerates the question once with the quoted passages as feedback, and why an unusable check reply keeps the question: the check is a best-effort safeguard, so its own failure should not discard a valid question."
+    },
+    {
+      "id": "rust.async.closures-futures-generics/mc",
+      "concept": "rust.async.closures-futures-generics",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A generic async retry helper takes a `validate` closure and awaits inside a loop while holding `&validate` across each `.await`. The helper's future must be `Send` so it can be spawned on a multi-threaded executor. The author changes the bound on `validate`'s type from `Send` to `Sync`. Why is this change needed?",
+          "options": [
+            "A shared reference `&F` is only `Send` when `F: Sync`. The future keeps `&validate` alive across an `.await`, so for the future to be `Send` (e.g. to run on a multi-threaded executor) the closure type must be `Sync`.",
+            "`Send` is too weak because borrowing across an `.await` requires the borrowed value to be `'static`, and `Sync` implies `'static`.",
+            "`Sync` guarantees that the future returned by the closure is `Send`, so the `Fut: Send` bound can be dropped.",
+            "`Sync` is what allows the closure to be called repeatedly across retries; `Send` only permits calling it once."
+          ],
+          "correct": 0,
+          "reasons": [
+            "`Send` lets a value be moved to another thread. Holding a reference across a suspension point means the future owns a `&F`, and `&F: Send` requires `F: Sync`. That is why the bound has to change.",
+            "`Sync` does not imply `'static`. Borrows can be held across awaits without `'static`, and the `Sync` requirement comes from sharing a reference between threads, not from lifetimes.",
+            "A trait bound on the closure type says nothing about the future it returns. The returned future's `Send`-ness depends on what it captures and holds across awaits, so it still needs its own `Send` bound.",
+            "Whether a closure can be called more than once is determined by the `Fn`/`FnMut`/`FnOnce` traits, not by `Send` or `Sync`. A `Send`-only `Fn` closure can be called many times."
+          ]
+        }
+      },
+      "explanation": "`Send` lets a value be moved to another thread. Holding a reference across a suspension point means the future owns a `&F`, and `&F: Send` requires `F: Sync`. That is why the bound has to change."
+    }
+  ],
+  "created_at": "2026-11-08T16:57:59.919141054Z"
+}
