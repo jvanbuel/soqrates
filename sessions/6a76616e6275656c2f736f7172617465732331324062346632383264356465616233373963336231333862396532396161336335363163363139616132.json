@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#12@b4f282d5deab379c3b138b9e29aa3c561c619aa2",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.composite-actions.inputs-env/mc",
+      "concept": "github-actions.composite-actions.inputs-env",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "In a composite action, a step runs a shell script that needs a user-supplied input such as a version string or extra arguments. Why is it better to map the input into the step's env block and read it as a shell variable than to write ${{ inputs.value }} directly inside the script?",
+          "options": [
+            "It prevents a caller-supplied value from being parsed as shell code, because the value is read as a variable at runtime instead of being pasted into the script text",
+            "It makes the input value available to later steps in the job without needing GITHUB_OUTPUT",
+            "It lets the runner cache the input value between workflow runs so the action starts faster",
+            "It is required because composite actions cannot reference the inputs context inside a run step at all"
+          ],
+          "correct": 0
+        }
+      },
+      "explanation": "Expanding ${{ inputs.* }} directly in the script text substitutes the raw value before the shell parses it, so a crafted value can inject commands. Mapping the input to an env variable keeps it as data that the shell reads at runtime, which is why quoting it as a variable is safe. The other options misdescribe what the env mapping does."
+    },
+    {
+      "id": "github-actions.supply-chain.attestation-checksums/mc",
+      "concept": "github-actions.supply-chain.attestation-checksums",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A release workflow publishes per-target archives plus a SHA-256 checksum file, and also creates signed build provenance attestations. The installer verifies the checksum and then runs `gh attestation verify` before executing the binary. If an attacker gained write access to the release assets (but not to the repository's workflows or signing identity), what would the attestation check protect against that the checksum alone would not?",
+          "options": [
+            "The binary would run slower, because unsigned artifacts are not eligible for the operating system's optimizations.",
+            "Nothing, because a matching SHA-256 checksum proves the binary was built by the project's trusted workflow.",
+            "The checksum check would fail whenever the archive is downloaded over HTTPS, so provenance is needed to replace it.",
+            "The attacker could publish a malicious archive along with a matching checksum, and the consumer would have no proof of which workflow or repository built it."
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "A checksum published next to the archive only shows the file matches that checksum; anyone who can replace the archive can replace the checksum file too. A signed provenance attestation, checked with gh attestation verify, ties the artifact to the workflow and repository that built it, which the checksum cannot do."
+    },
+    {
+      "id": "github-actions.releases.tag-driven-matrix/mc",
+      "concept": "github-actions.releases.tag-driven-matrix",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A tag-triggered release workflow has a matrix of build jobs (several OS runners and targets) followed by a publish job that downloads the artifacts, creates the release, and force-moves a major tag like `v0`. Why is it preferable to set `permissions: contents: write` only on the publish job rather than at the workflow level?",
+          "options": [
+            "Write access is required by the matrix build jobs to upload their artifacts, so it should be granted at the workflow level so every job inherits it",
+            "Only the publish job, which creates the release and moves the major tag, is granted contents write permission, while build jobs keep read-only access",
+            "Per-job permissions are only cosmetic; the token scope is always determined by the repository's default setting, so placement does not matter",
+            "Write permission should be granted to no job, because the release is created using the tag push event itself rather than the token"
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "Build jobs only need to read the repository, so granting contents: write only to the publish job means a compromised or buggy build step (which runs third-party actions and build scripts) cannot create releases or push tags. Setting broad write permissions at the workflow level is tempting for convenience but needlessly expands the blast radius."
+    }
+  ],
+  "created_at": "2026-11-08T05:56:40.914239422Z"
+}
