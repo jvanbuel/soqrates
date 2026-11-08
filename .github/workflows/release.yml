@@ -1,0 +1,105 @@
+# Releases (ADR-0006 D2, D5). Pushing a tag vX.Y.Z that matches the crate
+# version builds `soqrates` for each supported runner, attests where each
+# archive was built, publishes them with SHA-256 checksums on the GitHub
+# release vX.Y.Z, and moves the major tag vX there. The action downloads
+# these archives; it never compiles.
+#
+# Run it by hand (workflow_dispatch) for a dry run: it builds and packages,
+# and publishes nothing.
+name: release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Built on the oldest supported Ubuntu, so the binary runs on
+          # older glibc too.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write       # sign the build provenance attestation
+      attestations: write   # store it
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check the tag matches the crate version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME doesn't match the crate version $version"
+            exit 1
+          fi
+
+      # rustup on the runner picks up rust-toolchain.toml.
+      - name: Build
+        run: cargo build --release --locked -p soqrates-cli --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          asset="soqrates-${{ matrix.target }}.tar.gz"
+          tar -czf "$asset" -C "target/${{ matrix.target }}/release" soqrates
+          shasum -a 256 "$asset" > "$asset.sha256"
+          cat "$asset.sha256"
+
+      - name: Attest build provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: soqrates-${{ matrix.target }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soqrates-${{ matrix.target }}
+          path: soqrates-${{ matrix.target }}.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release and move the major tag
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
+
+      # Users pin the major version (`@v0`, `@v1`); point it at this release.
+      - name: Move the major tag
+        run: |
+          major="${GITHUB_REF_NAME%%.*}"
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"

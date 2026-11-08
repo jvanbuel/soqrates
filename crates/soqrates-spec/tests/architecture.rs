@@ -332,6 +332,215 @@ fn spec_does_not_depend_on_networked_adapters() {
 }
 
 // ===========================================================================
+// ADR-0006: distribution as a GitHub Action
+// ===========================================================================
+
+fn action_yml() -> String {
+    read(workspace_root().join("action.yml"))
+}
+
+/// The `with:`-able inputs of `action.yml`: the keys indented by two spaces
+/// under `inputs:`.
+fn action_inputs(action: &str) -> BTreeSet<String> {
+    let block = action
+        .split_once("\ninputs:\n")
+        .expect("action.yml declares inputs")
+        .1;
+    let key = Regex::new(r"^  ([a-z][a-z0-9-]*):\s*$").unwrap();
+    block
+        .lines()
+        .take_while(|l| l.is_empty() || l.starts_with(' ') || l.starts_with('#'))
+        .filter_map(|l| key.captures(l).map(|c| c[1].to_string()))
+        .collect()
+}
+
+// @adr-0006-d1
+#[test]
+fn soqrates_ships_as_a_composite_action_that_never_checks_out_code() {
+    let action = action_yml();
+    assert!(
+        action.contains("using: composite"),
+        "ADR-0006 D1: action.yml is a composite action"
+    );
+    assert!(
+        action.contains("\"$SOQRATES\" \"${args[@]}\"") && action.contains("args=(ci "),
+        "ADR-0006 D1: the action runs `soqrates ci`"
+    );
+    for file in [
+        "action.yml",
+        "action/install.sh",
+        "action/state-checkout.sh",
+    ] {
+        let text = read(workspace_root().join(file));
+        assert!(
+            !text.contains("actions/checkout"),
+            "ADR-0006 D1: {file} must not check out the user's code"
+        );
+    }
+    let guide = read(workspace_root().join("docs/using-the-action.md"));
+    for (needle, why) in [
+        ("uses: jvanbuel/soqrates@v", "calls the released action"),
+        ("pull_request:", "declares the pull_request trigger"),
+        ("issue_comment:", "declares the comment trigger"),
+        ("- [x] **Grade my answers**", "filters comment edits"),
+        ("cancel-in-progress: false", "serialises runs"),
+    ] {
+        assert!(
+            guide.contains(needle),
+            "ADR-0006 D1: the workflow in the guide {why} (`{needle}`)"
+        );
+    }
+}
+
+// @adr-0006-d2
+#[test]
+fn the_action_runs_a_verified_release_binary_and_never_compiles() {
+    let install = read(workspace_root().join("action/install.sh"));
+    for (needle, why) in [
+        ("gh release download", "downloads the release archive"),
+        ("--check", "verifies the SHA-256 checksum"),
+        ("gh attestation verify", "verifies the build provenance"),
+        ("Cargo.toml", "picks the release of its own version"),
+    ] {
+        assert!(
+            install.contains(needle),
+            "ADR-0006 D2: install.sh {why} (`{needle}`)"
+        );
+    }
+    for file in ["action.yml", "action/install.sh"] {
+        assert!(
+            !read(workspace_root().join(file)).contains("cargo "),
+            "ADR-0006 D2: {file} must never compile"
+        );
+    }
+    let release = read(workspace_root().join(".github/workflows/release.yml"));
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+    ] {
+        assert!(
+            release.contains(&format!("target: {target}")),
+            "ADR-0006 D2: the release builds {target}"
+        );
+        assert!(
+            install.contains(&format!("target={target}")),
+            "ADR-0006 D2: the action can install {target}"
+        );
+    }
+    for (needle, why) in [
+        ("shasum -a 256", "publishes SHA-256 checksums"),
+        (
+            "actions/attest-build-provenance",
+            "attests build provenance",
+        ),
+    ] {
+        assert!(
+            release.contains(needle),
+            "ADR-0006 D2: the release workflow {why}"
+        );
+    }
+}
+
+// @adr-0006-d3
+#[test]
+fn users_bring_their_own_credentials_and_persistent_state() {
+    let action = action_yml();
+    let inputs = action_inputs(&action);
+    for input in [
+        "model",
+        "anthropic-api-key",
+        "openai-api-key",
+        "ollama-base-url",
+        "ollama-api-key",
+        "mode",
+        "database-url",
+        "state-branch",
+    ] {
+        assert!(
+            inputs.contains(input),
+            "ADR-0006 D3: action.yml declares the input `{input}`, got {inputs:?}"
+        );
+    }
+    // Each credential reaches the examiner under the name it reads.
+    for (var, input) in [
+        ("ANTHROPIC_API_KEY", "anthropic-api-key"),
+        ("OPENAI_API_KEY", "openai-api-key"),
+        ("OLLAMA_API_BASE_URL", "ollama-base-url"),
+        ("OLLAMA_API_KEY", "ollama-api-key"),
+        ("SOQRATES_MODEL", "model"),
+        ("SOQRATES_DATABASE_URL", "database-url"),
+    ] {
+        assert!(
+            action.contains(&format!("{var}: ${{{{ inputs.{input} }}}}")),
+            "ADR-0006 D3: the action exports `{input}` as {var}"
+        );
+    }
+    let examiner = read(workspace_root().join("crates/soqrates-examiner/src/lib.rs"));
+    for var in ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OLLAMA_API_BASE_URL"] {
+        assert!(
+            examiner.contains(var),
+            "ADR-0006 D3: the examiner reads {var}"
+        );
+    }
+    assert!(
+        action.contains("default: advisory"),
+        "ADR-0006 D3: advisory is the default mode"
+    );
+    assert!(
+        action.contains("sqlite:*") && action.contains("github-hosted"),
+        "ADR-0006 D3: a sqlite: database-url is refused on GitHub-hosted runners"
+    );
+}
+
+// @adr-0006-d4
+#[test]
+fn comments_post_as_the_workflow_token_or_the_users_own_app() {
+    let action = action_yml();
+    let inputs = action_inputs(&action);
+    for input in ["github-token", "app-id", "app-private-key"] {
+        assert!(
+            inputs.contains(input),
+            "ADR-0006 D4: action.yml declares the input `{input}`"
+        );
+    }
+    assert!(
+        action.contains("default: ${{ github.token }}"),
+        "ADR-0006 D4: the workflow token is the default"
+    );
+    assert!(
+        action.contains("actions/create-github-app-token")
+            && action
+                .contains("GITHUB_TOKEN: ${{ steps.app.outputs.token || inputs.github-token }}"),
+        "ADR-0006 D4: with an app, Soqrates posts with the app's token"
+    );
+}
+
+// @adr-0006-d5
+#[test]
+fn releases_are_semver_tags_and_this_repository_runs_the_action_from_source() {
+    let release = read(workspace_root().join(".github/workflows/release.yml"));
+    for (needle, why) in [
+        ("v[0-9]+.[0-9]+.[0-9]+", "runs on vX.Y.Z tags"),
+        (
+            "doesn't match the crate version",
+            "checks the tag matches the crate version",
+        ),
+        ("Move the major tag", "moves the major tag"),
+    ] {
+        assert!(
+            release.contains(needle),
+            "ADR-0006 D5: the release workflow {why}"
+        );
+    }
+    let workflow = read(workspace_root().join(".github/workflows/soqrates.yml"));
+    assert!(
+        workflow.contains("uses: ./") && workflow.contains("binary: target/release/soqrates"),
+        "ADR-0006 D5: the dogfooding workflow runs the action from its checkout, with a binary built from source"
+    );
+}
+
+// ===========================================================================
 // ADR-0002: domain model
 // ===========================================================================
 
@@ -645,12 +854,11 @@ fn soqrates_checks_its_own_pull_requests_in_advisory_mode() {
     let workflow = read(workspace_root().join(".github/workflows/soqrates.yml"));
     for (needle, why) in [
         ("pull_request:", "runs on pull requests"),
-        ("soqrates ci", "runs the CI check"),
-        ("--mode advisory", "starts in advisory mode"),
         (
-            "soqrates-state",
-            "keeps learner state on the soqrates-state branch",
+            "uses: ./",
+            "runs the Soqrates action (which runs `soqrates ci`)",
         ),
+        ("mode: advisory", "starts in advisory mode"),
         (
             "cancel-in-progress: false",
             "serialises runs so state updates never race",
@@ -661,6 +869,11 @@ fn soqrates_checks_its_own_pull_requests_in_advisory_mode() {
             "ADR-0001 D14: the workflow {why} (`{needle}`)"
         );
     }
+    let action = read(workspace_root().join("action.yml"));
+    assert!(
+        action.contains("default: soqrates-state"),
+        "ADR-0001 D14: learner state stays on the soqrates-state branch by default"
+    );
     let project = read(workspace_root().join(".soqrates.toml"));
     assert!(
         project.contains(r#"mode = "advisory""#),

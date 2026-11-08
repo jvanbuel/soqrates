@@ -6,6 +6,9 @@
 #   don't trigger workflows, so posting results doesn't loop.
 # - Advisory mode: a failed session reports a success status with an
 #   "Advisory:" note, so it never blocks a merge.
+# - Runs the Soqrates action from this checkout (`uses: ./`, ADR-0006 D5),
+#   with a binary built from this source instead of a released one, so every
+#   pull request tests the action as users run it.
 # - Learner state is kept on the `soqrates-state` branch (one JSON document
 #   per profile/link/session, see soqrates-store's FileStore).
 # - Needs the repository secret ANTHROPIC_API_KEY; without it the job skips.
@@ -82,36 +85,13 @@ jobs:
         if: steps.key.outputs.skip != 'true' && steps.bin.outputs.cache-hit != 'true'
         run: cargo build --release --locked -p soqrates-cli
 
-      - name: Check out learner state
-        if: steps.key.outputs.skip != 'true'
-        run: |
-          if git fetch --depth=1 origin soqrates-state; then
-            git worktree add --detach .soqrates-state FETCH_HEAD
-          else
-            git worktree add --orphan -b soqrates-state .soqrates-state
-          fi
-
-      # Post as soqrates[bot] (the Soqrates GitHub App) when it is configured.
-      - name: Get the Soqrates app token
-        id: app
-        if: steps.key.outputs.skip != 'true' && vars.SOQRATES_APP_ID != ''
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.SOQRATES_APP_ID }}
-          private-key: ${{ secrets.SOQRATES_APP_PRIVATE_KEY }}
-
       - name: Run Soqrates
         if: steps.key.outputs.skip != 'true'
-        run: ./target/release/soqrates ci --mode advisory --state-dir .soqrates-state
-        env:
-          GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.GITHUB_TOKEN }}
-
-      - name: Save learner state
-        if: always() && steps.key.outputs.skip != 'true'
-        run: |
-          cd .soqrates-state
-          git add -A
-          if git diff --cached --quiet; then exit 0; fi
-          git -c user.name="soqrates[bot]" -c user.email="soqrates@users.noreply.github.com" \
-            commit -q -m "soqrates: update learner state (${{ github.event_name }})"
-          git push origin HEAD:refs/heads/soqrates-state
+        uses: ./
+        with:
+          mode: advisory
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          binary: target/release/soqrates
+          # Post as soqrates[bot] when the Soqrates GitHub App is configured.
+          app-id: ${{ vars.SOQRATES_APP_ID }}
+          app-private-key: ${{ secrets.SOQRATES_APP_PRIVATE_KEY }}

@@ -1,0 +1,195 @@
+# The Soqrates GitHub Action (ADR-0006). Your workflow declares the triggers,
+# permissions and concurrency, and calls this action with `uses:`; see
+# docs/using-the-action.md for the workflow to copy.
+name: Soqrates
+description: >-
+  Asks the author of a pull request a few questions about the concepts in
+  their change, adapts to their level, and schedules reviews with spaced
+  repetition.
+author: jvanbuel
+branding:
+  icon: help-circle
+  color: purple
+
+inputs:
+  model:
+    description: >-
+      The model, as provider:model. It only selects the provider and model;
+      the provider's credentials are separate inputs. Empty for the default
+      (anthropic:claude-sonnet-5-5).
+    required: false
+    default: ""
+  anthropic-api-key:
+    description: Anthropic API key, for anthropic:* models. Pass it from a secret.
+    required: false
+    default: ""
+  openai-api-key:
+    description: OpenAI API key, for openai:* models. Pass it from a secret.
+    required: false
+    default: ""
+  ollama-base-url:
+    description: Base URL of an Ollama server, for ollama:* models.
+    required: false
+    default: ""
+  ollama-api-key:
+    description: API key of the Ollama server, if it needs one. Pass it from a secret.
+    required: false
+    default: ""
+  mode:
+    description: >-
+      advisory (a failed session reports success with a note) or blocking (a
+      failed session fails the check).
+    required: false
+    default: advisory
+  database-url:
+    description: >-
+      Keep learner state in this database instead of on the state branch, e.g.
+      a hosted PostgreSQL. Pass it from a secret. It must persist between jobs,
+      so a sqlite: URL is refused on GitHub-hosted runners.
+    required: false
+    default: ""
+  state-branch:
+    description: >-
+      The branch of this repository that holds learner state when no
+      database-url is given. Anyone who can read the repository can read it.
+    required: false
+    default: soqrates-state
+  github-token:
+    description: >-
+      Token for reading the pull request, posting comments and the status, and
+      pushing the state branch. Needs contents, issues and pull-requests
+      write, and statuses write.
+    required: false
+    default: ${{ github.token }}
+  app-id:
+    description: >-
+      ID of your own GitHub App, to post comments and the status as that app
+      instead of github-actions[bot]. Needs app-private-key.
+    required: false
+    default: ""
+  app-private-key:
+    description: Private key of the GitHub App in app-id. Pass it from a secret.
+    required: false
+    default: ""
+  binary:
+    description: >-
+      Path to a soqrates binary to run instead of the released one, e.g. one
+      built from source to test the action. Leave empty.
+    required: false
+    default: ""
+
+outputs:
+  skipped:
+    description: "'true' when the check was skipped because the model's credentials were missing."
+    value: ${{ steps.inputs.outputs.skip }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check the inputs
+      id: inputs
+      shell: bash
+      env:
+        MODEL: ${{ inputs.model }}
+        MODE: ${{ inputs.mode }}
+        DATABASE_URL: ${{ inputs.database-url }}
+        HAS_ANTHROPIC_KEY: ${{ inputs.anthropic-api-key != '' }}
+        HAS_OPENAI_KEY: ${{ inputs.openai-api-key != '' }}
+        HAS_APP_ID: ${{ inputs.app-id != '' }}
+        HAS_APP_KEY: ${{ inputs.app-private-key != '' }}
+      run: |
+        set -euo pipefail
+        case "$MODE" in
+          advisory|blocking) ;;
+          *) echo "::error::mode must be advisory or blocking, got '$MODE'"; exit 1 ;;
+        esac
+        if [ "$HAS_APP_ID" != "$HAS_APP_KEY" ]; then
+          echo "::error::app-id and app-private-key go together"
+          exit 1
+        fi
+        # State must outlive the job: answering runs a later job (ADR-0006 D3).
+        if [[ "$DATABASE_URL" == sqlite:* && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]]; then
+          echo "::error::a sqlite: database-url doesn't persist between jobs on GitHub-hosted runners, so answers could never be graded. Use the state branch (leave database-url empty) or a hosted database such as PostgreSQL."
+          exit 1
+        fi
+        # Without its credentials the provider can't be reached, e.g. on pull
+        # requests from forks, which get no secrets: skip instead of failing.
+        provider="${MODEL%%:*}"
+        provider="${provider:-anthropic}"
+        skip=false
+        case "$provider" in
+          anthropic) [ "$HAS_ANTHROPIC_KEY" = true ] || skip=true ;;
+          openai) [ "$HAS_OPENAI_KEY" = true ] || skip=true ;;
+          ollama) ;;
+          *) echo "::error::unknown provider '$provider' in model '$MODEL'; use anthropic, openai or ollama"; exit 1 ;;
+        esac
+        if [ "$skip" = true ]; then
+          echo "::notice::No API key for $provider; skipping the Soqrates check."
+        fi
+        echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
+    - name: Get soqrates
+      id: bin
+      if: steps.inputs.outputs.skip != 'true'
+      shell: bash
+      env:
+        SOQRATES_BINARY: ${{ inputs.binary }}
+        ACTION_PATH: ${{ github.action_path }}
+        ACTION_REPOSITORY: ${{ github.action_repository }}
+        GH_TOKEN: ${{ github.token }}
+      run: '"$ACTION_PATH/action/install.sh"'
+
+    - name: Check out learner state
+      id: state
+      if: steps.inputs.outputs.skip != 'true' && inputs.database-url == ''
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        STATE_BRANCH: ${{ inputs.state-branch }}
+        GITHUB_TOKEN_FOR_STATE: ${{ inputs.github-token }}
+      run: '"$ACTION_PATH/action/state-checkout.sh"'
+
+    - name: Get the GitHub App token
+      id: app
+      if: steps.inputs.outputs.skip != 'true' && inputs.app-id != ''
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ inputs.app-id }}
+        private-key: ${{ inputs.app-private-key }}
+
+    - name: Run Soqrates
+      if: steps.inputs.outputs.skip != 'true'
+      shell: bash
+      env:
+        SOQRATES: ${{ steps.bin.outputs.path }}
+        MODE: ${{ inputs.mode }}
+        STATE_DIR: ${{ steps.state.outputs.dir }}
+        GITHUB_TOKEN: ${{ steps.app.outputs.token || inputs.github-token }}
+        SOQRATES_MODEL: ${{ inputs.model }}
+        SOQRATES_DATABASE_URL: ${{ inputs.database-url }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        OPENAI_API_KEY: ${{ inputs.openai-api-key }}
+        OLLAMA_API_BASE_URL: ${{ inputs.ollama-base-url }}
+        OLLAMA_API_KEY: ${{ inputs.ollama-api-key }}
+      run: |
+        set -euo pipefail
+        # An empty variable would count as set; drop the ones not given.
+        for v in SOQRATES_MODEL SOQRATES_DATABASE_URL ANTHROPIC_API_KEY \
+                 OPENAI_API_KEY OLLAMA_API_BASE_URL OLLAMA_API_KEY; do
+          [ -n "${!v:-}" ] || unset "$v"
+        done
+        args=(ci --mode "$MODE")
+        if [ -n "$STATE_DIR" ]; then
+          args+=(--state-dir "$STATE_DIR")
+        fi
+        "$SOQRATES" "${args[@]}"
+
+    - name: Save learner state
+      if: always() && steps.state.outputs.dir != ''
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        STATE_DIR: ${{ steps.state.outputs.dir }}
+        STATE_BRANCH: ${{ inputs.state-branch }}
+        GITHUB_TOKEN_FOR_STATE: ${{ inputs.github-token }}
+      run: '"$ACTION_PATH/action/state-save.sh"'
