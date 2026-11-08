@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
-use soqrates_core::{Concept, ConceptId, ConceptScope, Grade, Grading};
+use soqrates_core::{Concept, ConceptId, ConceptScope, Grade, Grading, Weight};
 
 use crate::prompts::MAX_CONCEPTS;
 
@@ -41,6 +41,9 @@ pub struct RawConcept {
     pub summary: String,
     /// `general` or `project`.
     pub scope: String,
+    /// `core`, `supporting` or `incidental`.
+    #[serde(default)]
+    pub weight: String,
 }
 
 /// Reply to [`crate::prompts::WRITE_MULTIPLE_CHOICE_SYSTEM`].
@@ -128,6 +131,16 @@ pub fn parse_scope(scope: &str) -> ConceptScope {
     }
 }
 
+/// `core` and `incidental` as written; anything else, including a missing
+/// weight, is `Supporting`: asked, but after the core concepts.
+pub fn parse_weight(weight: &str) -> Weight {
+    match weight.trim().to_ascii_lowercase().as_str() {
+        "core" => Weight::Core,
+        "incidental" => Weight::Incidental,
+        _ => Weight::Supporting,
+    }
+}
+
 /// Turn the model's concepts into domain concepts: normalise ids (trimmed,
 /// lowercase), drop invalid entries, dedupe by id keeping the first, and keep
 /// at most [`MAX_CONCEPTS`]. A reply with concepts of which none is valid is
@@ -157,6 +170,7 @@ pub fn validate_concepts(output: ConceptsOutput) -> Result<Vec<Concept>, String>
             title: title.to_owned(),
             summary: summary.to_owned(),
             scope: parse_scope(&raw.scope),
+            weight: parse_weight(&raw.weight),
         });
     }
     if offered > 0 && concepts.is_empty() {

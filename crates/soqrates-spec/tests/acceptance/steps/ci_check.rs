@@ -179,6 +179,23 @@ fn posted_about(w: &mut SpecWorld, list: String) {
     assert_eq!(asked, concepts(&list));
 }
 
+#[then(
+    regex = r#"^the latest posted session starts with the questions posted for head "([^"]+)"$"#
+)]
+fn starts_with_carried(w: &mut SpecWorld, head: String) {
+    let posted = w.scm.posted_on(w.current_pr());
+    let earlier = posted
+        .iter()
+        .find(|s| s.key().0.ends_with(&format!("@{head}")))
+        .unwrap_or_else(|| panic!("no questions were posted for head {head}"));
+    let latest = posted.last().unwrap();
+    let carried = earlier.questions();
+    assert!(
+        latest.questions().starts_with(carried),
+        "the questions for {head} are not asked again unchanged, first"
+    );
+}
+
 #[then("the latest posted session is for the current head")]
 fn posted_for_head(w: &mut SpecWorld) {
     let pr = w.scm.pull_request_now(w.current_pr());

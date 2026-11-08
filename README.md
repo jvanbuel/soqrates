@@ -34,7 +34,7 @@ Configuration lives in `~/.config/soqrates/config.toml`, overlaid by
 ```toml
 model = "anthropic:claude-sonnet-5-5"
 mode = "advisory"          # or "blocking"
-max_questions = 3
+max_questions = 5          # a cap: rounds ask only what the change and your history call for
 [identities]
 "github.com" = "github.com:1001"
 ```

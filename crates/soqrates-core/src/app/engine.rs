@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::app::events::DomainEvent;
 use crate::app::ports::{Clock, Examiner, StateStore};
 use crate::assessment::{
-    Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody,
+    Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody, Weight,
 };
 use crate::delivery::{GradedSession, Mode, PrRef, PrRounds, QuestionResult, Session};
 use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
@@ -42,7 +42,8 @@ pub enum ProfileLocation {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
-    /// Upper bound on questions per session, due reviews included.
+    /// Upper bound on questions per session, due reviews included. A cap,
+    /// not a target (ADR-0002 D10).
     pub max_questions: usize,
     /// Fraction of correct answers needed to pass, in `0.0..=1.0`.
     pub pass_threshold: f64,
@@ -54,7 +55,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            max_questions: 3,
+            max_questions: 5,
             pass_threshold: 0.6,
             mode: Mode::Advisory,
             forges: BTreeMap::new(),
@@ -271,10 +272,11 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     // --- sessions -----------------------------------------------------------
 
-    /// Create and persist a session for `author` about `diff`: due reviews
-    /// first, then new concepts from the diff, in the format the author's
-    /// level calls for, at most `config.max_questions` questions (ADR-0001
-    /// D6, D7; ADR-0002 D5, D6). An empty diff asks nothing (ADR-0001 D9).
+    /// Create and persist a session for `author` about `diff`, sized to the
+    /// change and the author's knowledge (ADR-0002 D10): due reviews and new
+    /// concepts from the diff, in the format the author's level calls for,
+    /// at most `config.max_questions` questions (ADR-0001 D6, D7; ADR-0002
+    /// D5, D6). An empty diff asks nothing (ADR-0001 D9).
     pub async fn start_session(
         &self,
         key: SessionKey,
@@ -282,54 +284,107 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         diff: &Diff,
     ) -> Result<Session> {
         let questions = self
-            .compose_questions(author, diff, &BTreeSet::new())
+            .compose_questions(author, diff, &BTreeSet::new(), &[])
             .await?;
         self.open_session(key, author, questions).await
     }
 
-    /// The questions a session for `author` about `diff` asks, as in
-    /// [`Soqrates::start_session`], leaving out new concepts in `skip`.
-    /// Concepts in `skip` whose review is due are still asked (ADR-0002 D9).
-    /// Persists nothing.
+    /// The questions a session for `author` about `diff` asks (ADR-0002
+    /// D10): first `carried`, the unanswered questions of an earlier round
+    /// (D9), as written; then due reviews and new concepts, sharing the
+    /// remaining slots. New concepts in `skip`, or that the author knows and
+    /// isn't due to review, are left out, as are incidental ones; concepts
+    /// in `skip` whose review is due are still asked. Persists nothing.
     pub async fn compose_questions(
         &self,
         author: &AuthorId,
         diff: &Diff,
         skip: &BTreeSet<ConceptId>,
+        carried: &[Question],
     ) -> Result<Vec<Question>> {
-        let mut concepts: Vec<Concept> = Vec::new();
-        let mut level = Level::Novice;
-        if !diff.is_empty() {
-            let place = self.place(author).await?;
-            level = Self::load_or_new(place.primary, &place.learner)
-                .await?
-                .level();
-            for (id, scope) in self.due_with_scope(&place).await? {
-                concepts.push(Concept {
-                    title: id.0.clone(),
-                    summary: String::new(),
-                    id,
-                    scope,
-                });
-            }
-            for c in self.examiner.extract_concepts(diff).await? {
-                if !skip.contains(&c.id) && !concepts.iter().any(|k| k.id == c.id) {
-                    concepts.push(c);
-                }
+        let mut questions = carried.to_vec();
+        if diff.is_empty() {
+            return Ok(questions);
+        }
+        let open = self.config.max_questions.saturating_sub(carried.len());
+        if open == 0 {
+            return Ok(questions);
+        }
+        let place = self.place(author).await?;
+        let level = Self::load_or_new(place.primary, &place.learner)
+            .await?
+            .level();
+        let taken = |id: &ConceptId| carried.iter().any(|q| q.concept == *id);
+        let reviews: Vec<Concept> = self
+            .due_with_scope(&place)
+            .await?
+            .into_iter()
+            .filter(|(id, _)| !taken(id))
+            .map(|(id, scope)| Concept {
+                title: id.0.clone(),
+                summary: String::new(),
+                id,
+                scope,
+                weight: Weight::Core,
+            })
+            .collect();
+        let known = self.known_concepts(&place).await?;
+        let mut new: Vec<Concept> = Vec::new();
+        for c in self.examiner.extract_concepts(diff).await? {
+            let asked = taken(&c.id)
+                || reviews.iter().any(|k| k.id == c.id)
+                || new.iter().any(|k| k.id == c.id);
+            if c.weight != Weight::Incidental
+                && !asked
+                && !skip.contains(&c.id)
+                && !known.contains(&c.id)
+            {
+                new.push(c);
             }
         }
-        concepts.truncate(self.config.max_questions);
+        // Core before supporting, each in the examiner's order.
+        new.sort_by_key(|c| c.weight);
 
-        let mut questions = Vec::with_capacity(concepts.len());
-        for (i, concept) in concepts.iter().enumerate() {
+        let (n_reviews, n_new) = policy::split_slots(open, reviews.len(), new.len());
+        let concepts = reviews
+            .into_iter()
+            .take(n_reviews)
+            .chain(new.into_iter().take(n_new));
+        for concept in concepts {
+            let i = questions.len();
             let mut q = self
                 .examiner
-                .write_question(concept, policy::format_for(level, i))
+                .write_question(&concept, policy::format_for(level, i))
                 .await?;
             q.scope = concept.scope;
             questions.push(q);
         }
         Ok(questions)
+    }
+
+    /// Concepts `place`'s learner has a review card for, in either store,
+    /// that isn't due: the author knows them for now (ADR-0002 D10).
+    async fn known_concepts(&self, place: &Placement<'_, S>) -> Result<BTreeSet<ConceptId>> {
+        let now = self.clock.now();
+        let mut known = BTreeSet::new();
+        let mut profiles = vec![Self::load_or_new(place.primary, &place.learner).await?];
+        if let Some(project) = place.project {
+            profiles.push(Self::load_or_new(project, &place.learner).await?);
+        }
+        for profile in &profiles {
+            for (concept, card) in profile.cards() {
+                if !card.is_due(now) {
+                    known.insert(concept.clone());
+                }
+            }
+        }
+        // A card that is due in one store is due: don't count it as known.
+        for profile in &profiles {
+            for concept in profile.due_reviews(now) {
+                known.remove(&concept);
+            }
+        }
+        Ok(known)
     }
 
     /// Open and persist the session `key` for `author` with `questions`.
@@ -339,13 +394,10 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         author: &AuthorId,
         questions: Vec<Question>,
     ) -> Result<Session> {
-        let session = Session::open(
-            key,
-            author.clone(),
-            questions,
-            self.config.max_questions,
-            self.clock.now(),
-        )?;
+        // Carried questions are never dropped, even if the cap was lowered
+        // since they were asked (ADR-0002 D10).
+        let cap = self.config.max_questions.max(questions.len());
+        let session = Session::open(key, author.clone(), questions, cap, self.clock.now())?;
         self.session_store_for(author)?
             .save_session(&session)
             .await?;

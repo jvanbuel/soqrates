@@ -53,7 +53,13 @@ title and summary must not mention anything specific to this codebase: no projec
 company, service, module, file, type or function names from the diff.
   - `project` for anything specific to this codebase: its own modules, APIs, conventions, \
 business rules or architecture.
-  - When in doubt, use `project`.";
+  - When in doubt, use `project`.
+- weight: how central the concept is to this change. One question is asked per concept that \
+matters, so this decides how many questions the author gets.
+  - `core`: the change is about it; getting it wrong would make the change wrong.
+  - `supporting`: the change relies on it, but it is not what the change is about.
+  - `incidental`: the change merely touches it. It will not be asked about.
+  - A small change usually has one core concept, or none. Do not inflate weights.";
 
 pub const WRITE_MULTIPLE_CHOICE_SYSTEM: &str = "\
 You are the examiner of Soqrates, a tool that checks whether the author of a code change \

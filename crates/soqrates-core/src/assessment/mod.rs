@@ -81,6 +81,20 @@ pub enum ConceptScope {
     Project,
 }
 
+/// How central a concept is to a change (ADR-0002 D10).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+pub enum Weight {
+    /// The change is about it.
+    #[default]
+    Core,
+    /// The change relies on it.
+    Supporting,
+    /// The change merely touches it. Not asked.
+    Incidental,
+}
+
 /// One idea that a change exercises. The unit of learning.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Concept {
@@ -88,6 +102,10 @@ pub struct Concept {
     pub title: String,
     pub summary: String,
     pub scope: ConceptScope,
+    /// How central it is to the change it was extracted from. `Core` for a
+    /// due review, which is asked for its own sake.
+    #[serde(default)]
+    pub weight: Weight,
 }
 
 /// The shape of a question (ADR-0001 D7, ADR-0002 D5).

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use soqrates_core::ports::{Clock, Examiner};
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, Concept, ConceptId, ConceptScope, Config, Diff, Error, Grade,
-    Grading, Question, QuestionBody, QuestionFormat, QuestionId, Result, Soqrates,
+    Grading, Question, QuestionBody, QuestionFormat, QuestionId, Result, Soqrates, Weight,
 };
 use soqrates_mcp::SoqratesMcp;
 use soqrates_store::InMemoryStore;
@@ -31,6 +31,7 @@ impl Examiner for FakeExaminer {
                 title: id.into(),
                 summary: String::new(),
                 scope: ConceptScope::General,
+                weight: Weight::Core,
             })
             .collect())
     }
@@ -127,12 +128,19 @@ async fn start_session_never_reveals_the_answer_key() {
     let author = "github.com:1001";
     // Raise the author to Intermediate (6 correct answers, ADR-0002 D4) so
     // the last session mixes both formats.
+    // New concepts each round: a concept answered correctly isn't asked
+    // again until it is due (ADR-0002 D10).
     let mut out = Value::Null;
     for round in 0..3 {
+        let concepts: Vec<String> = ["a", "b", "c", "d"]
+            .iter()
+            .map(|c| format!("{c}{round}"))
+            .collect();
+        let concepts: Vec<&str> = concepts.iter().map(String::as_str).collect();
         out = mcp
             .call_tool(
                 "start_session",
-                json!({"author": author, "diff": diff(&["a", "b", "c", "d"]),
+                json!({"author": author, "diff": diff(&concepts),
                        "session_key": format!("k{round}")}),
             )
             .await

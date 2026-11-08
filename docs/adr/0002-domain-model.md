@@ -145,7 +145,8 @@ This defines the "mix" from ADR-0001 D7 (gap G3). The `i`-th question
 ### D6: Session rules
 **Enforcement:** automated
 
-- A session holds at most `max_questions` questions, and no two questions
+- A session holds at most `max_questions` questions (D10: more only when
+  carried questions alone exceed a lowered cap), and no two questions
   about the same concept.
 - Answers must refer to questions in the session (otherwise `Invalid`), at
   most one answer per question (otherwise `Invalid`). An unanswered
@@ -194,7 +195,7 @@ something needs it.
 Due reviews are ordered by due time, earliest first, with ties broken by
 concept ID in ascending order (gap G4).
 
-### D9: A round asks only about what changed since the last round
+### D9: A round asks about what changed and what is still unanswered
 **Enforcement:** automated
 
 Every push to a pull request starts a round, recorded in the PR's
@@ -202,27 +203,77 @@ Every push to a pull request starts a round, recorded in the PR's
 check (ADR-0001 D8) decides each new round like this:
 
 - **Incremental change.** The first round asks about the whole pull
-  request. A later round asks about the change from the latest round's head
-  to the new head (`ScmProvider::diff_between`), restricted to the files the
-  pull request's own diff touches, so that merging the base branch doesn't
-  bring in other people's changes. After a force-push, when the old head is
-  not an ancestor of the new one, the whole pull request is asked about.
-- **No repeats within a pull request.** Concepts asked in any earlier round,
-  graded or not, are not asked again, unless their review card is due: due
-  reviews come first as always (ADR-0001 D6).
-- **Nothing new.** When a later round has nothing to ask, the new head
+  request. A later round asks about the change to the new head
+  (`ScmProvider::diff_between`) from the head of the latest round that
+  asked its own questions, not one that carried an earlier session forward:
+  that round asked nothing about its head, e.g. because carried questions
+  filled the budget (D10), so its changes are asked about now. The change
+  is restricted to the files the pull request's own diff touches, so that
+  merging the base branch doesn't bring in other people's changes. After
+  a force-push, when the old head is not an ancestor of the new one, the
+  whole pull request is asked about.
+- **Unanswered questions are carried forward.** When the latest round's
+  session is still pending, a later round starts with its questions, reused
+  as written: no model call, and the author sees the same questions again.
+  Questions about the change follow (D10). The earlier question comment is
+  frozen as superseded (ADR-0004 D7), so the new comment holds both. So a
+  push can't make unanswered questions disappear.
+- **No repeats within a pull request.** Concepts of graded rounds, and the
+  carried ones, are not asked again, unless their review card is due: due
+  reviews come first as always (ADR-0001 D6). Concepts of a round that was
+  superseded before it was graded are not skipped: they were carried into
+  the next round.
+- **Nothing new.** When a later round has nothing new to ask, the new head
   carries the latest round's session forward instead of asking an empty
-  round. If that session is still pending, its question comment stays open,
-  and answering it sets the check on the new head. If it was graded, its
-  result is reported again. So a push can't wipe out a failed or unanswered
-  round by asking nothing.
+  round or reposting the same questions. If that session is still pending,
+  its question comment stays open, and answering it sets the check on the
+  new head. If it was graded, its result is reported again. So a push can't
+  wipe out a failed or unanswered round by asking nothing.
 
+A round records every concept its session asks, carried ones included.
 The rounds hold heads, session keys and concept IDs, no question or answer
 text, and are kept with the author's sessions: in the organisation's store
 when there is one, never in the shared learner store (ADR-0003 D5). The
 round is recorded after its questions are posted. If recording fails, the
 next run records it from the pending session; a round whose session is
 gone, e.g. because posting failed, is asked again.
+
+### D10: A session is sized to the change and the author's knowledge
+**Enforcement:** automated
+
+`max_questions` (default 5) is a cap, not a target. A session about a diff
+is built from four sources, in this order:
+
+1. **Carried questions** (D9, CI only): the unanswered questions of the
+   latest round, as written. They are never dropped. They count towards the
+   cap; if the cap was lowered since, they all stay anyway.
+2. **Due reviews**, ordered by D8.
+3. **New concepts** the examiner extracts from the diff, each with a
+   weight: `core` (the change is about it), `supporting` (the change relies
+   on it) or `incidental` (the change merely touches it). Incidental
+   concepts are not asked. Core concepts come before supporting ones, each
+   in the examiner's order.
+4. Concepts the author already **knows** are skipped: an extracted concept
+   with a review card that isn't due yet. Its schedule brings it back at the
+   right time (ADR-0001 D6).
+
+After the carried questions, due reviews and new concepts share the
+remaining slots. New concepts are guaranteed half of them, rounded up, or
+as many as there are if fewer; due reviews take what they leave; new
+concepts take any slots the reviews don't use. So reviews come first but
+never crowd out the change, and a change with nothing new still gets its
+reviews.
+
+Zero questions is a valid outcome: a change whose concepts are all
+incidental, or known and not due, asks nothing (ADR-0004 D7). An empty
+diff asks nothing at all, not even due reviews (ADR-0001 D9).
+
+The format of a new question follows D5, with `i` its position in the
+session; carried questions keep the format they were asked in.
+
+A carried question can be stale when the push removed the code it asks
+about. Rounds don't record which files a concept came from, so this is
+accepted for now.
 
 ## Consequences
 

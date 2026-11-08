@@ -117,7 +117,9 @@ earlier question comment on the PR that was never graded is edited to say
 a newer commit superseded it. It links the new question comment and shows
 its own questions collapsed, without boxes, as a graded comment does (D5). The
 superseded sessions are discarded, so answers to them are never graded.
-Graded comments stay as they are.
+Their questions are not lost: an ungraded round's questions are asked
+again, first, in the new comment (ADR-0002 D9). Graded comments stay as
+they are.
 
 Only comments posted by the same account as the current question comment,
 and only sessions of the same PR, are touched, so copying a marker into
