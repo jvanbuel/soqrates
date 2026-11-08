@@ -328,6 +328,9 @@ pub struct ScmState {
     pub summaries: Vec<(PrRef, String)>,
     /// Replies by the author, keyed by the session they answer.
     pub replies: HashMap<SessionKey, Vec<Answer>>,
+    /// Answers that don't count as a reply (ADR-0004 D3): ticked but not
+    /// submitted, or given by someone other than the author.
+    pub ignored: Vec<(SessionKey, Vec<Answer>)>,
     /// Make the next `post_questions` call fail, as on a transient error.
     pub fail_next_post: bool,
     /// Every `post_results` call, in order.
@@ -462,6 +465,26 @@ impl FakeScm {
             .filter(|(p, ..)| p == pr)
             .map(|(_, k, s, n)| (k.clone(), s.clone(), n.clone()))
             .collect()
+    }
+
+    /// Answers to `session` by `by`, `submitted` or only ticked. Only those
+    /// the session's author submitted are a reply (ADR-0004 D3).
+    pub fn answer_as(
+        &self,
+        session: &Session,
+        by: &AuthorId,
+        submitted: bool,
+        answers: Vec<Answer>,
+    ) {
+        if submitted && by == session.author() {
+            self.reply(session.key(), answers);
+        } else {
+            self.state
+                .lock()
+                .unwrap()
+                .ignored
+                .push((session.key().clone(), answers));
+        }
     }
 
     /// Post a comment by `author` after the question comment of `session`;

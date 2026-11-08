@@ -45,10 +45,16 @@ option's reason, then the explanation; every other author gets the
 explanation alone, as do questions stored before reasons existed.
 
 The reasons are written in the same reply as the options, and each one is
-about an option that is shown, so there is no free-form explanation left to
-discuss answers the question doesn't offer. Evals (ADR-0001 D13) are to
-measure whether reasons still do; a separate check is added only if they
-show it is needed.
+about an option that is shown. That is not enough on its own: in the first
+live run an explanation still argued against an answer the question didn't
+offer (issue #5). So a second, short prompt checks every multiple-choice
+question that passes validation, and quotes any passage of a reason that
+discusses an answer not among the options. A question with such a passage
+counts as invalid output: it is written again once, with the passages
+quoted, and fails like other invalid output after that. A check reply that
+can't be parsed keeps the question. An eval (ADR-0001 D13, `option_consistency`
+in `evals/`) tracks how often explanations still discuss
+answers that aren't offered.
 
 For an open question, the explanation is the grader's rationale.
 `SessionOutcome` carries these results, and the PR, the terminal and MCP
@@ -121,6 +127,12 @@ Their questions are not lost: an ungraded round's questions are asked
 again, first, in the new comment (ADR-0002 D9). Graded comments stay as
 they are.
 
+A round whose answers were submitted (D3) before the push is not
+superseded: the check grades it first and posts its results, so its
+comment is frozen as graded (D5), not as superseded (ADR-0002 D9). Its
+answers are read as on its own head: only the author's edits and comments
+count, and a newer answer comment replaces an earlier one.
+
 Only comments posted by the same account as the current question comment,
 and only sessions of the same PR, are touched, so copying a marker into
 another comment can't make Soqrates rewrite it. A failed edit is retried by
@@ -170,6 +182,8 @@ grading.
 
 - The examiner's output grows: a reason per multiple-choice option, and
   feedback per graded open answer.
+- Each multiple-choice question costs a second, short model call for the
+  option check, and two more when it fails.
 - `Examiner::grade` returns a grade with feedback, and `ScmProvider`
   gains `post_results`, `superseded_questions`, `supersede_questions`,
   `hint_commands` and `acknowledge_answers` (D8, D9).

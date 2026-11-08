@@ -7,7 +7,8 @@ Feature: After a push, ask about what changed and what is still unanswered
   review is due. With nothing new to ask, the latest round still stands:
   its questions stay open, or its result is reported again. After a
   force-push the whole pull request is asked about, still without the
-  concepts already asked.
+  concepts already asked. Answers the author submitted before the push
+  are graded first, so their questions are not asked again.
 
   Background:
     Given a pull request "jvanbuel/soqrates#7" by "github:1001" at head "abc123" touching "rust.ownership", "rust.traits"
@@ -121,3 +122,62 @@ Feature: After a push, ask about what changed and what is still unanswered
     Then the check is Pending
     And the questions were posted 1 time
     And the change was compared 1 time
+
+  @adr-0004-d3 @adr-0004-d7
+  Scenario: Answers submitted before a push are graded before the next round is asked
+    Given the author replies with correct answers
+    When the author pushes head "def456" touching "rust.ownership", "tokio.select"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the results were posted on the pull request 1 time
+    And the results posted are for head "abc123"
+    And the history of "github:1001" has 2 graded answers
+    And the questions were posted 2 times
+    And the latest posted session is for the current head
+    And the posted questions are about "tokio.select"
+    And no question comment was marked superseded
+
+  @adr-0004-d3 @adr-0004-d7
+  Scenario: Grading the earlier round sets no check on the new head
+    Given the author replies with wrong answers
+    When the author pushes head "def456" touching "tokio.select"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the check was never Failure
+    And the results posted are for head "abc123"
+    And the posted questions are about "tokio.select"
+
+  @adr-0004-d3 @adr-0004-d7
+  Scenario: Answers ticked but not submitted before a push are carried into the next round
+    Given the author ticks correct answers without submitting them
+    When the author pushes head "def456" touching "tokio.select"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the results were posted on the pull request 0 times
+    And the history of "github:1001" has 0 graded answers
+    And the posted questions are about "rust.ownership", "rust.traits", "tokio.select"
+    And the latest posted session starts with the questions posted for head "abc123"
+    And the question comment for head "abc123" was marked superseded 1 time
+
+  @adr-0004-d3 @adr-0004-d7 @adr-0002-d6
+  Scenario: Re-running the check on the new head doesn't grade the earlier round again
+    Given the author replies with correct answers
+    And the author pushes head "def456" touching "tokio.select"
+    And the Soqrates check has run
+    When the Soqrates check runs
+    Then the check is Pending
+    And the results were posted on the pull request 1 time
+    And the history of "github:1001" has 2 graded answers
+    And the questions were posted 2 times
+    And the posted questions are about "tokio.select"
+
+  @adr-0004-d3 @adr-0004-d7
+  Scenario: Answers submitted by someone other than the author don't grade the earlier round
+    Given "github:2002" submits correct answers to the questions
+    When the author pushes head "def456" touching "tokio.select"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the results were posted on the pull request 0 times
+    And the history of "github:1001" has 0 graded answers
+    And the posted questions are about "rust.ownership", "rust.traits", "tokio.select"
+    And the latest posted session starts with the questions posted for head "abc123"

@@ -104,6 +104,20 @@ Feature: Answering on the pull request is forgiving and visible
       | check Success                        |
     And the answer comment shows only ✅
 
+  @adr-0004-d7 @adr-0004-d9
+  Scenario: Answers graded before a push starts the next round are acknowledged too
+    Given the author comments "/soqrates answer" with correct answers
+    When the author pushes head "def456" touching "rust.ownership", "tokio.select"
+    And the Soqrates check runs
+    Then the results were posted on the pull request 1 time
+    And the author saw, in order:
+      | what                     |
+      | 👀 on the answer comment |
+      | results                  |
+      | ✅ on the answer comment |
+    And the answer comment shows only ✅
+    And the check never said "Grading your answers…"
+
   @adr-0004-d9
   Scenario: Answers that are not picked up get no acknowledgement
     Given the author comments "/socrates answr" with correct answers

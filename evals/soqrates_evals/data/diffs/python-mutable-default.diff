@@ -1,0 +1,15 @@
+diff --git a/app/notify.py b/app/notify.py
+--- a/app/notify.py
++++ b/app/notify.py
+@@ -4,10 +4,12 @@ from .mail import send
+
+
+-def notify(user, message, recipients=[]):
++def notify(user, message, recipients=None):
+     """Send `message` to `user` and anyone in `recipients`."""
++    if recipients is None:
++        recipients = []
+     recipients.append(user.email)
+     for address in recipients:
+         send(address, message)
+     return recipients
