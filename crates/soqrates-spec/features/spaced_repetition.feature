@@ -72,15 +72,25 @@ Feature: Spaced repetition with FSRS
     Then the session asks 3 questions
     And the session asks about "rust.ownership", "http.retries", "tokio.select", in that order
 
-  @adr-0001-d6
-  Scenario: Due reviews can use up the whole budget
+  @adr-0001-d6 @adr-0002-d10
+  Scenario: Due reviews never take every slot from the change
     Given the question budget is 3
     And "github:1001" has answered questions about "rust.ownership", "rust.traits" correctly
     And 30 days pass
     And the question budget is 2
     When "github:1001" starts a session for a change touching "http.retries", "tokio.select"
     Then the session asks 2 questions
-    And the session asks about "rust.ownership", "rust.traits", in any order
+    And the session asks about "rust.ownership", "http.retries", in that order
+
+  @adr-0001-d6 @adr-0002-d10
+  Scenario: Due reviews fill the session when the change has nothing new
+    Given the question budget is 3
+    And "github:1001" has answered questions about "rust.ownership", "rust.traits" correctly
+    And 30 days pass
+    And the question budget is 2
+    And the examiner weighs "http.retries" as incidental
+    When "github:1001" starts a session for a change touching "http.retries"
+    Then the session asks about "rust.ownership", "rust.traits", in any order
 
   @adr-0001-d6
   Scenario: A due concept that the change also touches is asked only once

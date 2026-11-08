@@ -13,7 +13,7 @@ use soqrates_core::{
     Answer, AnswerBody, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error, Grade,
     GradedSession, Grading, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
     PrRounds, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result, Session,
-    SessionKey, SessionOutcome,
+    SessionKey, SessionOutcome, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -64,6 +64,7 @@ pub const WRONG_TEXT: &str = "I don't know";
 pub struct FakeExaminer {
     correct_grade: Arc<Mutex<Grade>>,
     scopes: Arc<Mutex<HashMap<ConceptId, ConceptScope>>>,
+    weights: Arc<Mutex<HashMap<ConceptId, Weight>>>,
     /// Whether multiple-choice questions come without option reasons, as
     /// questions stored before reasons existed do.
     without_reasons: Arc<Mutex<bool>>,
@@ -74,6 +75,7 @@ impl Default for FakeExaminer {
         Self {
             correct_grade: Arc::new(Mutex::new(Grade::Good)),
             scopes: Arc::new(Mutex::new(HashMap::new())),
+            weights: Arc::new(Mutex::new(HashMap::new())),
             without_reasons: Arc::new(Mutex::new(false)),
         }
     }
@@ -92,6 +94,21 @@ impl FakeExaminer {
     /// Write multiple-choice questions without option reasons from now on.
     pub fn write_without_reasons(&self) {
         *self.without_reasons.lock().unwrap() = true;
+    }
+
+    /// Weigh `concept` as `weight` from now on (ADR-0002 D10).
+    pub fn weigh(&self, concept: &ConceptId, weight: Weight) {
+        self.weights.lock().unwrap().insert(concept.clone(), weight);
+    }
+
+    /// The weight this examiner gives `concept`: `Core` by default.
+    pub fn weight_of(&self, concept: &ConceptId) -> Weight {
+        self.weights
+            .lock()
+            .unwrap()
+            .get(concept)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Classify `concept` as `scope` from now on (ADR-0003 D5).
@@ -152,6 +169,7 @@ impl Examiner for FakeExaminer {
                 let cid = ConceptId(id.trim().to_string());
                 Concept {
                     scope: self.scope_of(&cid),
+                    weight: self.weight_of(&cid),
                     id: cid,
                     title: id.trim().to_string(),
                     summary: format!("What the change does with {}", id.trim()),

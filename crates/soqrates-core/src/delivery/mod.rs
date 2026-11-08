@@ -238,7 +238,8 @@ pub struct Round {
     /// the head brought nothing new to ask, the latest earlier round's
     /// session, carried forward.
     pub session: SessionKey,
-    /// The concepts asked in this round. Empty when carried forward.
+    /// The concepts this round's session asks, carried ones included
+    /// (ADR-0002 D9). Empty when the round's session was carried forward.
     pub concepts: Vec<ConceptId>,
     pub at: DateTime<Utc>,
 }
@@ -275,14 +276,6 @@ impl PrRounds {
     /// The round for `head`, if there was one.
     pub fn for_head(&self, head: &str) -> Option<&Round> {
         self.rounds.iter().find(|r| r.head == head)
-    }
-
-    /// Every concept asked on the pull request so far, graded or not.
-    pub fn asked(&self) -> BTreeSet<ConceptId> {
-        self.rounds
-            .iter()
-            .flat_map(|r| r.concepts.iter().cloned())
-            .collect()
     }
 
     /// Add `round`. A head has at most one round: recording a head again

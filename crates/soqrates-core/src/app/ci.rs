@@ -1,10 +1,13 @@
 //! The CI check workflow (ADR-0001 D8).
 
+use std::collections::BTreeSet;
+
 use crate::Result;
 use crate::app::engine::{ProfileLocation, SessionOutcome, Soqrates};
 use crate::app::ports::{Clock, Examiner, ScmProvider, StateStore};
+use crate::assessment::Question;
 use crate::delivery::{CheckStatus, Mode, PrRef, PrRounds, PullRequest, Round, Session};
-use crate::ids::SessionKey;
+use crate::ids::{ConceptId, SessionKey};
 
 /// The session key for a PR at a given head commit. A new push gives a new key.
 pub fn session_key(pr: &PullRequest) -> SessionKey {
@@ -19,11 +22,12 @@ fn key_prefix(pr: &PrRef) -> String {
 /// One run of the CI check. Call it on PR open/push and when the author
 /// replies.
 ///
-/// - No round for the current head yet: ask about what changed since the
-///   latest round (the whole PR on its first round, or after a force-push),
-///   leaving out concepts already asked on the PR unless they are due
-///   (ADR-0002 D9). Post the questions, freeze the question comments of
-///   earlier heads that were never graded (ADR-0004 D7) and set `Pending`.
+/// - No round for the current head yet: ask again whatever the latest round
+///   left unanswered, then about what changed since the latest round (the
+///   whole PR on its first round, or after a force-push), leaving out
+///   concepts already asked on the PR unless they are due (ADR-0002 D9,
+///   D10). Post the questions, freeze the question comments of earlier
+///   heads that were never graded (ADR-0004 D7) and set `Pending`.
 /// - Nothing new to ask on a later round: carry the latest round's session
 ///   forward. Its questions stay open, or its result is reported again.
 /// - Nothing to ask on the first round: the comment says so and the empty
@@ -143,7 +147,16 @@ where
     // A round for this head whose session is gone, e.g. because posting it
     // failed, doesn't count.
     rounds.forget(&pull.head_sha);
-    let diff = match rounds.latest() {
+    // From the latest round that asked its own questions: a round that
+    // carried an earlier session forward asked nothing about its head, e.g.
+    // because carried questions filled the budget (ADR-0002 D10).
+    let prefix = key_prefix(pr);
+    let base = rounds
+        .rounds()
+        .iter()
+        .rev()
+        .find(|r| r.session.0 == format!("{prefix}{}", r.head));
+    let diff = match base {
         // Only the files the PR changes: a merge of the base branch brings
         // in changes by others.
         Some(prev) => scm
@@ -153,19 +166,32 @@ where
         None => None,
     }
     .unwrap_or_else(|| pull.diff.clone());
+    // The latest round's unanswered questions are asked again, first
+    // (ADR-0002 D9, D10).
+    let carried: Vec<Question> = match rounds.latest() {
+        Some(prev) => app
+            .pending_session(&prev.session)
+            .await?
+            .map(|s| s.questions().to_vec())
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let skip = already_asked(app, &rounds, &carried).await?;
     let questions = app
-        .compose_questions(&pull.author, &diff, &rounds.asked())
+        .compose_questions(&pull.author, &diff, &skip, &carried)
         .await?;
 
-    if questions.is_empty()
+    // Nothing new: the latest round stands, rather than reposting the same
+    // questions under a new comment.
+    if questions.len() == carried.len()
         && let Some(prev) = rounds.latest()
     {
-        let carried = prev.session.clone();
-        if let Some(status) = report(app, scm, pr, pull, &carried).await? {
+        let standing = prev.session.clone();
+        if let Some(status) = report(app, scm, pr, pull, &standing).await? {
             // Nothing new: the latest round still stands (ADR-0002 D9).
             rounds.record(Round {
                 head: pull.head_sha.clone(),
-                session: carried,
+                session: standing,
                 concepts: Vec::new(),
                 at: app.clock.now(),
             });
@@ -175,7 +201,7 @@ where
     }
 
     let session = app
-        .open_session(key.clone(), &pull.author, questions)
+        .open_session(key.clone(), &pull.author, questions, carried.len())
         .await?;
     // Also when there is nothing to ask: the comment then says so, and
     // earlier question comments can point to it (ADR-0004 D7).
@@ -199,6 +225,29 @@ where
     scm.set_check(pr, CheckStatus::Pending, &summary).await?;
     supersede_earlier(app, scm, pr, &session).await?;
     Ok(CheckStatus::Pending)
+}
+
+/// The concepts a later round on the PR doesn't ask again (ADR-0002 D9):
+/// those of graded rounds, and the `carried` ones. Concepts of a round that
+/// was superseded before it was graded were carried into the next round, so
+/// they don't count on their own.
+async fn already_asked<S, E, C>(
+    app: &Soqrates<S, E, C>,
+    rounds: &PrRounds,
+    carried: &[Question],
+) -> Result<BTreeSet<ConceptId>>
+where
+    S: StateStore,
+    E: Examiner,
+    C: Clock,
+{
+    let mut asked: BTreeSet<ConceptId> = carried.iter().map(|q| q.concept.clone()).collect();
+    for round in rounds.rounds() {
+        if app.graded(&round.session).await?.is_some() {
+            asked.extend(round.concepts.iter().cloned());
+        }
+    }
+    Ok(asked)
 }
 
 /// Record `session` as the round for the head of `pull`.

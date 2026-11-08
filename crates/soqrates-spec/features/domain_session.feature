@@ -35,6 +35,20 @@ Feature: The session aggregate
       | "rust.borrowing", "rust.traits", "tokio.select", "serde" | 3      | opening the session fails as invalid |
       | "rust.borrowing", "rust.traits"                          | 1      | opening the session fails as invalid |
 
+  @adr-0002-d6 @adr-0002-d10
+  Scenario Outline: The engine exceeds the question budget only for carried questions
+    Given the question budget is <budget>
+    And multiple-choice questions about "rust.borrowing", "rust.traits", "tokio.select"
+    When the engine opens a session for "github:1001" whose first <carried> questions are carried
+    Then <outcome>
+
+    Examples:
+      | budget | carried | outcome                              |
+      | 3      | 0       | the session is opened                |
+      | 2      | 0       | opening the session fails as invalid |
+      | 2      | 2       | opening the session fails as invalid |
+      | 2      | 3       | the session is opened                |
+
   @adr-0002-d6
   Scenario: A session holds no two questions about the same concept
     Given a multiple-choice and an open question about "rust.borrowing"

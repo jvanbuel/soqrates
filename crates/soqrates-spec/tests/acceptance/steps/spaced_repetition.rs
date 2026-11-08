@@ -2,14 +2,24 @@
 
 use std::collections::BTreeSet;
 
-use cucumber::then;
-use soqrates_core::{ConceptId, Session};
+use cucumber::{given, then};
+use soqrates_core::{ConceptId, Session, Weight};
 
 use super::{author, concepts};
 use crate::world::SpecWorld;
 
 fn session(w: &SpecWorld) -> &Session {
     w.session.as_ref().expect("no session started")
+}
+
+#[given(regex = r#"^the examiner weighs "([^"]+)" as (core|supporting|incidental)$"#)]
+fn weighs(w: &mut SpecWorld, concept: String, weight: String) {
+    let weight = match weight.as_str() {
+        "core" => Weight::Core,
+        "supporting" => Weight::Supporting,
+        _ => Weight::Incidental,
+    };
+    w.examiner.weigh(&ConceptId(concept), weight);
 }
 
 #[then(regex = r#"^the session asks (\d+) questions?$"#)]

@@ -90,7 +90,7 @@ Feature: The CI check is an asynchronous round trip
     Then the check is Pending
     And the questions were posted 2 times
     And the latest posted session is for the current head
-    And the posted questions are about "tokio.select"
+    And the posted questions are about "rust.ownership", "rust.traits", "tokio.select"
     And a pending session is stored for the current head
 
   @adr-0001-d8 @adr-0001-d4

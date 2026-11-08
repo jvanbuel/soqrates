@@ -185,7 +185,9 @@ Every concept an author is quizzed on becomes a review card scheduled with
 FSRS (the `rs-fsrs` crate, a scheduler with no ML-training dependencies). A
 correct answer pushes the next review further out than a wrong one. Concepts
 whose reviews are due are asked again in the author's next session, before
-new concepts and within the session's question budget.
+new concepts and within the session's question budget. A concept whose
+review isn't due yet is not asked, even when a change touches it: the
+schedule brings it back at the right time (ADR-0002 D10).
 
 Soqrates uses FSRS's long-term scheduler, without same-day learning steps,
 because reviews happen once per change, not in drills.
@@ -208,7 +210,8 @@ to `Pending`. A later run (for example, when the author replies) reads the
 answers, grades them, updates the profile and sets the check to `Success` or
 `Failure`. In `Advisory` mode a failed quiz sets `Neutral` instead of
 `Failure`. A new push to the PR starts a new session for the new head, about
-what changed since the previous one; a push with nothing new keeps the
+what changed since the previous one, that also asks again whatever the
+previous session left unanswered; a push with nothing new keeps the
 previous session (ADR-0002 D9).
 
 ### D9: Local hooks share one entry point

@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use soqrates_core::{
     Answer, AnswerBody, Concept, ConceptId, ConceptScope, Diff, Error, Grade, Question,
-    QuestionBody, QuestionFormat, QuestionId,
+    QuestionBody, QuestionFormat, QuestionId, Weight,
 };
 
 use crate::examiner::{CHOICE_FOR_OPEN_FEEDBACK, NO_ANSWER_FEEDBACK};
@@ -64,6 +64,7 @@ fn concept(id: &str, scope: ConceptScope) -> Concept {
         title: "Title".into(),
         summary: "Summary".into(),
         scope,
+        weight: Weight::Core,
     }
 }
 
@@ -160,6 +161,7 @@ fn raw(id: &str, scope: &str) -> RawConcept {
         title: format!("title of {id}"),
         summary: "summary".into(),
         scope: scope.into(),
+        weight: "core".into(),
     }
 }
 
@@ -220,6 +222,44 @@ fn concepts_are_normalised_deduped_and_capped() {
             ConceptScope::Project,
         ]
     );
+}
+
+// @adr-0002-d10
+#[test]
+fn concepts_carry_their_weight() {
+    let weighed = |weight: &str| {
+        let mut r = raw("rust.ownership", "general");
+        r.weight = weight.into();
+        output::validate_concepts(ConceptsOutput { concepts: vec![r] }).unwrap()[0].weight
+    };
+    assert_eq!(weighed("core"), Weight::Core);
+    assert_eq!(weighed(" Supporting "), Weight::Supporting);
+    assert_eq!(weighed("INCIDENTAL"), Weight::Incidental);
+    // Unknown or missing: asked, but after the core concepts.
+    assert_eq!(weighed("vital"), Weight::Supporting);
+    assert_eq!(weighed(""), Weight::Supporting);
+    let reply =
+        r#"{"concepts":[{"id":"rust.ownership","title":"T","summary":"S","scope":"general"}]}"#;
+    let out = output::parse_json::<ConceptsOutput>(reply).unwrap();
+    assert_eq!(
+        output::validate_concepts(out).unwrap()[0].weight,
+        Weight::Supporting
+    );
+}
+
+// @adr-0002-d10
+#[test]
+fn the_concept_prompt_asks_for_a_weight() {
+    let system = prompts::EXTRACT_CONCEPTS_SYSTEM;
+    for word in [
+        "weight",
+        "`core`",
+        "`supporting`",
+        "`incidental`",
+        "will not be asked",
+    ] {
+        assert!(system.contains(word), "{word}");
+    }
 }
 
 #[test]
