@@ -4,12 +4,10 @@
 //! all of it is unit tested (ADR-0001 D12).
 
 use chrono::{DateTime, Utc};
+use soqrates_core::answer_command::{ANSWER_COMMAND, Command, read_command};
 use soqrates_core::{
     Answer, AnswerBody, CheckStatus, Question, QuestionBody, QuestionResult, Session, SessionKey,
 };
-
-/// The command an answer comment starts with.
-pub const ANSWER_COMMAND: &str = "/soqrates answer";
 
 /// The commit status context Soqrates reports under.
 pub const STATUS_CONTEXT: &str = "soqrates";
@@ -234,9 +232,10 @@ A letter in the comment replaces the boxes of that question.
 ```
 
 Only answers from the author of this pull request count: boxes ticked by \
-anyone else are ignored. Until your answers are graded, a newer answer \
-comment replaces an earlier one. After grading, answers for this commit are \
-final; a new push asks new questions.
+anyone else are ignored. Until your answers are graded, you can still edit \
+your answer comment, and a newer answer comment replaces an earlier one. \
+After grading, answers for this commit are final; a new push asks new \
+questions.
 
 </details>
 ";
@@ -498,7 +497,14 @@ fn answer_text(result: &QuestionResult) -> String {
 /// The comment with the results of a graded session (ADR-0004 D1, D2).
 /// It takes the results and the pass flag only, so nothing from the
 /// learner's profile (level, review schedule, other concepts) can appear.
-pub fn render_results(session: &Session, results: &[QuestionResult], passed: bool) -> String {
+/// With `source`, it says which answer comment and boxes it graded
+/// (ADR-0004 D8).
+pub fn render_results(
+    session: &Session,
+    results: &[QuestionResult],
+    passed: bool,
+    source: Option<&AnswerSource>,
+) -> String {
     let total = results.len();
     let correct = results.iter().filter(|r| r.is_correct()).count();
     let mut out = String::new();
@@ -517,6 +523,9 @@ pub fn render_results(session: &Session, results: &[QuestionResult], passed: boo
              that is what this check is for: each question below explains what \
              it was getting at. These concepts will come back for review.\n\n"
         ));
+    }
+    if let Some(source) = source {
+        out.push_str(&format!("<sub>{}</sub>\n\n", describe_source(source)));
     }
     for (i, r) in results.iter().enumerate() {
         let mark = if r.is_correct() { "✅" } else { "❌" };
@@ -664,116 +673,163 @@ pub fn takes_answers(body: &str) -> bool {
 
 /// The answer comment for a session: the latest comment by `author_id`
 /// posted after the first comment carrying `marker`, whose body starts with
-/// `/soqrates answer`. Comments by anyone else are ignored, so nobody can
-/// answer for the author. `comments` are `(author_id, created_at, body)` in
-/// the order the forge lists them (oldest first).
-pub fn select_answer_comment<'a>(
-    comments: &'a [(String, DateTime<Utc>, String)],
+/// the answer command (`/soqrates answer`, read forgivingly, ADR-0004 D8).
+/// Comments by anyone else are ignored, so nobody can answer for the
+/// author. `comments` are `(author_id, created_at, body)` in the order the
+/// forge lists them (oldest first). Returns the index of the comment.
+pub fn select_answer_comment(
+    comments: &[(String, DateTime<Utc>, String)],
     marker: &str,
     author_id: &str,
-) -> Option<&'a str> {
+    app_slug: Option<&str>,
+) -> Option<usize> {
     let start = comments.iter().position(|(_, _, b)| b.contains(marker))?;
     let marked_at = comments[start].1;
-    comments[start + 1..]
+    comments
         .iter()
         .enumerate()
+        .skip(start + 1)
         .filter(|(_, (who, at, body))| {
-            who == author_id && *at >= marked_at && strip_command(body).is_some()
+            who == author_id
+                && *at >= marked_at
+                && matches!(read_command(body, app_slug), Command::Answer(_))
         })
         // The latest by creation time; ties go to the later in the list.
         .max_by_key(|(i, (_, at, _))| (*at, *i))
-        .map(|(_, (_, _, body))| body.as_str())
+        .map(|(i, _)| i)
 }
 
-/// The rest of `body` after `/soqrates answer`, if it starts with that
-/// command (case-insensitive, after leading whitespace).
-fn strip_command(body: &str) -> Option<&str> {
-    let body = body.trim_start();
-    let head = body.get(..ANSWER_COMMAND.len())?;
-    if !head.eq_ignore_ascii_case(ANSWER_COMMAND) {
-        return None;
-    }
-    let rest = &body[ANSWER_COMMAND.len()..];
-    match rest.chars().next() {
-        None => Some(rest),
-        Some(c) if c.is_whitespace() => Some(rest),
-        Some(_) => None,
-    }
+// ---------------------------------------------------------------------------
+// Hints for mistyped commands (ADR-0004 D8)
+
+const HINT_MARKER_START: &str = "<!-- soqrates:hint=";
+
+/// The hidden marker of a hint, with the id of the comment it is about.
+pub fn hint_marker(comment_id: u64) -> String {
+    format!("{HINT_MARKER_START}{comment_id}{MARKER_END}")
 }
 
-/// `N. text`, `N: text` or `N) text` → `(N, text)`.
-fn numbered_line(line: &str) -> Option<(usize, &str)> {
-    let line = line.trim_start();
-    let digits = line.find(|c: char| !c.is_ascii_digit())?;
-    if digits == 0 {
-        return None;
-    }
-    let rest = &line[digits..];
-    let rest = rest
-        .strip_prefix('.')
-        .or_else(|| rest.strip_prefix(':'))
-        .or_else(|| rest.strip_prefix(')'))?;
-    let n = line[..digits].parse().ok()?;
-    Some((n, rest.trim()))
+/// The comment id in the hint marker a comment body starts with, if any.
+pub fn hinted_comment(body: &str) -> Option<u64> {
+    let rest = body.trim_start().strip_prefix(HINT_MARKER_START)?;
+    let (id, _) = rest.split_once(MARKER_END)?;
+    id.parse().ok()
 }
 
-/// A single option letter, optionally followed by `.` or `)`, within range.
-fn choice_index(text: &str, options: usize) -> Option<usize> {
-    let text = text.trim();
-    let text = text
-        .strip_suffix('.')
-        .or_else(|| text.strip_suffix(')'))
-        .unwrap_or(text);
-    let mut chars = text.chars();
-    let c = chars.next()?.to_ascii_lowercase();
-    if chars.next().is_some() || !c.is_ascii_lowercase() {
-        return None;
+/// The hint for the comment `comment_id` at `url`, which starts like an
+/// answer command but isn't one (ADR-0004 D8). It quotes nothing from that
+/// comment, so nothing in it needs escaping (ADR-0004 D4).
+pub fn render_hint(comment_id: u64, url: &str, app_slug: Option<&str>) -> String {
+    let mut out = hint_marker(comment_id);
+    out.push('\n');
+    let comment = if is_plain_url(url) {
+        format!("[Your comment]({url})")
+    } else {
+        "Your comment".to_string()
+    };
+    out.push_str(&format!(
+        "Did you mean `{ANSWER_COMMAND}`? {comment} starts like a Soqrates \
+         command but isn't one, so it was not read as an answer. Edit it to \
+         start with `{ANSWER_COMMAND}`, or post a new comment."
+    ));
+    if let Some(slug) = app_slug.map(str::trim).filter(|s| is_slug(s)) {
+        out.push_str(&format!(" `@{slug} answer` works too."));
     }
-    let index = (c as u8 - b'a') as usize;
-    (index < options).then_some(index)
+    out.push('\n');
+    out
 }
 
-/// Parse an answer comment against the session's questions. Returns `None`
-/// if `body` does not start with `/soqrates answer`.
-///
-/// Numbers are 1-based in question order; out-of-range numbers are ignored
-/// and for a duplicate number the last one wins. Lines without a number
-/// continue the previous answer. Answers come back in question order.
-pub fn parse_answers(body: &str, questions: &[Question]) -> Option<Vec<Answer>> {
-    let rest = strip_command(body)?;
-    let mut texts: Vec<Option<String>> = vec![None; questions.len()];
-    // The answer that unnumbered lines continue; `None` before the first
-    // number and after an out-of-range one.
-    let mut current: Option<usize> = None;
-    for line in rest.lines() {
-        if let Some((n, text)) = numbered_line(line) {
-            current = (1..=questions.len()).contains(&n).then(|| n - 1);
-            if let Some(i) = current {
-                texts[i] = Some(text.to_string());
-            }
-        } else if let Some(i) = current {
-            let t = texts[i].get_or_insert_with(String::new);
-            t.push('\n');
-            t.push_str(line.trim_end());
-        }
-    }
-    let answers = questions
+/// A GitHub App slug: lowercase letters, digits and dashes.
+pub fn is_slug(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+// ---------------------------------------------------------------------------
+// What the graded answers were read from (ADR-0004 D8)
+
+/// The answer comment a session was graded from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnswerComment {
+    pub url: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// What a session's answers were read from: the answer comment, if any, and
+/// the 1-based numbers of the questions whose ticked boxes were read.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct AnswerSource {
+    pub comment: Option<AnswerComment>,
+    pub boxes: Vec<usize>,
+}
+
+/// The 1-based numbers of the questions answered by their boxes: something
+/// is ticked, and the answer comment doesn't answer that question (ADR-0004
+/// D3). `boxes` must be `None` unless they count.
+pub fn boxes_read(
+    questions: &[Question],
+    boxes: Option<&Checkboxes>,
+    comment: Option<&[Answer]>,
+) -> Vec<usize> {
+    let Some(boxes) = boxes else {
+        return Vec::new();
+    };
+    questions
         .iter()
-        .zip(texts)
-        .filter_map(|(q, text)| {
-            let text = text?.trim().to_string();
-            let body = match &q.body {
-                QuestionBody::MultipleChoice { options, .. } => choice_index(&text, options.len())
-                    .map_or(AnswerBody::Text(text), AnswerBody::Choice),
-                QuestionBody::Open { .. } => AnswerBody::Text(text),
-            };
-            Some(Answer {
-                question: q.id.clone(),
-                body,
-            })
+        .enumerate()
+        .filter(|(i, q)| {
+            boxes.ticked.get(*i).is_some_and(|t| *t != Ticked::None)
+                && !comment.is_some_and(|c| c.iter().any(|a| a.question == q.id))
         })
-        .collect();
-    Some(answers)
+        .map(|(i, _)| i + 1)
+        .collect()
+}
+
+/// `1`, `1 and 3`, `1, 2 and 3`.
+fn number_list(numbers: &[usize]) -> String {
+    let words: Vec<String> = numbers.iter().map(usize::to_string).collect();
+    match words.split_last() {
+        None => String::new(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// One sentence saying what the results were graded from, e.g. "Graded
+/// from your answer comment (edited 11:18 UTC) and the boxes you ticked for
+/// question 1."
+fn describe_source(source: &AnswerSource) -> String {
+    let boxes = match source.boxes.len() {
+        0 => None,
+        1 => Some(format!(
+            "the boxes you ticked for question {}",
+            number_list(&source.boxes)
+        )),
+        _ => Some(format!(
+            "the boxes you ticked for questions {}",
+            number_list(&source.boxes)
+        )),
+    };
+    let comment = source.comment.as_ref().map(|c| {
+        let link = if is_plain_url(&c.url) {
+            format!("your [answer comment]({})", c.url)
+        } else {
+            "your answer comment".to_string()
+        };
+        let when = match c.updated_at.filter(|u| *u > c.created_at) {
+            Some(edited) => format!("edited {}", edited.format("%H:%M UTC")),
+            None => format!("posted {}", c.created_at.format("%H:%M UTC")),
+        };
+        format!("{link} ({when})")
+    });
+    match (comment, boxes) {
+        (Some(c), Some(b)) => format!("Graded from {c} and {b}."),
+        (Some(c), None) => format!("Graded from {c}. No ticked boxes were read."),
+        (None, Some(b)) => format!("Graded from {b}."),
+        (None, None) => "Graded from the question comment: no boxes were ticked.".into(),
+    }
 }
 
 /// Truncate to at most `max` characters, ending in `…` when cut.
@@ -1022,6 +1078,20 @@ mod tests {
         Utc.timestamp_opt(s, 0).unwrap()
     }
 
+    fn parse_answers(body: &str, questions: &[Question]) -> Option<Vec<Answer>> {
+        soqrates_core::answer_command::parse_answers(body, questions, None)
+    }
+
+    /// The body of the selected answer comment.
+    fn selected<'a>(
+        comments: &'a [(String, DateTime<Utc>, String)],
+        marker: &str,
+        author_id: &str,
+        app_slug: Option<&str>,
+    ) -> Option<&'a str> {
+        select_answer_comment(comments, marker, author_id, app_slug).map(|i| comments[i].2.as_str())
+    }
+
     fn c(who: &str, t: i64, body: &str) -> (String, DateTime<Utc>, String) {
         (who.into(), at(t), body.into())
     }
@@ -1040,7 +1110,7 @@ mod tests {
             c("github.com:99", 7, "/soqrates answer\n1. a"),
         ];
         assert_eq!(
-            select_answer_comment(&comments, &m, me),
+            selected(&comments, &m, me, None),
             Some("  /SOQRATES answer\n1. c")
         );
     }
@@ -1054,7 +1124,7 @@ mod tests {
             // Same numeric id on another host is another identity.
             c("ghe.example.com:42", 3, "/soqrates answer\n1. b"),
         ];
-        assert_eq!(select_answer_comment(&comments, &m, "github.com:42"), None);
+        assert_eq!(selected(&comments, &m, "github.com:42", None), None);
     }
 
     #[test]
@@ -1065,7 +1135,126 @@ mod tests {
             c("github.com:7", 1, &other),
             c("github.com:42", 2, "/soqrates answer\n1. b"),
         ];
-        assert_eq!(select_answer_comment(&comments, &m, "github.com:42"), None);
+        assert_eq!(selected(&comments, &m, "github.com:42", None), None);
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn forgiving_commands_and_the_app_mention_are_answers() {
+        let slug = Some("soqrates-review");
+        let expected = vec![answer("q1", AnswerBody::Choice(1))];
+        for body in [
+            "/socrates answer\n1. b",
+            "/SoCrAtEs ANSWER\n1. b",
+            "@soqrates-review answer\n1. b",
+        ] {
+            assert_eq!(
+                soqrates_core::answer_command::parse_answers(body, &questions(), slug),
+                Some(expected.clone()),
+                "{body:?}"
+            );
+        }
+        // Never a bare @soqrates, and a mention only with the app's slug.
+        for (body, slug) in [
+            ("@soqrates answer\n1. b", slug),
+            ("@soqrates-review answer\n1. b", None),
+        ] {
+            assert_eq!(
+                soqrates_core::answer_command::parse_answers(body, &questions(), slug),
+                None,
+                "{body:?}"
+            );
+        }
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn selects_forgiving_commands_and_skips_near_misses() {
+        let m = session_marker(&SessionKey("k".into()));
+        let me = "github.com:42";
+        let comments = vec![
+            c("github.com:7", 1, &m),
+            c(me, 2, "/socrates answer\n1. a"),
+            c(me, 3, "@soqrates-review answer\n1. b"),
+            c(me, 4, "/socrates answr\n1. c"), // a near miss
+        ];
+        assert_eq!(
+            selected(&comments, &m, me, Some("soqrates-review")),
+            Some("@soqrates-review answer\n1. b")
+        );
+        assert_eq!(
+            selected(&comments, &m, me, None),
+            Some("/socrates answer\n1. a")
+        );
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn a_hint_points_to_the_command_and_carries_its_marker() {
+        let hint = render_hint(
+            17,
+            "https://github.com/o/r/pull/1#issuecomment-17",
+            Some("soqrates-review"),
+        );
+        assert_eq!(hinted_comment(&hint), Some(17));
+        assert!(hint.contains("Did you mean `/soqrates answer`?"));
+        assert!(hint.contains("[Your comment](https://github.com/o/r/pull/1#issuecomment-17)"));
+        assert!(hint.contains("`@soqrates-review answer` works too."));
+        let plain = render_hint(18, "javascript:alert(1)", Some("Not A Slug"));
+        assert!(!plain.contains("javascript"));
+        assert!(!plain.contains("works too"));
+        assert_eq!(hinted_comment("<!-- soqrates:hint=x -->"), None);
+        assert_eq!(
+            hinted_comment(&session_marker(&SessionKey("k".into()))),
+            None
+        );
+        assert!(tags(&hint).is_empty());
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn results_say_which_comment_and_boxes_were_graded() {
+        let comment = AnswerComment {
+            url: "https://github.com/o/r/pull/1#issuecomment-9".into(),
+            created_at: Utc.with_ymd_and_hms(2026, 11, 8, 11, 2, 0).unwrap(),
+            updated_at: Some(Utc.with_ymd_and_hms(2026, 11, 8, 11, 18, 0).unwrap()),
+        };
+        let both = AnswerSource {
+            comment: Some(comment.clone()),
+            boxes: vec![1, 3],
+        };
+        let s = render_results(&session(), &results(), true, Some(&both));
+        assert!(s.contains(
+            "<sub>Graded from your [answer comment](https://github.com/o/r/pull/1#issuecomment-9) \
+             (edited 11:18 UTC) and the boxes you ticked for questions 1 and 3.</sub>"
+        ));
+        let posted = AnswerSource {
+            comment: Some(AnswerComment {
+                updated_at: Some(comment.created_at),
+                ..comment
+            }),
+            boxes: vec![],
+        };
+        let s = render_results(&session(), &results(), true, Some(&posted));
+        assert!(s.contains("(posted 11:02 UTC). No ticked boxes were read."));
+        let boxes = AnswerSource {
+            comment: None,
+            boxes: vec![2],
+        };
+        let s = render_results(&session(), &results(), true, Some(&boxes));
+        assert!(s.contains("Graded from the boxes you ticked for question 2."));
+        assert!(!render_results(&session(), &results(), true, None).contains("Graded from"));
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn boxes_read_are_those_the_comment_does_not_override() {
+        let qs = questions();
+        let boxes = checkboxes(true, &[Ticked::One(1), Ticked::None, Ticked::Many]);
+        assert_eq!(boxes_read(&qs, Some(&boxes), None), vec![1, 3]);
+        let comment = vec![answer("q1", AnswerBody::Choice(0))];
+        assert_eq!(boxes_read(&qs, Some(&boxes), Some(&comment)), vec![3]);
+        assert_eq!(boxes_read(&qs, None, Some(&comment)), Vec::<usize>::new());
     }
 
     #[test]
@@ -1324,7 +1513,7 @@ mod tests {
     // @adr-0004-d1 @adr-0004-d2
     #[test]
     fn results_show_each_question_and_never_the_profile() {
-        let s = render_results(&session(), &results(), false);
+        let s = render_results(&session(), &results(), false, None);
         assert!(s.starts_with("<!-- soqrates:results=o/r#1@abc -->\n> [!WARNING]\n"));
         assert!(s.contains("**Soqrates: 1 of 3 correct.**"));
         assert!(!s.contains(&session_marker(session().key())));
@@ -1348,7 +1537,7 @@ mod tests {
         ] {
             assert!(!s.contains(leak), "results leak {leak:?}:\n{s}");
         }
-        let s = render_results(&session(), &results()[..1], true);
+        let s = render_results(&session(), &results()[..1], true, None);
         assert!(s.contains("> [!TIP]\n> **Soqrates: 1 of 1 correct.**"));
     }
 
@@ -1566,10 +1755,10 @@ mod tests {
         let rendered = [
             render_questions(&session()),
             render_graded_questions(&session(), &results()),
-            render_results(&session(), &results(), true),
+            render_results(&session(), &results(), true, None),
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
-            render_results(&nasty, &nasty_results, false),
+            render_results(&nasty, &nasty_results, false, None),
             render_superseded_questions(session().key(), Some(&session()), Some(NEWER), true),
             render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true),
         ];
@@ -1595,7 +1784,7 @@ mod tests {
         for s in [
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
-            render_results(&nasty, &nasty_results, false),
+            render_results(&nasty, &nasty_results, false, None),
             render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true),
         ] {
             assert_eq!(s.matches("<!--").count(), 1, "one marker only:\n{s}");

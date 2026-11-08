@@ -71,6 +71,13 @@ inputs:
     description: Private key of the GitHub App in app-id. Pass it from a secret.
     required: false
     default: ""
+  app-slug:
+    description: >-
+      Slug of the GitHub App Soqrates posts as, so authors can answer with
+      `@<slug> answer`. Taken from the app token when app-id is set; set it
+      only to override that.
+    required: false
+    default: ""
   binary:
     description: >-
       Path to a soqrates binary to run instead of the released one, e.g. one
@@ -165,6 +172,7 @@ runs:
         MODE: ${{ inputs.mode }}
         STATE_DIR: ${{ steps.state.outputs.dir }}
         GITHUB_TOKEN: ${{ steps.app.outputs.token || inputs.github-token }}
+        SOQRATES_APP_SLUG: ${{ inputs.app-slug || steps.app.outputs.app-slug }}
         SOQRATES_MODEL: ${{ inputs.model }}
         SOQRATES_DATABASE_URL: ${{ inputs.database-url }}
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
@@ -174,8 +182,8 @@ runs:
       run: |
         set -euo pipefail
         # An empty variable would count as set; drop the ones not given.
-        for v in SOQRATES_MODEL SOQRATES_DATABASE_URL ANTHROPIC_API_KEY \
-                 OPENAI_API_KEY OLLAMA_API_BASE_URL OLLAMA_API_KEY; do
+        for v in SOQRATES_MODEL SOQRATES_DATABASE_URL SOQRATES_APP_SLUG \
+                 ANTHROPIC_API_KEY OPENAI_API_KEY OLLAMA_API_BASE_URL OLLAMA_API_KEY; do
           [ -n "${!v:-}" ] || unset "$v"
         done
         args=(ci --mode "$MODE")

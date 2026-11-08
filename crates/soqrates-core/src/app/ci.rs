@@ -9,6 +9,9 @@ use crate::assessment::Question;
 use crate::delivery::{CheckStatus, Mode, PrRef, PrRounds, PullRequest, Round, Session};
 use crate::ids::{ConceptId, SessionKey};
 
+/// The check summary while answers are being graded (ADR-0004 D9).
+pub const GRADING: &str = "Grading your answers…";
+
 /// The session key for a PR at a given head commit. A new push gives a new key.
 pub fn session_key(pr: &PullRequest) -> SessionKey {
     SessionKey(format!("{}{}", key_prefix(&pr.pr), pr.head_sha))
@@ -113,6 +116,7 @@ where
         let outcome = app.submit(key, &[]).await?;
         return finish(app, scm, pr, &outcome).await.map(Some);
     }
+    scm.hint_commands(pr, &session).await?;
     match scm.fetch_answers(pr, &session).await? {
         None => {
             let summary = format!(
@@ -123,6 +127,10 @@ where
             Ok(Some(CheckStatus::Pending))
         }
         Some(answers) => {
+            // Grading takes a while: show the author it has started
+            // (ADR-0004 D9).
+            scm.acknowledge_answers(pr, &session).await?;
+            scm.set_check(pr, CheckStatus::Pending, GRADING).await?;
             let outcome = app.submit(key, &answers).await?;
             scm.post_results(pr, &session, &outcome).await?;
             finish(app, scm, pr, &outcome).await.map(Some)
@@ -260,6 +268,9 @@ where
     let Some(answers) = scm.fetch_answers(pr, &session).await? else {
         return Ok(());
     };
+    // Acknowledged like any pickup (ADR-0004 D9), but the status is left
+    // to the new head's round.
+    scm.acknowledge_answers(pr, &session).await?;
     let outcome = app.submit(session.key(), &answers).await?;
     scm.post_results(pr, &session, &outcome).await
 }

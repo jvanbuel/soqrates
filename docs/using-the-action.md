@@ -3,7 +3,11 @@
 Soqrates runs as a GitHub Action (ADR-0006). On every pull request it asks the
 author a few questions about the concepts in their change, as a comment. The
 author answers by ticking boxes or with a `/soqrates answer` comment, and gets
-the results in a new comment. The `soqrates` commit status reports the
+the results in a new comment. `/socrates answer`, any letter case, and, when
+Soqrates posts as your own app, `@<app slug> answer` work too. A mistyped
+command gets a hint, and an answer comment can be edited until it is graded.
+While the answers are graded, the comment that submitted them shows 👀, then
+👍 once the results are posted. The `soqrates` commit status reports the
 outcome.
 
 ## 1. Add your model key
@@ -36,13 +40,21 @@ permissions:
 jobs:
   soqrates:
     # Run on pull requests by people (not Dependabot and other bots), on
-    # `/soqrates ...` comments, and when Soqrates' own question comment is
+    # `/soqrates ...` and `/socrates ...` comments (startsWith ignores case)
+    # and comments starting with a mention that say "answer", also when the
+    # PR author edits them, and when Soqrates' own question comment is
     # edited with "Grade my answers" ticked, so ticking an option doesn't
     # start a run.
     if: >-
       (github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot') ||
       (github.event.issue.pull_request && (
-        (github.event.action == 'created' && startsWith(github.event.comment.body, '/soqrates')) ||
+        ((github.event.action == 'created' ||
+            (github.event.action == 'edited' &&
+              github.event.comment.user.id == github.event.issue.user.id)) &&
+          (startsWith(github.event.comment.body, '/soqrates') ||
+            startsWith(github.event.comment.body, '/socrates') ||
+            (startsWith(github.event.comment.body, '@') &&
+              contains(github.event.comment.body, ' answer')))) ||
         (github.event.action == 'edited' &&
           endsWith(github.event.comment.user.login, '[bot]') &&
           contains(github.event.comment.body, 'soqrates:session=') &&
@@ -94,6 +106,7 @@ commit SHA if you prefer.
 | `state-branch` | `soqrates-state` | The branch holding learner state when no `database-url` is given. |
 | `github-token` | `${{ github.token }}` | Reads the pull request and compares its pushes, posts comments and the status, and pushes the state branch. |
 | `app-id`, `app-private-key` | | Post as your own GitHub App instead of github-actions[bot]; see [Posting as your own app](#posting-as-your-own-app). |
+| `app-slug` | the app's slug | Authors may answer with `@<app-slug> answer`. Taken from the app token when `app-id` is set; set it only to override that. |
 
 Without the key of the chosen provider, for example on pull requests from
 forks, which get no secrets, the action skips the check with a notice.
@@ -121,6 +134,11 @@ under your own name and logo, create a GitHub App as described in
           app-id: ${{ vars.SOQRATES_APP_ID }}
           app-private-key: ${{ secrets.SOQRATES_APP_PRIVATE_KEY }}
 ```
+
+Authors can then also answer with `@<your app's slug> answer`, which GitHub
+autocompletes. Soqrates never accepts a bare `@soqrates`: a person of that
+name would be notified of every answer, while an app is not notified when it
+is mentioned. With github-actions[bot], use `/soqrates answer`.
 
 ## Supported runners
 
