@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 30
+  },
+  "rounds": [
+    {
+      "head": "fb46ddae4b8cc849c566edf79aca7e5f595ba86e",
+      "session": "jvanbuel/soqrates#30@fb46ddae4b8cc849c566edf79aca7e5f595ba86e",
+      "concepts": [
+        "git.object-database.reading-revisions",
+        "rust.traits.async-ports-generic-dispatch",
+        "project.codebase.path-and-argument-sandboxing",
+        "rust.async.channel-bridge-static-tools",
+        "rig.agent.hooks-tool-limiting"
+      ],
+      "at": "2026-11-08T23:49:25.990884928Z"
+    }
+  ]
+}

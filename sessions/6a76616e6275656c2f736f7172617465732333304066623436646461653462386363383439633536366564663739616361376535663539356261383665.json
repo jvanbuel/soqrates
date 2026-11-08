@@ -1,0 +1,129 @@
+{
+  "key": "jvanbuel/soqrates#30@fb46ddae4b8cc849c566edf79aca7e5f595ba86e",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "git.object-database.reading-revisions/mc",
+      "concept": "git.object-database.reading-revisions",
+      "scope": "General",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This script is meant to run as a pre-commit check. It must search exactly the content that is about to be committed, and it must never read untracked or ignored files. The file list comes from the index. What is wrong with the flagged line?",
+          "code": {
+            "language": "bash",
+            "text": "# pre-commit check: search the content that is about to be committed\nPATTERN=\"$1\"\nfor f in $(git ls-files --cached); do\n  grep -n -E -e \"$PATTERN\" \"$f\"\ndone",
+            "origin": "General"
+          },
+          "options": [
+            "The `-E` flag makes `grep` read from standard input instead of the file, so nothing is matched.",
+            "The paths come from the index, but the file contents are read from the working tree, so unstaged edits, or a file deleted from disk, change what gets searched instead of what will be committed.",
+            "Plain `grep` has no pager or external diff handling, so it can hang waiting for a prompt on large files.",
+            "The loop is wrong because `git ls-files --cached` also lists untracked files such as `.env`, so secrets get searched and printed."
+          ],
+          "correct": 1,
+          "reasons": [
+            "`-E` only selects extended regular expressions. With a file argument given, `grep` still reads that file.",
+            "The index lists the paths, but `grep` on `$f` reads the file on disk. That can differ from the staged blob, so the check can pass or fail on content that is not in the commit. Reading the staged blob, for example with `git show \":$f\"` or `git grep --cached`, searches the real object content.",
+            "Pagers, external diff and prompts are concerns for git commands. A plain `grep` over a file has none of them, and they are not the reason this line is wrong.",
+            "`ls-files --cached` lists only paths in the index, so untracked and ignored files such as `.env` are not listed. The listing is not the problem."
+          ]
+        }
+      },
+      "explanation": "The index lists the paths, but `grep` on `$f` reads the file on disk. That can differ from the staged blob, so the check can pass or fail on content that is not in the commit. Reading the staged blob, for example with `git show \":$f\"` or `git grep --cached`, searches the real object content."
+    },
+    {
+      "id": "rust.traits.async-ports-generic-dispatch/open",
+      "concept": "rust.traits.async-ports-generic-dispatch",
+      "scope": "General",
+      "kind": "ExplainYourChange",
+      "body": {
+        "Open": {
+          "prompt": "In this function, `codebase_of` is generic over `K: CodeSource` and returns `K::Code`, not a fixed codebase type or a boxed `dyn Codebase`. Explain why the return type is an associated type. How does it let the CI code use a different codebase for each revision, and also run with no code at all? Say what would make a `dyn Codebase` return type difficult for the `Codebase` trait as written.",
+          "code": {
+            "language": "rust",
+            "text": "/// The codebase the session `key` of `pr` was asked about: the head commit\n/// in its key, even after a newer push (ADR-0008 D4). `fallback` for a key\n/// of another form.\nfn codebase_of<K: CodeSource>(code: &K, pr: &PrRef, key: &SessionKey, fallback: &str) -> K::Code {\n    let revision = key\n        .0\n        .strip_prefix(&key_prefix(pr))\n        .filter(|head| !head.is_empty())\n        .unwrap_or(fallback);\n    code.at(revision)\n}",
+            "origin": "Change"
+          },
+          "rubric": "A good answer covers: (1) `CodeSource::Code` is an associated type chosen by each implementation, so a git-checkout source and a no-code source each produce their own concrete codebase type, and `at(revision)` can build a fresh codebase for each commit or revision. (2) With `NoCodeSource`, `Code = NoCodebase`, so the same CI code compiles and runs with an unavailable codebase (`is_available` is false, reads return empty) and doesn't need an `Option`. (3) The result is statically dispatched, with no boxing. `Codebase` methods return `impl Future + Send` (async fn in trait), which makes the trait not dyn-compatible, so `dyn Codebase` can't be used without extra boxing. Callers take `&impl Codebase`, and the blanket `impl Codebase for &T` lets a reference be passed where a codebase is expected. Misconceptions: saying the associated type is only for performance, that it makes the codebase optional by returning `Option`, or that the trait could be used as `dyn Codebase` unchanged."
+        }
+      },
+      "explanation": "The associated type lets each source name its own codebase type, so the compiler resolves everything statically. A source with no checkout returns the do-nothing `NoCodebase`, while a git-backed source returns a real one. The `Codebase` trait's methods return `impl Future + Send`, so it can't be a trait object. Generics, plus the blanket impl for references, avoid boxing and let the returned value be passed on by reference."
+    },
+    {
+      "id": "project.codebase.path-and-argument-sandboxing/mc",
+      "concept": "project.codebase.path-and-argument-sandboxing",
+      "scope": "Project",
+      "kind": "ChooseTheFix",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A helper runs `git log` on a path the model supplied. The path has already passed a validator that rejects absolute paths, `..`, backslashes, control characters and `:`. A leading `-` is not rejected. The model could still pass a value like `--output=somefile` and have git treat it as an option. Which change to the flawed line fixes this?",
+          "code": {
+            "language": "rust",
+            "text": "fn history(path: &str) -> Command {\n    // `path` comes from the model and has already passed\n    // a check that rejects absolute paths, `..`, `\\`,\n    // control characters and `:`.\n    let mut cmd = Command::new(\"git\");\n    cmd.args([\"log\", \"--oneline\", path]);\n    cmd\n}",
+            "origin": "General"
+          },
+          "options": [
+            "cmd.args([\"log\", \"--oneline\", \"--\", path]);",
+            "cmd.args([\"log\", \"--oneline\", path.trim_start_matches('/')]);",
+            "cmd.args([\"log\", \"--oneline\", &format!(\"'{path}'\")]);",
+            "cmd.args([\"log\", \"--\", \"--oneline\", path]);"
+          ],
+          "options_language": "rust",
+          "correct": 0,
+          "reasons": [
+            "The `--` marks the end of options, so git reads `path` as a path even if it starts with `-`, such as `--output=file`. The path check does not reject a leading dash, so this separator closes that gap.",
+            "Stripping a leading slash does nothing about a leading dash, and absolute paths were already rejected by the check. A path like `--output=x` still reaches git as an option.",
+            "No shell is involved, so the quotes are not interpreted. They become part of the argument, which changes the path. A value starting with `-` is also still not safe, because the quote is now the first character and git treats the whole thing as a literal path name.",
+            "This puts the separator before `--oneline`, so git reads `--oneline` as a path. The model-supplied `path` is still not protected from being read as an option in any useful way, and the command no longer does what was intended."
+          ]
+        }
+      },
+      "explanation": "The `--` marks the end of options, so git reads `path` as a path even if it starts with `-`, such as `--output=file`. The path check does not reject a leading dash, so this separator closes that gap."
+    },
+    {
+      "id": "rust.async.channel-bridge-static-tools/open",
+      "concept": "rust.async.channel-bridge-static-tools",
+      "scope": "General",
+      "kind": "PredictOutcome",
+      "body": {
+        "Open": {
+          "prompt": "The tool future here is 'static because it owns only the channel ends, while `drive` borrows `data`. It sends a request with a oneshot reply sender and waits for the answer. This is the same bridging idea as in the author's change. Assume `drive` is called on a normal async executor. What happens when it runs, and why? What structural change would make the bridge work while keeping `data` borrowed?",
+          "code": {
+            "language": "rust",
+            "text": "use futures::{channel::{mpsc, oneshot}, StreamExt};\n\nasync fn drive(data: &Vec<String>) {\n    let (tx, mut rx) = mpsc::unbounded::<(usize, oneshot::Sender<String>)>();\n    let tool = async move {\n        let (reply, answer) = oneshot::channel();\n        tx.unbounded_send((0, reply)).unwrap();\n        answer.await.unwrap()\n    };\n    let out = tool.await;\n    while let Some((i, reply)) = rx.next().await {\n        reply.send(data[i].clone()).unwrap();\n    }\n    println!(\"{out}\");\n}",
+            "origin": "General"
+          },
+          "rubric": "Key points: (1) `drive` hangs and never prints, because it is a deadlock rather than a panic or compile error. (2) `tool.await` waits for the oneshot reply, but the only code that answers requests is the `while let` loop below it, which never runs until the tool finishes. (3) The `unbounded_send` itself succeeds, since the channel is unbounded and the message just queues. (4) The fix is to drive the tool or agent future and the request receiver concurrently, for example with `futures::select` or `join`. Each incoming request is answered from the borrowed data while the tool future is still pending, and the loop ends when the tool future completes. (5) Optionally, the borrowed data never has to be 'static because only the driver touches it. Misconceptions: saying it fails to compile due to the borrow of `data` (the borrow stays in `drive`); saying `unbounded_send` blocks or fails; saying the oneshot returns an error immediately."
+        }
+      },
+      "explanation": "The tool future owns only the channel ends, so it is 'static, but it can finish only when something answers its oneshot. Awaiting it to completion before the loop that serves requests means nobody answers, so it hangs. The fix is to poll the tool future and the request receiver together, for example with `select` or `join`, as the author's driving function does."
+    },
+    {
+      "id": "rig.agent.hooks-tool-limiting/mc",
+      "concept": "rig.agent.hooks-tool-limiting",
+      "scope": "Project",
+      "kind": "Scenario",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "An agent lets a model read a codebase with tools for several turns and must then return an answer that follows a JSON schema. In some setups the library delivers that schema-conforming answer through a special output tool. After the reading turns are used up, the budget is spent, or on a retry, the model must be stopped from reading and forced to answer. Which approach is correct for a hook that runs before each model call?",
+          "options": [
+            "Lower `max_turns` so the run stops by itself when the reading budget is spent, and take whatever the last response holds as the answer.",
+            "Remove the reading tools from the agent builder after the last reading turn, so later requests are built without them.",
+            "Patch the request to an empty `active_tools` list, so the reading tools are hidden while any output tool for the structured answer stays callable.",
+            "Set `tool_choice: none` on the request. It is the standard way to forbid tools, and the answer is plain text that does not need a tool."
+          ],
+          "correct": 2,
+          "reasons": [
+            "This is wrong because hitting the turn cap ends the run with an error, not an answer. The model has to be told to answer within the turns that remain, and the hook does this by taking the reading tools away.",
+            "This is wrong because the agent is built once and its tool registry is fixed for the run. The limit has to be applied per model call, and a hook patching the request does that.",
+            "An empty `active_tools` hides the reading tools for that call. Rig's output tool for the answer is not among the reading tools, so the model can still call it and give the structured answer.",
+            "This is wrong because the structured answer may be offered as an output tool. `tool_choice: none` would block that tool too, so the model could not produce a schema-conforming answer."
+          ]
+        }
+      },
+      "explanation": "An empty `active_tools` hides the reading tools for that call. Rig's output tool for the answer is not among the reading tools, so the model can still call it and give the structured answer."
+    }
+  ],
+  "created_at": "2026-11-08T23:49:25.990884928Z"
+}
