@@ -1,0 +1,18 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 20
+  },
+  "rounds": [
+    {
+      "head": "5d332fa10be909a1d9d2ba0f39f28e4b867819b1",
+      "session": "jvanbuel/soqrates#20@5d332fa10be909a1d9d2ba0f39f28e4b867819b1",
+      "concepts": [
+        "soqrates.ci.idempotent-retry-ordering",
+        "serde.defaults.backward-compat",
+        "rust.pattern-matching.guards-and-tuples"
+      ],
+      "at": "2026-11-08T14:40:18.283733313Z"
+    }
+  ]
+}
