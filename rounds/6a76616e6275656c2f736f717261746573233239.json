@@ -1,0 +1,19 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 29
+  },
+  "rounds": [
+    {
+      "head": "532f6cdc801240caaaf8985bba61ace5bb00de7c",
+      "session": "jvanbuel/soqrates#29@532f6cdc801240caaaf8985bba61ace5bb00de7c",
+      "concepts": [
+        "design.validation.brief-check",
+        "diff.unified.new-side-hunks",
+        "security.untrusted-input.inert-code",
+        "rust.serde.backward-compat-defaults"
+      ],
+      "at": "2026-11-08T18:52:48.016149901Z"
+    }
+  ]
+}
