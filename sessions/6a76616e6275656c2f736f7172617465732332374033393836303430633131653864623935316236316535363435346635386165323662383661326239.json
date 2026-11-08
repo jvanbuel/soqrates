@@ -1,0 +1,69 @@
+{
+  "key": "jvanbuel/soqrates#27@3986040c11e8db951b61e56454f58ae26b86a2b9",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "rust.traits.default-methods-async/mc",
+      "concept": "rust.traits.default-methods-async",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A trait has optional feature methods declared as `fn sync_remote(&self) -> impl Future<Output = Result<()>> + Send { async { Ok(()) } }`. Providers without the feature inherit this default, and others override it with `async fn sync_remote(&self) -> Result<()>`. Why declare the method this way rather than as a plain `async fn` in the trait?",
+          "options": [
+            "It forces every provider to override the method, because the default `async { Ok(()) }` body is only a placeholder that the compiler warns about.",
+            "It makes the trait dyn-compatible, so providers can be stored as `Box<dyn Trait>` without extra work.",
+            "It lets the trait promise that the returned future is Send, so generic code that calls the method can be spawned on a multi-threaded runtime. Implementors can still override it with a plain `async fn`, and the compiler checks that their future is Send.",
+            "Trait methods declared with `async fn` cannot have default bodies, so returning `impl Future` is the only way to supply a default.",
+            "It avoids the heap allocation that an `async fn` in a trait would need to box its future."
+          ],
+          "correct": 2,
+          "reasons": [
+            "A default body is a real implementation that providers may inherit. Providers without the feature need no override, and the compiler does not warn about using it. That is the purpose of the default.",
+            "Returning `impl Future` from a trait method does not make the trait dyn-compatible. Such methods still prevent use as a trait object unless the future is boxed, so this would not work as assumed.",
+            "A plain `async fn` in a trait leaves the future's Send-ness unspecified for generic callers. Writing `impl Future + Send` in the signature makes Send part of the contract, and `async fn` overrides remain compatible as long as the future they produce is Send.",
+            "This is a misconception. `async fn` in traits can have default bodies. The reason to use `impl Future + Send` is to add the Send bound, not to make a default possible.",
+            "Neither form boxes the future. Both return an unboxed opaque future type, so the choice has no effect on allocation. The difference is whether the Send bound can be expressed in the signature."
+          ]
+        }
+      },
+      "explanation": "A plain `async fn` in a trait leaves the future's Send-ness unspecified for generic callers. Writing `impl Future + Send` in the signature makes Send part of the contract, and `async fn` overrides remain compatible as long as the future they produce is Send."
+    },
+    {
+      "id": "soqrates.delivery.answer-feedback-lifecycle/open",
+      "concept": "soqrates.delivery.answer-feedback-lifecycle",
+      "scope": "Project",
+      "body": {
+        "Open": {
+          "prompt": "In a CI flow that grades a developer's answers to comprehension questions, the pipeline acknowledges the submitted answers and sets a pending check with a 'grading in progress' summary before calling the slow grading step. After grading, the acknowledgement is replaced with a graded result. Why is this ordering important, and what would go wrong for the author if the acknowledgement and pending status were only posted after grading finished?",
+          "rubric": "A good answer must cover these key points:\n1. The acknowledgement and pending status give immediate feedback that the answers were received and grading has started, before the slow grading step runs.\n2. Without that early signal, the author sees no response during the slow step. They may think their answers were lost or the CI is stuck, resubmit or re-trigger, or edit answers mid-grading. The check may also look stale or missing.\n3. Replacing the acknowledgement with the graded result afterwards means the final state is consistent, with no stale 'received' or 'pending' signals left alongside the outcome.\n4. Ordering matters because the feedback must happen before the slow call, not after it. Posting afterwards defeats the purpose.\n\nCommon misconceptions that make an answer wrong:\n- Saying the ordering speeds up grading or is a performance optimization.\n- Saying the acknowledgement is needed for grading correctness, or that grading cannot run without it.\n- Saying the acknowledgement is kept permanently alongside the graded result.\n- Giving only a generic 'good UX' answer with no link to the slow step."
+        }
+      },
+      "explanation": "A good answer says the acknowledgement and pending GRADING status give the author immediate feedback that their answers were received, so a slow grading step doesn't look like a hang or lost input. It also notes that the later graded result replaces the interim acknowledgement, so the author ends up with one final state rather than stale or duplicate signals."
+    },
+    {
+      "id": "soqrates.testing.fake-scm-port/mc",
+      "concept": "soqrates.testing.fake-scm-port",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "An acceptance test for a flow where an author answers a question via an SCM comment uses a fake SCM provider that records comments, hints, reactions and a timeline, tracks which comment submitted answers, and mirrors the real adapter's parsing and eyes-to-done reaction transitions. What is the main reason the fake mirrors the real adapter's parsing and reaction transitions instead of just storing raw data?",
+          "options": [
+            "Replace the need for any unit tests of the real adapter, because the fake proves the real adapter's HTTP calls are correct.",
+            "Let tests assert the observable order of events, such as the eyes reaction appearing before the done reaction after an answer is submitted, without contacting a real SCM host.",
+            "Make acceptance tests run faster by skipping the parsing and reaction logic that the real adapter performs, since that logic is already covered elsewhere.",
+            "Store comments and reactions so that tests can inspect final state only, since ordering of events is not observable through an SCM provider."
+          ],
+          "correct": 1,
+          "reasons": [
+            "The fake never exercises the real adapter's network code, so it proves nothing about actual HTTP calls. Adapter-level tests are still needed for that.",
+            "Because the fake records a timeline and applies the same parsing and eyes-to-done transitions as the real adapter, acceptance tests can check ordering of comments, hints and reactions deterministically and offline.",
+            "The fake is meant to mirror parsing and reaction transitions, not skip them. Skipping them would leave acceptance tests unable to detect regressions in how answers are read or how reactions change.",
+            "Ordering is observable on a real SCM, for example a reaction changing after a comment is processed, and the fake keeps a timeline precisely so tests can assert it. Limiting checks to final state would miss sequencing bugs."
+          ]
+        }
+      },
+      "explanation": "Because the fake records a timeline and applies the same parsing and eyes-to-done transitions as the real adapter, acceptance tests can check ordering of comments, hints and reactions deterministically and offline."
+    }
+  ],
+  "created_at": "2026-11-08T17:38:34.355467427Z"
+}

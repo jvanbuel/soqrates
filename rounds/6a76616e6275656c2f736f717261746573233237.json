@@ -13,6 +13,16 @@
         "project.grading.session-state-machine"
       ],
       "at": "2026-11-08T17:08:02.464910823Z"
+    },
+    {
+      "head": "3986040c11e8db951b61e56454f58ae26b86a2b9",
+      "session": "jvanbuel/soqrates#27@3986040c11e8db951b61e56454f58ae26b86a2b9",
+      "concepts": [
+        "rust.traits.default-methods-async",
+        "soqrates.delivery.answer-feedback-lifecycle",
+        "soqrates.testing.fake-scm-port"
+      ],
+      "at": "2026-11-08T17:38:34.355467427Z"
     }
   ]
 }
