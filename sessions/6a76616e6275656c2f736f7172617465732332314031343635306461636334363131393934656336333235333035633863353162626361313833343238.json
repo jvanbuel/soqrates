@@ -1,0 +1,69 @@
+{
+  "key": "jvanbuel/soqrates#21@14650dacc4611994ec6325305c8c51bbca183428",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "rust.cargo.optional-features/mc",
+      "concept": "rust.cargo.optional-features",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A crate in this codebase exposes an optional Cargo feature that pulls in an extra dependency and gates some code with #[cfg(feature = \"...\")]. Several workspace crates depend on this crate, and only one of them enables the feature. Which statement correctly describes what happens when the whole workspace is built, and what it implies for how the feature should be designed?",
+          "options": [
+            "Features are additive and unified, so if any crate in the build enables the optional feature on a shared dependency, it is compiled in for everyone, which means the feature must not change behavior in a way that breaks code that did not ask for it.",
+            "Features are resolved per crate, so each crate in the dependency graph compiles with only the features it requested, and the same dependency may be built several times with different feature sets.",
+            "Disabling a default feature on one dependency declaration guarantees the feature is off in the final build, because the crate that sets default-features = false takes priority.",
+            "Optional features are only a runtime switch, so the code behind them is always compiled and can be toggled with a configuration value without rebuilding."
+          ],
+          "correct": 0,
+          "reasons": [
+            "Cargo unifies the features requested by all dependents and builds the crate once with the union. A feature that changes existing behavior or removes API would therefore break unrelated crates that never enabled it, so features should only add functionality.",
+            "This is a misconception: Cargo's feature resolver unifies features across the graph for a given target, so a dependency is normally built once with the union of features requested. Treating features as per-consumer would lead you to expect isolation that does not exist.",
+            "This is wrong because default-features = false only affects that one declaration. If another crate in the graph depends on the same crate with defaults on or enables the feature, it is still compiled in after unification.",
+            "This confuses Cargo features with runtime configuration. Features set cfg flags at compile time, so code behind them is excluded from the build when the feature is off, and changing them requires a rebuild."
+          ]
+        }
+      },
+      "explanation": "Cargo unifies the features requested by all dependents and builds the crate once with the union. A feature that changes existing behavior or removes API would therefore break unrelated crates that never enabled it, so features should only add functionality."
+    },
+    {
+      "id": "rust.sqlx.any-driver/open",
+      "concept": "rust.sqlx.any-driver",
+      "scope": "Project",
+      "body": {
+        "Open": {
+          "prompt": "A Rust service uses sqlx's Any driver (AnyPool / AnyConnection) so the same code can run against either SQLite or PostgreSQL, chosen by the connection URL at runtime. Explain why you would choose Any over writing the code generically or using one concrete driver, what you must do or watch out for for it to work correctly, and what limitations or problems can appear when the two backends differ.",
+          "rubric": "A good answer covers these key points:\n1. Purpose: Any lets the backend be selected at runtime from the URL scheme, so one pool/connection type and one set of query code serve multiple databases (e.g. SQLite in tests or local use, Postgres in production) without compile-time generics or duplication.\n2. Setup requirement: the concrete drivers must be enabled via Cargo features, and the Any drivers must be registered/installed (e.g. sqlx::any::install_default_drivers()) before connecting; otherwise connecting fails at runtime, with a panic or error about no drivers installed.\n3. Limitations: Any exposes only a common subset of types (e.g. integers, floats, text, bytes, bool). Database-specific types such as Postgres UUID, JSONB, arrays, timestamps or SQLite quirks are not usable directly, so values may need casting or conversion to supported types. Compile-time checked query! macros are limited with Any.\n4. SQL differences: SQL dialect and placeholder syntax differ ($1 for Postgres vs ? for SQLite), as do migrations, upserts, RETURNING support and type affinity. The author must write portable SQL or branch on the backend, and must test against both.\n5. Trade-off: flexibility and a simpler call surface versus losing backend-specific features, type safety and some performance, and a risk of bugs that appear on only one backend.\n\nCommon misconceptions that make an answer wrong:\n- Claiming Any abstracts away all SQL dialect differences, so the same SQL always works on every backend.\n- Claiming no driver setup is needed beyond enabling features.\n- Claiming Any supports every database-specific type.\n- Saying Any chooses the backend at compile time."
+        }
+      },
+      "explanation": "A good answer says the Any driver lets one code path talk to different databases chosen at runtime, at the cost of a lowest-common-denominator type and SQL feature set. It also notes that drivers must be installed before connecting, and that placeholder syntax and type differences between backends still need care."
+    },
+    {
+      "id": "project.session.question-budget-cap/mc",
+      "concept": "project.session.question-budget-cap",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A session has a configured maximum number of questions. Questions carried over from a previous session are exempt from that maximum, so the cap is the configured maximum, raised to the number of carried questions if that is larger. If `open_session` computed this exemption from the total number of questions in the session (carried plus newly composed) instead of from an explicit carried count, what would go wrong?",
+          "options": [
+            "The session would reject any carried questions, because the total count would always exceed the configured maximum.",
+            "The cap would be too small whenever any questions are carried over, so carried questions would be dropped from the session.",
+            "Nothing observable would change, because the cap is always the configured maximum regardless of how many questions exist.",
+            "The cap would be computed as zero when no questions are carried, so the session could not accept any new questions.",
+            "The cap would be raised to cover every question in the session, so newly composed questions could push the session past the configured budget."
+          ],
+          "correct": 4,
+          "reasons": [
+            "Wrong: carried questions are exempt from the cap by design, and nothing in the cap logic rejects them. The problem concerns new questions exceeding the budget, not carried ones being rejected.",
+            "Wrong: the cap is raised to at least the carried count, so carried questions are never dropped. The bug is the opposite, where the cap becomes too large, not too small.",
+            "Wrong: the cap is deliberately raised to the carried count, so its value depends on the argument passed. Passing the total count makes it larger than the configured maximum whenever the session holds more questions than that.",
+            "Wrong: with no carried questions the cap is just the configured maximum, since it is only raised to the carried count when that is larger. A zero cap is not what happens.",
+            "Correct: using the total question count as the exemption makes the cap grow with the new questions as well as the carried ones. Passing an explicit carried count means only carried questions raise the cap above the configured maximum, so new questions still have to fit within the budget."
+          ]
+        }
+      },
+      "explanation": "Correct: using the total question count as the exemption makes the cap grow with the new questions as well as the carried ones. Passing an explicit carried count means only carried questions raise the cap above the configured maximum, so new questions still have to fit within the budget."
+    }
+  ],
+  "created_at": "2026-11-08T16:07:29.277388600Z"
+}

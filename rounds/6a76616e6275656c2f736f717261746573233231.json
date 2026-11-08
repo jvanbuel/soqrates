@@ -13,6 +13,16 @@
         "delivery.ci.carried_questions"
       ],
       "at": "2026-11-08T15:39:52.859188661Z"
+    },
+    {
+      "head": "14650dacc4611994ec6325305c8c51bbca183428",
+      "session": "jvanbuel/soqrates#21@14650dacc4611994ec6325305c8c51bbca183428",
+      "concepts": [
+        "rust.cargo.optional-features",
+        "rust.sqlx.any-driver",
+        "project.session.question-budget-cap"
+      ],
+      "at": "2026-11-08T16:07:29.277388600Z"
     }
   ]
 }
