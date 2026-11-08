@@ -42,22 +42,39 @@ repository, so a local `.env` never reaches the model.
 
 `NoCodebase` is the codebase of a surface that has none: it holds nothing.
 
-### D2: Every examiner step may read the codebase, in a bounded loop
+### D2: Every examiner step is a Rig agent that may read the codebase
 **Enforcement:** automated
 
-Concept extraction, question writing and grading of open answers each get
-two tools, `read_file` and `list_dir`, over the codebase. The examiner runs
-a loop: the model calls tools, the examiner answers them, and the model
-then gives its structured answer in a turn that may not call tools. A retry
-of an invalid answer replays what was read; it doesn't read again. The
-loop is bounded:
+Concept extraction, question writing and grading of open answers each run
+as an agent on Rig's agent runtime (`rig-agent`, confined to
+`soqrates-examiner` like `rig-core`, ADR-0001 D3), with two tools,
+`read_file` and `list_dir`, over the codebase. Rig runs the loop: it sends
+the requests, dispatches the tool calls and ends the run when the model
+answers. Rig also chooses how the structured answer is asked for: as a
+native schema where the provider composes one with tools, otherwise as an
+output tool of its own.
+
+Soqrates keeps the policy, so that it stays testable without Rig:
+
+- the tools answer through one function that checks the path, cuts long
+  files, puts the output in its block (D3) and counts the budget below;
+- a hook takes the reading tools away for a model call after the reading
+  turns and once the budget is spent, so the model then answers;
+- an answer that fails validation is asked for again by continuing the
+  agent's transcript with the tools away: a retry doesn't read again.
+
+The tools hold no codebase: an agent and its tools live as long as Rig
+needs, a codebase only for the step. They send each call to the step,
+which answers it from the codebase while it drives the agent. Reading is
+bounded:
 
 - at most 6 tool turns and 12 tool calls per step;
 - a file is cut at 20 000 bytes, and the reply says so;
 - at most 80 000 bytes of tool output per step.
 
 Past a bound, a call is refused with a message saying so, and the model
-answers from what it has read. Grading multiple choice still uses no model
+answers from what it has read. A run makes at most 7 model calls: the
+reading turns and one to answer in. Grading multiple choice still uses no model
 at all (ADR-0004 D1), and the check that a multiple-choice question
 discusses only its options reads nothing.
 
@@ -88,8 +105,8 @@ repository (ADR-0007 D6).
 ### D5: Without a codebase, nothing changes
 **Enforcement:** automated
 
-With `NoCodebase`, the examiner offers no tools and makes the same requests
-per step as before this ADR.
+With `NoCodebase`, the examiner runs no agent: it makes the same single
+request per step as before this ADR, with no tools.
 
 ## Consequences
 

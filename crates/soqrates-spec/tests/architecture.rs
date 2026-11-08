@@ -193,6 +193,8 @@ fn assert_confined(dep: &str, owner: &str, decision: &str) {
 #[test]
 fn rig_is_confined_to_soqrates_examiner() {
     assert_confined("rig-core", "soqrates-examiner", "ADR-0001 D3");
+    // The agent runtime the examiner reads the codebase with (ADR-0008 D2).
+    assert_confined("rig-agent", "soqrates-examiner", "ADR-0001 D3");
 }
 
 // @adr-0001-d4
@@ -322,6 +324,7 @@ fn spec_does_not_depend_on_networked_adapters() {
         "soqrates-scm-github",
         "soqrates-cli",
         "rig-core",
+        "rig-agent",
         "octocrab",
     ] {
         assert!(
