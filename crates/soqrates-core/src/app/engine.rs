@@ -10,7 +10,9 @@ use crate::app::ports::{Clock, Examiner, StateStore};
 use crate::assessment::{
     Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody, Weight,
 };
-use crate::delivery::{GradedSession, Mode, PrRef, PrRounds, QuestionResult, Session};
+use crate::delivery::{
+    GradedSession, GradingJournal, Mode, PrRef, PrRounds, QuestionResult, Session, StoreId,
+};
 use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, Level, LinkCode, LinkRejection, policy};
 use crate::{Error, Result};
@@ -80,9 +82,11 @@ struct Placement<'a, S> {
     learner: LearnerId,
     /// Holds the profile with general reviews (and links).
     primary: &'a S,
+    primary_id: StoreId,
     /// Holds the profile with project reviews: the organisation's store.
     /// `None` when general and project reviews share `primary`.
     project: Option<&'a S>,
+    project_id: Option<StoreId>,
     location: ProfileLocation,
 }
 
@@ -180,11 +184,16 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     async fn place(&self, author: &AuthorId) -> Result<Placement<'_, S>> {
         let identity = author.identity()?;
         let org_store = self.org_store_for(&identity)?;
+        let org_id = self
+            .organisation_of(&identity)
+            .map(|org| StoreId::Organisation(org.to_string()));
         match self.resolve_in(&identity, &self.store).await {
             Ok(learner) => Ok(Placement {
                 learner,
                 primary: &self.store,
+                primary_id: StoreId::LearnerStore,
                 project: org_store,
+                project_id: org_id,
                 location: ProfileLocation::LearnerStore,
             }),
             Err(Error::Port(_)) if org_store.is_some() => {
@@ -192,7 +201,9 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 Ok(Placement {
                     learner: self.resolve_in(&identity, local).await?,
                     primary: local,
+                    primary_id: org_id.expect("an organisation store has an organisation"),
                     project: None,
+                    project_id: None,
                     location: ProfileLocation::Local {
                         host: identity.host().unwrap_or_default().to_string(),
                     },
@@ -214,6 +225,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// The profile of `author`'s learner, or a fresh `Novice` profile if the
     /// learner is new (ADR-0001 D5, ADR-0003 D1).
     pub async fn profile(&self, author: &AuthorId) -> Result<LearnerProfile> {
+        self.recover().await?;
         let place = self.place(author).await?;
         Self::load_or_new(place.primary, &place.learner).await
     }
@@ -261,6 +273,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// Concepts whose review is due for `author` (ADR-0001 D6, ADR-0002 D8).
     pub async fn due_reviews(&self, author: &AuthorId) -> Result<Vec<ConceptId>> {
+        self.recover().await?;
         let place = self.place(author).await?;
         Ok(self
             .due_with_scope(&place)
@@ -302,6 +315,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         skip: &BTreeSet<ConceptId>,
         carried: &[Question],
     ) -> Result<Vec<Question>> {
+        self.recover().await?;
         let mut questions = carried.to_vec();
         if diff.is_empty() {
             return Ok(questions);
@@ -399,6 +413,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         questions: Vec<Question>,
         carried: usize,
     ) -> Result<Session> {
+        self.recover().await?;
         let cap = self.config.max_questions.max(carried);
         let session = Session::open(key, author.clone(), questions, cap, self.clock.now())?;
         self.session_store_for(author)?
@@ -423,27 +438,36 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         self.session_store_for(author)?.save_rounds(rounds).await
     }
 
-    /// The pending session `key` and the store it lives in.
+    /// The pending session `key` and the store it lives in. A session whose
+    /// grading journal is stored is being graded, not pending.
     async fn find_session(&self, key: &SessionKey) -> Result<Option<(Session, &S)>> {
         // An unreachable learner store must not hide sessions kept in the
         // organisation stores (ADR-0003 D4).
+        let mut found = None;
         match self.store.load_session(key).await {
-            Ok(Some(s)) => return Ok(Some((s, &self.store))),
+            Ok(Some(s)) => found = Some((s, &self.store)),
             Ok(None) => {}
             Err(Error::Port(_)) if !self.org_stores.is_empty() => {}
             Err(e) => return Err(e),
         }
-        for store in self.org_stores.values() {
-            if let Some(s) = store.load_session(key).await? {
-                return Ok(Some((s, store)));
+        if found.is_none() {
+            for store in self.org_stores.values() {
+                if let Some(s) = store.load_session(key).await? {
+                    found = Some((s, store));
+                    break;
+                }
             }
         }
-        Ok(None)
+        match found {
+            Some((_, store)) if store.load_grading(key).await?.is_some() => Ok(None),
+            found => Ok(found),
+        }
     }
 
     /// Remove the pending session `key` without grading it, e.g. when its
     /// questions could not be posted.
     pub async fn discard_session(&self, key: &SessionKey) -> Result<()> {
+        let _ = self.recover().await;
         if let Some((_, store)) = self.find_session(key).await? {
             store.delete_session(key).await?;
         }
@@ -452,6 +476,9 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// The record of the graded session `key`, if it was graded.
     pub async fn graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
+        // Best effort: a grading that can't be finished yet is reported as
+        // being graded (ADR-0002 D6).
+        let _ = self.recover().await;
         match self.store.load_graded(key).await {
             Ok(Some(g)) => return Ok(Some(g)),
             Ok(None) => {}
@@ -468,58 +495,57 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// The pending (not yet graded) session `key`, if any.
     pub async fn pending_session(&self, key: &SessionKey) -> Result<Option<Session>> {
+        let _ = self.recover().await;
         Ok(self.find_session(key).await?.map(|(s, _)| s))
+    }
+
+    /// Whether the session `key` is being graded: its answers were graded,
+    /// but not all of the results are recorded yet (ADR-0002 D6).
+    pub async fn being_graded(&self, key: &SessionKey) -> Result<bool> {
+        let _ = self.recover().await;
+        match self.store.load_grading(key).await {
+            Ok(Some(_)) => return Ok(true),
+            Ok(None) => {}
+            Err(Error::Port(_)) if !self.org_stores.is_empty() => {}
+            Err(e) => return Err(e),
+        }
+        for store in self.org_stores.values() {
+            if store.load_grading(key).await?.is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Grade `answers` for the session `key`, record each review on the
     /// author's profile, persist it and remove the session. Fails with
     /// `NotFound` for an unknown or already graded session and `Invalid`
     /// for answers that don't fit the session (ADR-0002 D6).
+    ///
+    /// Grading is written ahead: claiming the session and journaling the
+    /// complete end state are one atomic step, then the journal is applied.
+    /// If applying fails, the journal stays and a later operation finishes
+    /// it.
     pub async fn submit(&self, key: &SessionKey, answers: &[Answer]) -> Result<SessionOutcome> {
-        // Claim the session atomically: of several concurrent submissions,
-        // exactly one gets it (ADR-0002 D6).
-        let (session, session_store) = self
-            .take_session(key)
-            .await?
-            .ok_or_else(|| Error::NotFound(format!("session {:?}", key.0)))?;
-        let pending = session.clone();
-        let outcome = self
-            .grade_claimed(key, session, session_store, answers)
-            .await;
-        if outcome.is_err() {
-            // Nothing was recorded: give the session back so the author can
-            // answer again.
-            let _ = session_store.save_session(&pending).await;
+        self.recover().await?;
+        let not_found = || Error::NotFound(format!("session {:?}", key.0));
+        let (session, session_store) = self.find_session(key).await?.ok_or_else(not_found)?;
+        let (journal, outcome) = self.grade(session, answers).await?;
+        // Of several concurrent submissions, exactly one claims the session.
+        if !session_store.begin_grading(&journal).await? {
+            return Err(not_found());
         }
-        outcome
+        self.apply(session_store, &journal).await?;
+        Ok(outcome)
     }
 
-    /// Atomically remove the pending session `key` from whichever store
-    /// holds it.
-    async fn take_session(&self, key: &SessionKey) -> Result<Option<(Session, &S)>> {
-        match self.store.take_session(key).await {
-            Ok(Some(s)) => return Ok(Some((s, &self.store))),
-            Ok(None) => {}
-            Err(Error::Port(_)) if !self.org_stores.is_empty() => {}
-            Err(e) => return Err(e),
-        }
-        for store in self.org_stores.values() {
-            if let Some(s) = store.take_session(key).await? {
-                return Ok(Some((s, store)));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Grade a session this caller has claimed. On error nothing stays
-    /// recorded; the caller restores the session.
-    async fn grade_claimed(
+    /// Grade `answers` to `session`: the journal of everything grading
+    /// writes, and the outcome. Writes no reviews.
+    async fn grade(
         &self,
-        key: &SessionKey,
         session: Session,
-        session_store: &S,
         answers: &[Answer],
-    ) -> Result<SessionOutcome> {
+    ) -> Result<(GradingJournal, SessionOutcome)> {
         let now = self.clock.now();
         session.validate_answers(answers)?;
 
@@ -532,21 +558,19 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 feedback.push((q.id.clone(), grading.feedback));
             }
         }
+        let claimed = session.clone();
+        let key = session.key().clone();
         let author = session.author().clone();
         let questions = session.questions().to_vec();
         let result = session.conclude(grades, self.config.pass_threshold, now);
 
-        // Prepare every write before making any, so that a failure part-way
-        // can be rolled back.
         let place = self.place(&author).await?;
         let identity = author.identity()?;
-        let original_primary = Self::load_or_new(place.primary, &place.learner).await?;
-        let original_project = match place.project {
+        let mut primary = Self::load_or_new(place.primary, &place.learner).await?;
+        let mut project = match place.project {
             Some(store) => Some(Self::load_or_new(store, &place.learner).await?),
             None => None,
         };
-        let mut primary = original_primary.clone();
-        let mut project = original_project.clone();
         let mut events: Vec<DomainEvent> = Vec::new();
         for (q, (_, grade)) in questions.iter().zip(&result.grades) {
             let profile = match (&mut project, q.scope) {
@@ -564,42 +588,85 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let results = question_results(&questions, answers, &result.grades, &feedback, &events);
         let correct = result.grades.iter().filter(|(_, g)| g.is_correct()).count();
         let graded = GradedSession {
-            key: key.clone(),
-            author: author.clone(),
+            key,
+            author,
             correct,
             total: result.grades.len(),
             passed: result.passed,
             at: now,
         };
-
-        // Record that the session was graded, then save the reviews. If any
-        // write fails, undo them all (ADR-0002 D6).
-        let committed = async {
-            session_store.save_graded(&graded).await?;
-            place.primary.save_profile(&primary).await?;
-            if let (Some(store), Some(p)) = (place.project, &project) {
-                store.save_profile(p).await?;
-            }
-            Ok::<(), Error>(())
+        let level_after = primary.level();
+        let mut profiles = vec![(place.primary_id, primary)];
+        if let (Some(id), Some(p)) = (place.project_id, project) {
+            profiles.push((id, p));
         }
-        .await;
-        if let Err(e) = committed {
-            let _ = place.primary.save_profile(&original_primary).await;
-            if let (Some(store), Some(p)) = (place.project, &original_project) {
-                let _ = store.save_profile(p).await;
-            }
-            let _ = session_store.delete_graded(key).await;
-            return Err(e);
-        }
-
-        Ok(SessionOutcome {
+        let journal = GradingJournal {
+            session: claimed,
+            graded,
+            profiles,
+        };
+        let outcome = SessionOutcome {
             grades: result.grades,
             passed: result.passed,
-            level_after: primary.level(),
+            level_after,
             events,
             profile_location: place.location,
             results,
-        })
+        };
+        Ok((journal, outcome))
+    }
+
+    /// The store `id` names.
+    fn store_by_id(&self, id: &StoreId) -> Result<&S> {
+        match id {
+            StoreId::LearnerStore => Ok(&self.store),
+            StoreId::Organisation(org) => self
+                .org_stores
+                .get(org)
+                .ok_or_else(|| Error::Invalid(format!("no store for organisation {org:?}"))),
+        }
+    }
+
+    /// Make the writes of `journal`, kept in `store`, then remove it. Every
+    /// write is idempotent, so this can run any number of times, also
+    /// concurrently (ADR-0002 D6).
+    async fn apply(&self, store: &S, journal: &GradingJournal) -> Result<()> {
+        let key = journal.key();
+        // The graded record is written last: once it exists, the reviews
+        // are saved, and saving the journal's profiles again could undo
+        // later reviews.
+        if store.load_graded(key).await?.is_none() {
+            for (id, profile) in &journal.profiles {
+                self.store_by_id(id)?.save_profile(profile).await?;
+            }
+            store.delete_session(key).await?;
+            store.save_graded(&journal.graded).await?;
+        }
+        store.end_grading(key).await
+    }
+
+    /// Finish every grading left behind, e.g. by a crash or a failed write
+    /// (ADR-0002 D6). Runs at the start of every operation that touches a
+    /// learner or a session. Fails with the first error, after trying all.
+    async fn recover(&self) -> Result<()> {
+        let mut failed = None;
+        for (i, store) in self.all_stores().enumerate() {
+            let journals = match store.gradings().await {
+                Ok(journals) => journals,
+                // The learner store may be unreachable (ADR-0003 D4).
+                Err(Error::Port(_)) if i == 0 && !self.org_stores.is_empty() => continue,
+                Err(e) => {
+                    failed.get_or_insert(e);
+                    continue;
+                }
+            };
+            for journal in &journals {
+                if let Err(e) = self.apply(store, journal).await {
+                    failed.get_or_insert(e);
+                }
+            }
+        }
+        failed.map_or(Ok(()), Err)
     }
 
     // --- identities (ADR-0003) ----------------------------------------------
@@ -611,18 +678,21 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// Where `author`'s profile lives right now (ADR-0003 D4).
     pub async fn profile_location(&self, author: &AuthorId) -> Result<ProfileLocation> {
+        self.recover().await?;
         Ok(self.place(author).await?.location)
     }
 
     /// The learner behind `author`'s identity. The first time an identity is
     /// seen, a new learner is created and linked to it (D1).
     pub async fn learner_of(&self, author: &AuthorId) -> Result<LearnerId> {
+        self.recover().await?;
         Ok(self.place(author).await?.learner)
     }
 
     /// Issue the link code `code` for `author`'s learner (D2). The caller
     /// supplies an unguessable `code`, e.g. from the OS random source.
     pub async fn request_link_code(&self, author: &AuthorId, code: String) -> Result<LinkCode> {
+        self.recover().await?;
         let identity = author.identity()?;
         let learner = self.resolve_in(&identity, &self.store).await?;
         let code = LinkCode::issue(code, identity, learner, self.clock.now());
@@ -634,6 +704,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// that requested the code, merging the two learners (D2, D3). Fails
     /// with [`Error::Link`] when the code is rejected.
     pub async fn present_link_code(&self, author: &AuthorId, code: &str) -> Result<LearnerId> {
+        self.recover().await?;
         let presenter = author.identity()?;
         let mut link_code = self
             .store
@@ -658,6 +729,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         a: &AuthorId,
         b: &AuthorId,
     ) -> Result<LearnerId> {
+        self.recover().await?;
         let (a, b) = (a.identity()?, b.identity()?);
         for identity in [&a, &b] {
             if self.organisation_of(identity) != Some(organisation) {
@@ -707,6 +779,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// Unlink `author`'s identity from its learner, splitting the profile
     /// (D3). Returns the new learner of the unlinked identity.
     pub async fn unlink(&self, author: &AuthorId) -> Result<LearnerId> {
+        self.recover().await?;
         let identity = author.identity()?;
         let learner = self.resolve_in(&identity, &self.store).await?;
         if self.store.links_of(&learner).await?.len() <= 1 {
@@ -732,6 +805,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// All identities of `author`'s learner, sorted (D6).
     pub async fn identities(&self, author: &AuthorId) -> Result<Vec<Identity>> {
+        self.recover().await?;
         let learner = self.resolve_in(&author.identity()?, &self.store).await?;
         let mut ids: Vec<Identity> = self
             .store
@@ -747,6 +821,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// Delete `author`'s learner: every review and every link, in every
     /// store (D6).
     pub async fn delete_learner(&self, author: &AuthorId) -> Result<()> {
+        self.recover().await?;
         let learner = self.resolve_in(&author.identity()?, &self.store).await?;
         for store in self.all_stores() {
             store.delete_learner(&learner).await?;

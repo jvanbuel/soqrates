@@ -8,7 +8,7 @@ use soqrates_core::ports::StateStore;
 use soqrates_core::{ConceptId, PrRef, PullRequest, Session};
 
 use super::{answer_table, author, check_status, concepts, correctness, quoted};
-use crate::fakes::{AnyStore, FakeExaminer, diff_touching};
+use crate::fakes::{AnyStore, FakeExaminer, Faults, diff_touching};
 use crate::world::SpecWorld;
 
 fn pr_ref(repo: &str, number: u64) -> PrRef {
@@ -80,15 +80,76 @@ fn posting_fails_once(w: &mut SpecWorld) {
     w.scm.state.lock().unwrap().fail_next_post = true;
 }
 
-#[given("saving the learner profile fails once")]
-fn profile_save_fails_once(w: &mut SpecWorld) {
+/// Inject `faults` into the learner store.
+fn inject(w: &mut SpecWorld, faults: Faults) {
     let store = std::mem::replace(&mut w.app.store, AnyStore::memory());
-    w.app.store = match store {
-        AnyStore::Memory(m) => {
-            AnyStore::FailingProfileSave(m, std::sync::atomic::AtomicBool::new(true))
-        }
-        other => panic!("expected an in-memory store, got {other:?}"),
+    w.app.store = store.into_faulty(faults);
+}
+
+#[given(
+    regex = r"^(writing the grading journal|saving the learner profile|removing the pending session|recording the graded session|removing the grading journal) (fails once|keeps failing)$"
+)]
+fn write_fails(w: &mut SpecWorld, what: String, how: String) {
+    let method = match what.as_str() {
+        "writing the grading journal" => "begin_grading",
+        "saving the learner profile" => "save_profile",
+        "removing the pending session" => "delete_session",
+        "recording the graded session" => "save_graded",
+        _ => "end_grading",
     };
+    let failing = if how == "fails once" { 1 } else { usize::MAX };
+    inject(
+        w,
+        Faults {
+            only: Some(method.to_string()),
+            allowed: 0,
+            failing,
+        },
+    );
+}
+
+#[given(regex = r"^the process stops after (\d+) writes? to the store$")]
+fn stops_after(w: &mut SpecWorld, n: usize) {
+    inject(
+        w,
+        Faults {
+            only: None,
+            allowed: n,
+            failing: usize::MAX,
+        },
+    );
+}
+
+#[when("the store works again")]
+fn store_works_again(w: &mut SpecWorld) {
+    let store = std::mem::replace(&mut w.app.store, AnyStore::memory());
+    w.app.store = store.into_healthy();
+}
+
+#[then(regex = r"^the session for the current head is (pending|being graded|graded)$")]
+async fn session_state(w: &mut SpecWorld, want: String) {
+    let pr = w.scm.pull_request_now(w.current_pr());
+    let key = session_key(&pr);
+    let store = w.app.store.inner();
+    let pending = store.load_session(&key).await.expect("load_session");
+    let journal = store.load_grading(&key).await.expect("load_grading");
+    let graded = store.load_graded(&key).await.expect("load_graded");
+    let state = match (&pending, &journal, &graded) {
+        (Some(_), None, None) => "pending",
+        (_, Some(_), None) => "being graded",
+        (None, _, Some(_)) => "graded",
+        _ => panic!("inconsistent state: {pending:?} / {journal:?} / {graded:?}"),
+    };
+    assert_eq!(state, want);
+}
+
+#[then(regex = r#"^the check says "([^"]+)"$"#)]
+fn check_says(w: &mut SpecWorld, text: String) {
+    let summary = w
+        .scm
+        .last_summary_on(w.current_pr())
+        .expect("no check output");
+    assert!(summary.contains(&text), "check output: {summary:?}");
 }
 
 #[when("the Soqrates check runs and fails")]

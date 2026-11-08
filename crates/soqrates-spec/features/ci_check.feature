@@ -146,11 +146,92 @@ Feature: The CI check is an asynchronous round trip
     And the author replies with correct answers
     And saving the learner profile fails once
     When the Soqrates check runs and fails
-    Then a pending session is stored for the current head
+    Then the session for the current head is being graded
     When the Soqrates check runs
     Then the check is Success
     And the questions were posted 1 time
     And the history of "github:1001" has 2 graded answers
+
+  @adr-0002-d6
+  Scenario: When the grading journal cannot be written, the session stays pending
+    Given the Soqrates check has run
+    And the author replies with correct answers
+    And writing the grading journal fails once
+    When the Soqrates check runs and fails
+    Then the session for the current head is pending
+    And the history of "github:1001" has 0 graded answers
+    When the Soqrates check runs
+    Then the check is Success
+    And the session for the current head is graded
+    And the history of "github:1001" has 2 graded answers
+
+  @adr-0002-d6
+  Scenario Outline: A grading whose writes fail, also when finishing it, is finished once they work
+    Given the Soqrates check has run
+    And the author replies with correct answers
+    And <write> keeps failing
+    When the Soqrates check runs and fails
+    Then the session for the current head is being graded
+    When the Soqrates check runs
+    Then the check is Pending
+    And the check says "being graded"
+    And the session for the current head is being graded
+    And the questions were posted 1 time
+    When the store works again
+    And the Soqrates check runs
+    Then the check is Success
+    And the session for the current head is graded
+    And the questions were posted 1 time
+    And the history of "github:1001" has 2 graded answers
+
+    Examples:
+      | write                        |
+      | saving the learner profile   |
+      | removing the pending session |
+      | recording the graded session |
+
+  @adr-0002-d6
+  Scenario: A grading whose journal cannot be removed is reported as graded
+    Given the Soqrates check has run
+    And the author replies with correct answers
+    And removing the grading journal keeps failing
+    When the Soqrates check runs and fails
+    Then the session for the current head is graded
+    When the Soqrates check runs
+    Then the check is Success
+    When the store works again
+    And the Soqrates check runs
+    Then the check is Success
+    And the questions were posted 1 time
+    And the history of "github:1001" has 2 graded answers
+
+  @adr-0002-d6
+  Scenario Outline: A run that stops after <writes> writes loses no session and grades it once
+    Given Soqrates keeps state in <store> in a fresh directory
+    And the Soqrates check has run
+    And the author replies with correct answers
+    And the process stops after <writes> writes to the store
+    When the Soqrates check runs and fails
+    Then the session for the current head is <state>
+    When Soqrates restarts with the same state directory
+    And the Soqrates check runs
+    Then the check is Success
+    And the session for the current head is graded
+    And the questions were posted 1 time
+    And the history of "github:1001" has 2 graded answers
+
+    Examples:
+      | store             | writes | state        |
+      | a file store      | 0      | pending      |
+      | a file store      | 1      | being graded |
+      | a file store      | 2      | being graded |
+      | a file store      | 3      | being graded |
+      | a file store      | 4      | graded       |
+      | a SQLite database | 0      | pending      |
+      | a SQLite database | 1      | being graded |
+      | a SQLite database | 2      | being graded |
+      | a SQLite database | 3      | being graded |
+      | a SQLite database | 4      | graded       |
 
   @adr-0002-d6
   Scenario: Two simultaneous submissions grade the session once
