@@ -2,6 +2,8 @@
 //! result as a check or a hook decision (ADR-0002). Uses the shared kernel,
 //! `assessment` and `learner`.
 
+pub mod answer_command;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

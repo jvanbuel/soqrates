@@ -4,9 +4,13 @@
 //! Questions are posted as one PR comment carrying a hidden session marker.
 //! The author answers multiple choice by ticking boxes in it and submits by
 //! ticking "Grade my answers", or answers with a `/soqrates answer` comment
-//! (ADR-0001 D8, ADR-0004 D3). Boxes count only when GraphQL reports the PR
-//! author as the comment's last editor. Results are posted as a new comment
-//! and the question comment is frozen (ADR-0004 D5). A newer push freezes
+//! (ADR-0001 D8, ADR-0004 D3). The command is read forgivingly (`/socrates`,
+//! any case, or `@<app slug> answer`), and a mistyped one gets a hint
+//! (ADR-0004 D8). Boxes count only when GraphQL reports the PR
+//! author as the comment's last editor. The comment that submitted the
+//! answers gets a 👀 reaction while they are graded, then a 👍 (ADR-0004
+//! D9). Results are posted as a new comment, saying which answer comment
+//! and boxes were read, and the question comment is frozen (ADR-0004 D5). A newer push freezes
 //! the earlier question comments that were never graded (D7). The
 //! check is reported as a commit status with context `soqrates`, which works
 //! with the Actions `GITHUB_TOKEN` given `statuses: write`. Authors are
@@ -19,6 +23,7 @@ use std::sync::{Mutex, OnceLock};
 
 use octocrab::Octocrab;
 use octocrab::models::issues::Comment;
+use soqrates_core::answer_command::{hints_due, parse_answers};
 use soqrates_core::ports::ScmProvider;
 use soqrates_core::{
     Answer, AuthorId, CheckStatus, Diff, Error, PrRef, PullRequest, Result, Session, SessionKey,
@@ -26,10 +31,11 @@ use soqrates_core::{
 };
 
 use crate::format::{
-    EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, commit_status, diff_of_files,
-    editor_database_id, graphql_base, host_of, marker_key, merge_answers, parse_answers,
-    parse_checkboxes, render_graded_questions, render_questions, render_results,
-    render_superseded_questions, select_answer_comment, session_marker, split_repo, takes_answers,
+    AnswerComment, AnswerSource, EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, boxes_read,
+    commit_status, diff_of_files, editor_database_id, graphql_base, hinted_comment, host_of,
+    is_slug, marker_key, merge_answers, parse_checkboxes, render_graded_questions, render_hint,
+    render_questions, render_results, render_superseded_questions, select_answer_comment,
+    session_marker, split_repo, takes_answers,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -47,6 +53,23 @@ pub struct GitHubProvider {
     graphql_client: OnceLock<Octocrab>,
     /// Head commits seen by `pull_request`, for `set_check`.
     head_shas: Mutex<HashMap<PrRef, String>>,
+    /// The slug of the app Soqrates posts as, if any: `@<slug> answer` is
+    /// then an answer command too (ADR-0004 D8, ADR-0006 D4).
+    app_slug: Option<String>,
+    /// How the answers found by `fetch_answers` were submitted, for
+    /// `acknowledge_answers` and `post_results`.
+    submissions: Mutex<HashMap<SessionKey, Submission>>,
+}
+
+/// How a session's answers were submitted (ADR-0004 D8, D9).
+#[derive(Debug, Clone)]
+struct Submission {
+    /// The comment that submitted them: the answer comment, or the question
+    /// comment when "Grade my answers" was ticked.
+    comment_id: u64,
+    source: AnswerSource,
+    /// The 👀 reaction added by `acknowledge_answers`.
+    eyes: Option<u64>,
 }
 
 impl std::fmt::Debug for GitHubProvider {
@@ -54,6 +77,7 @@ impl std::fmt::Debug for GitHubProvider {
         f.debug_struct("GitHubProvider")
             .field("api_url", &self.api_url)
             .field("host", &self.host)
+            .field("app_slug", &self.app_slug)
             .finish_non_exhaustive()
     }
 }
@@ -83,19 +107,82 @@ impl GitHubProvider {
             client: OnceLock::new(),
             graphql_client: OnceLock::new(),
             head_shas: Mutex::new(HashMap::new()),
+            app_slug: None,
+            submissions: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Also accept `@<slug> answer` as the answer command, for the app
+    /// Soqrates posts as (ADR-0004 D8). Anything that is not an app slug is
+    /// ignored, so a bare `@soqrates` is never accepted by accident.
+    pub fn with_app_slug(mut self, slug: Option<String>) -> Self {
+        self.app_slug = slug.map(|s| s.trim().to_string()).filter(|s| is_slug(s));
+        self
     }
 
     /// Reads `GITHUB_TOKEN` (required), `GITHUB_SERVER_URL` (default
     /// `https://github.com`) and `GITHUB_API_URL` (default
-    /// `https://api.github.com`), as set in GitHub Actions.
+    /// `https://api.github.com`), as set in GitHub Actions, and
+    /// `SOQRATES_APP_SLUG` (optional), set by the action when it posts as an
+    /// app.
     pub fn from_env() -> Result<Self> {
         let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
         let token = var("GITHUB_TOKEN")
             .ok_or_else(|| Error::Port("GitHub: GITHUB_TOKEN is not set".into()))?;
         let server = var("GITHUB_SERVER_URL").unwrap_or_else(|| DEFAULT_SERVER_URL.into());
         let api = var("GITHUB_API_URL").unwrap_or_else(|| DEFAULT_API_URL.into());
-        Self::new(token, &server, &api)
+        Ok(Self::new(token, &server, &api)?.with_app_slug(var("SOQRATES_APP_SLUG")))
+    }
+
+    fn app_slug(&self) -> Option<&str> {
+        self.app_slug.as_deref()
+    }
+
+    fn submission(&self, key: &SessionKey) -> Option<Submission> {
+        self.submissions.lock().ok()?.get(key).cloned()
+    }
+
+    fn set_submission(&self, key: &SessionKey, submission: Option<Submission>) {
+        if let Ok(mut map) = self.submissions.lock() {
+            match submission {
+                Some(s) => map.insert(key.clone(), s),
+                None => map.remove(key),
+            };
+        }
+    }
+
+    /// Add the reaction `content` to the comment `comment_id`, returning
+    /// the reaction's id.
+    async fn react(&self, pr: &PrRef, comment_id: u64, content: &str) -> Result<u64> {
+        let (owner, name) = repo(pr)?;
+        let route = format!("/repos/{owner}/{name}/issues/comments/{comment_id}/reactions");
+        let reaction: serde_json::Value = self
+            .client()?
+            .post(route, Some(&serde_json::json!({ "content": content })))
+            .await
+            .map_err(port("add reaction"))?;
+        reaction
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| Error::Port("GitHub: add reaction: no id in response".into()))
+    }
+
+    async fn unreact(&self, pr: &PrRef, comment_id: u64, reaction_id: u64) -> Result<()> {
+        let (owner, name) = repo(pr)?;
+        let route =
+            format!("/repos/{owner}/{name}/issues/comments/{comment_id}/reactions/{reaction_id}");
+        let response = self
+            .client()?
+            ._delete(route.as_str(), None::<&()>)
+            .await
+            .map_err(port("remove reaction"))?;
+        if !response.status().is_success() {
+            return Err(Error::Port(format!(
+                "GitHub: remove reaction: {}",
+                response.status()
+            )));
+        }
+        Ok(())
     }
 
     fn client(&self) -> Result<Octocrab> {
@@ -179,6 +266,51 @@ impl GitHubProvider {
             .patch(route, Some(&serde_json::json!({ "body": body })))
             .await
             .map_err(port(what))?;
+        Ok(())
+    }
+}
+
+impl GitHubProvider {
+    /// Post a hint for each of the author's comments on `session` that
+    /// starts like an answer command but isn't one and has no hint yet
+    /// (ADR-0004 D8).
+    async fn post_hints(&self, pr: &PrRef, session: &Session) -> Result<()> {
+        let comments = self.comments(pr).await?;
+        let Some(start) = comments.iter().position(|c| {
+            c.body
+                .as_deref()
+                .is_some_and(|b| b.contains(&session_marker(session.key())))
+        }) else {
+            return Ok(());
+        };
+        // Hints are posted by the account that posts the questions, so only
+        // its comments say what was hinted already.
+        let poster = comments[start].user.id;
+        let hinted: Vec<u64> = comments
+            .iter()
+            .filter(|c| c.user.id == poster)
+            .filter_map(|c| hinted_comment(c.body.as_deref().unwrap_or_default()))
+            .collect();
+        let author = &session.author().0;
+        let candidates: Vec<(u64, &str)> = comments[start + 1..]
+            .iter()
+            .filter(|c| self.author(c.user.id.into_inner()) == *author)
+            .map(|c| (c.id.into_inner(), c.body.as_deref().unwrap_or_default()))
+            .collect();
+        let (owner, name) = repo(pr)?;
+        for id in hints_due(&candidates, &hinted, self.app_slug()) {
+            let Some(c) = comments.iter().find(|c| c.id.into_inner() == id) else {
+                continue;
+            };
+            self.client()?
+                .issues(owner, name)
+                .create_comment(
+                    pr.number,
+                    render_hint(id, c.html_url.as_str(), self.app_slug()),
+                )
+                .await
+                .map_err(port("post command hint"))?;
+        }
         Ok(())
     }
 }
@@ -289,8 +421,15 @@ impl ScmProvider for GitHubProvider {
                 )
             })
             .collect();
-        let from_comment = select_answer_comment(&listed, &marker, author)
-            .and_then(|body| parse_answers(body, session.questions()));
+        let answer_comment =
+            select_answer_comment(&listed, &marker, author, self.app_slug()).map(|i| &comments[i]);
+        let from_comment = answer_comment.and_then(|c| {
+            parse_answers(
+                c.body.as_deref().unwrap_or_default(),
+                session.questions(),
+                self.app_slug(),
+            )
+        });
 
         // Boxes count only if the PR author made the last edit (ADR-0004
         // D3). Ask GraphQL only when the boxes could matter: something is
@@ -305,11 +444,45 @@ impl ScmProvider for GitHubProvider {
         } else {
             None
         };
-        Ok(merge_answers(
-            session.questions(),
-            boxes.as_ref(),
-            from_comment,
-        ))
+        let source = AnswerSource {
+            comment: answer_comment.map(|c| AnswerComment {
+                url: c.html_url.to_string(),
+                created_at: c.created_at,
+                updated_at: c.updated_at,
+            }),
+            boxes: boxes_read(session.questions(), boxes.as_ref(), from_comment.as_deref()),
+        };
+        let answers = merge_answers(session.questions(), boxes.as_ref(), from_comment);
+        // The comment that submitted: the answer comment, else the question
+        // comment, whose "Grade my answers" box was ticked.
+        let submission = answers.as_ref().map(|_| Submission {
+            comment_id: answer_comment.unwrap_or(question).id.into_inner(),
+            source,
+            eyes: None,
+        });
+        self.set_submission(session.key(), submission);
+        Ok(answers)
+    }
+
+    async fn hint_commands(&self, pr: &PrRef, session: &Session) -> Result<()> {
+        // Best effort: a hint that can't be posted must not stop grading.
+        if let Err(e) = self.post_hints(pr, session).await {
+            eprintln!("warning: could not post a command hint: {e}");
+        }
+        Ok(())
+    }
+
+    async fn acknowledge_answers(&self, pr: &PrRef, session: &Session) -> Result<()> {
+        let Some(mut submission) = self.submission(session.key()) else {
+            return Ok(());
+        };
+        // Best effort, like every reaction: it only shows progress.
+        match self.react(pr, submission.comment_id, "eyes").await {
+            Ok(id) => submission.eyes = Some(id),
+            Err(e) => eprintln!("warning: could not react to the answers: {e}"),
+        }
+        self.set_submission(session.key(), Some(submission));
+        Ok(())
     }
 
     async fn post_results(
@@ -320,12 +493,18 @@ impl ScmProvider for GitHubProvider {
     ) -> Result<()> {
         let (owner, name) = repo(pr)?;
         let client = self.client()?;
+        let submission = self.submission(session.key());
         // Results first: a new comment notifies the author (ADR-0004 D5).
         client
             .issues(owner, name)
             .create_comment(
                 pr.number,
-                render_results(session, &outcome.results, outcome.passed),
+                render_results(
+                    session,
+                    &outcome.results,
+                    outcome.passed,
+                    submission.as_ref().map(|s| &s.source),
+                ),
             )
             .await
             .map_err(port("post results comment"))?;
@@ -339,6 +518,19 @@ impl ScmProvider for GitHubProvider {
                 "mark question comment graded",
             )
             .await?;
+        }
+        // Then 👀 becomes 👍: the answers were graded (ADR-0004 D9). GitHub
+        // has no ✅ reaction.
+        if let Some(s) = submission {
+            if let Some(eyes) = s.eyes
+                && let Err(e) = self.unreact(pr, s.comment_id, eyes).await
+            {
+                eprintln!("warning: could not remove the 👀 reaction: {e}");
+            }
+            if let Err(e) = self.react(pr, s.comment_id, "+1").await {
+                eprintln!("warning: could not react to the graded answers: {e}");
+            }
+            self.set_submission(session.key(), None);
         }
         Ok(())
     }
@@ -451,6 +643,22 @@ mod tests {
             GitHubProvider::new("t".into(), "https://github.com", "api"),
             Err(Error::Port(_))
         ));
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn only_an_app_slug_is_accepted_for_mentions() {
+        let p = || {
+            GitHubProvider::new("t".into(), "https://github.com", "https://api.github.com").unwrap()
+        };
+        assert_eq!(
+            p().with_app_slug(Some(" soqrates-review ".into()))
+                .app_slug(),
+            Some("soqrates-review")
+        );
+        assert_eq!(p().with_app_slug(Some("".into())).app_slug(), None);
+        assert_eq!(p().with_app_slug(Some("@x y".into())).app_slug(), None);
+        assert_eq!(p().with_app_slug(None).app_slug(), None);
     }
 
     #[test]

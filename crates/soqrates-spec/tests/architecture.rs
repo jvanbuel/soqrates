@@ -514,6 +514,13 @@ fn comments_post_as_the_workflow_token_or_the_users_own_app() {
                 .contains("GITHUB_TOKEN: ${{ steps.app.outputs.token || inputs.github-token }}"),
         "ADR-0006 D4: with an app, Soqrates posts with the app's token"
     );
+    assert!(
+        inputs.contains("app-slug")
+            && action.contains(
+                "SOQRATES_APP_SLUG: ${{ inputs.app-slug || steps.app.outputs.app-slug }}"
+            ),
+        "ADR-0006 D4: the action passes the app's slug, so `@<slug> answer` works (ADR-0004 D8)"
+    );
 }
 
 // @adr-0006-d5
@@ -563,6 +570,54 @@ fn releases_are_semver_tags_and_this_repository_runs_the_action_from_source() {
         workflow.contains("uses: ./") && workflow.contains("binary: target/release/soqrates"),
         "ADR-0006 D5: the dogfooding workflow runs the action from its checkout, with a binary built from source"
     );
+    // Comment-triggered runs find main's binary cached (issue #17): pushes
+    // to main build it under the same key as the check restores.
+    assert!(
+        workflow.contains("  push:\n    branches: [main]")
+            && workflow.contains("if: github.event_name == 'push'"),
+        "ADR-0006 D5: the dogfooding workflow warms the binary cache on pushes to main"
+    );
+    let key = Regex::new(r"(?m)^\s*key: (soqrates-bin-.*)$").unwrap();
+    let keys: BTreeSet<&str> = key
+        .captures_iter(&workflow)
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
+    assert_eq!(
+        (key.captures_iter(&workflow).count(), keys.len()),
+        (2, 1),
+        "ADR-0006 D5: the warm job and the check use the same binary cache key"
+    );
+}
+
+// @adr-0004-d8
+#[test]
+fn workflow_filters_accept_every_answer_command() {
+    for file in [".github/workflows/soqrates.yml", "docs/using-the-action.md"] {
+        let text = read(workspace_root().join(file));
+        for prefix in soqrates_core::answer_command::COMMAND_PREFIXES {
+            assert!(
+                text.contains(&format!(
+                    "startsWith(github.event.comment.body, '{prefix}')"
+                )),
+                "ADR-0004 D8: {file} runs on comments starting with {prefix}"
+            );
+        }
+        for (needle, why) in [
+            (
+                "startsWith(github.event.comment.body, '@')",
+                "runs on `@<app slug> answer`",
+            ),
+            (
+                "github.event.comment.user.id == github.event.issue.user.id",
+                "runs when the PR author edits a command comment",
+            ),
+        ] {
+            assert!(
+                text.contains(needle),
+                "ADR-0004 D8: {file} {why} (`{needle}`)"
+            );
+        }
+    }
 }
 
 // ===========================================================================
