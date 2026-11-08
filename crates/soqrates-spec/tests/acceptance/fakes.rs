@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
-    Answer, AnswerBody, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error, Grade,
-    GradedSession, Grading, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
-    PrRounds, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result, Session,
-    SessionKey, SessionOutcome, Weight,
+    Answer, AnswerBody, AuthorId, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error,
+    Grade, GradedSession, Grading, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode,
+    PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result,
+    Session, SessionKey, SessionOutcome, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -327,6 +327,9 @@ pub struct ScmState {
     pub summaries: Vec<(PrRef, String)>,
     /// Replies by the author, keyed by the session they answer.
     pub replies: HashMap<SessionKey, Vec<Answer>>,
+    /// Answers that don't count as a reply (ADR-0004 D3): ticked but not
+    /// submitted, or given by someone other than the author.
+    pub ignored: Vec<(SessionKey, Vec<Answer>)>,
     /// Make the next `post_questions` call fail, as on a transient error.
     pub fail_next_post: bool,
     /// Every `post_results` call, in order.
@@ -418,6 +421,26 @@ impl FakeScm {
             .filter(|(p, ..)| p == pr)
             .map(|(_, k, s, n)| (k.clone(), s.clone(), n.clone()))
             .collect()
+    }
+
+    /// Answers to `session` by `by`, `submitted` or only ticked. Only those
+    /// the session's author submitted are a reply (ADR-0004 D3).
+    pub fn answer_as(
+        &self,
+        session: &Session,
+        by: &AuthorId,
+        submitted: bool,
+        answers: Vec<Answer>,
+    ) {
+        if submitted && by == session.author() {
+            self.reply(session.key(), answers);
+        } else {
+            self.state
+                .lock()
+                .unwrap()
+                .ignored
+                .push((session.key().clone(), answers));
+        }
     }
 
     pub fn reply(&self, session: &SessionKey, answers: Vec<Answer>) {

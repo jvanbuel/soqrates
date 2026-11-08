@@ -121,6 +121,12 @@ Their questions are not lost: an ungraded round's questions are asked
 again, first, in the new comment (ADR-0002 D9). Graded comments stay as
 they are.
 
+A round whose answers were submitted (D3) before the push is not
+superseded: the check grades it first and posts its results, so its
+comment is frozen as graded (D5), not as superseded (ADR-0002 D9). Its
+answers are read as on its own head: only the author's edits and comments
+count, and a newer answer comment replaces an earlier one.
+
 Only comments posted by the same account as the current question comment,
 and only sessions of the same PR, are touched, so copying a marker into
 another comment can't make Soqrates rewrite it. A failed edit is retried by

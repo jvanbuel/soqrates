@@ -111,7 +111,9 @@ pub trait ScmProvider: Send + Sync {
         pr: &PrRef,
         session: &Session,
     ) -> impl Future<Output = Result<()>> + Send;
-    /// The author's answers to `session`, if they have replied yet.
+    /// The author's answers to `session`, if they have submitted them
+    /// (ADR-0004 D3). Answers by anyone else, or ticked but not submitted,
+    /// are `None`.
     fn fetch_answers(
         &self,
         pr: &PrRef,

@@ -22,8 +22,9 @@ fn key_prefix(pr: &PrRef) -> String {
 /// One run of the CI check. Call it on PR open/push and when the author
 /// replies.
 ///
-/// - No round for the current head yet: ask again whatever the latest round
-///   left unanswered, then about what changed since the latest round (the
+/// - No round for the current head yet: grade the latest round first if
+///   its answers were submitted, setting no check. Then ask again whatever
+///   the latest round left unanswered, then about what changed since the latest round (the
 ///   whole PR on its first round, or after a force-push), leaving out
 ///   concepts already asked on the PR unless they are due (ADR-0002 D9,
 ///   D10). Post the questions, freeze the question comments of earlier
@@ -147,6 +148,9 @@ where
     // A round for this head whose session is gone, e.g. because posting it
     // failed, doesn't count.
     rounds.forget(&pull.head_sha);
+    // Answers submitted before the push count: grade them first, so the
+    // latest round is graded rather than carried (ADR-0002 D9).
+    grade_submitted(app, scm, pr, &rounds).await?;
     // From the latest round that asked its own questions: a round that
     // carried an earlier session forward asked nothing about its head, e.g.
     // because carried questions filled the budget (ADR-0002 D10).
@@ -225,6 +229,39 @@ where
     scm.set_check(pr, CheckStatus::Pending, &summary).await?;
     supersede_earlier(app, scm, pr, &session).await?;
     Ok(CheckStatus::Pending)
+}
+
+/// Grade the latest round's session if it is still pending and its answers
+/// were submitted, e.g. before a push that the check ran for first
+/// (ADR-0002 D9, ADR-0004 D7). Its results are posted as for a run on its
+/// own head, but no check is set: the new head's check is about its own
+/// round. A session graded already is left alone (ADR-0002 D6).
+async fn grade_submitted<S, E, C, P>(
+    app: &Soqrates<S, E, C>,
+    scm: &P,
+    pr: &PrRef,
+    rounds: &PrRounds,
+) -> Result<()>
+where
+    S: StateStore,
+    E: Examiner,
+    C: Clock,
+    P: ScmProvider,
+{
+    let Some(prev) = rounds.latest() else {
+        return Ok(());
+    };
+    let Some(session) = app.pending_session(&prev.session).await? else {
+        return Ok(());
+    };
+    if session.questions().is_empty() {
+        return Ok(());
+    }
+    let Some(answers) = scm.fetch_answers(pr, &session).await? else {
+        return Ok(());
+    };
+    let outcome = app.submit(session.key(), &answers).await?;
+    scm.post_results(pr, &session, &outcome).await
 }
 
 /// The concepts a later round on the PR doesn't ask again (ADR-0002 D9):
