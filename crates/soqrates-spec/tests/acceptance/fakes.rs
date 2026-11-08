@@ -12,9 +12,9 @@ use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_comm
 use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error,
-    Grade, GradedSession, Grading, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode,
-    PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result,
-    Session, SessionKey, SessionOutcome, Weight,
+    Grade, GradedSession, Grading, GradingJournal, Identity, IdentityLink, LearnerId,
+    LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionFormat,
+    QuestionId, Result, Session, SessionKey, SessionOutcome, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -728,7 +728,7 @@ impl Prompter for ScriptedPrompter {
 // ---------------------------------------------------------------------------
 
 /// Either of the real `soqrates-store` adapters, so one world type can use
-/// both, or a store that cannot be reached.
+/// both, or a store that cannot be reached or fails to write.
 #[derive(Debug)]
 pub enum AnyStore {
     Memory(InMemoryStore),
@@ -739,9 +739,20 @@ pub enum AnyStore {
     /// call fails with `Error::Port` (ADR-0003 D4). Steps can still inspect
     /// the wrapped store with [`AnyStore::inner`].
     Unreachable(Box<AnyStore>),
-    /// An in-memory store whose next `save_profile` fails while the flag is
-    /// set, as on a transient write error.
-    FailingProfileSave(InMemoryStore, std::sync::atomic::AtomicBool),
+    /// The wrapped store with injected write failures, as on a transient
+    /// error or a process that stops part-way (ADR-0002 D6).
+    Faulty(Box<AnyStore>, Mutex<Faults>),
+}
+
+/// Which writes of an [`AnyStore::Faulty`] store fail.
+#[derive(Debug, Clone)]
+pub struct Faults {
+    /// Only writes by this port method count; all writes when `None`.
+    pub only: Option<String>,
+    /// Writes that still succeed before the failures start.
+    pub allowed: usize,
+    /// Writes that fail after those; `usize::MAX` for all of them.
+    pub failing: usize,
 }
 
 impl AnyStore {
@@ -759,10 +770,10 @@ impl AnyStore {
         AnyStore::Memory(InMemoryStore::new())
     }
 
-    /// The store behind any `Unreachable` wrapper.
+    /// The store behind any `Unreachable` or `Faulty` wrapper.
     pub fn inner(&self) -> &AnyStore {
         match self {
-            AnyStore::Unreachable(s) => s.inner(),
+            AnyStore::Unreachable(s) | AnyStore::Faulty(s, _) => s.inner(),
             s => s,
         }
     }
@@ -773,6 +784,46 @@ impl AnyStore {
             s @ AnyStore::Unreachable(_) => s,
             s => AnyStore::Unreachable(Box::new(s)),
         }
+    }
+
+    /// This store with `faults` injected, replacing any injected before.
+    pub fn into_faulty(self, faults: Faults) -> Self {
+        match self.into_healthy() {
+            s @ (AnyStore::Memory(_) | AnyStore::File(_) | AnyStore::Sql(_)) => {
+                AnyStore::Faulty(Box::new(s), Mutex::new(faults))
+            }
+            other => panic!("faults are injected into a reachable store, not {other:?}"),
+        }
+    }
+
+    /// This store without injected faults.
+    pub fn into_healthy(self) -> Self {
+        match self {
+            AnyStore::Faulty(s, _) => s.into_healthy(),
+            s => s,
+        }
+    }
+
+    /// Fail the write by `method` if the injected faults say so.
+    fn fault(&self, method: &str) -> Result<()> {
+        let AnyStore::Faulty(_, faults) = self else {
+            return Ok(());
+        };
+        let mut f = faults.lock().unwrap();
+        if f.only.as_deref().is_some_and(|m| m != method) {
+            return Ok(());
+        }
+        if f.allowed > 0 {
+            f.allowed -= 1;
+            return Ok(());
+        }
+        if f.failing == 0 {
+            return Ok(());
+        }
+        if f.failing != usize::MAX {
+            f.failing -= 1;
+        }
+        Err(Error::Port(format!("the store failed to {method}")))
     }
 }
 
@@ -787,9 +838,23 @@ macro_rules! delegate {
             AnyStore::File(s) => s.$method($($arg),*).await,
             AnyStore::Sql(s) => s.$method($($arg),*).await,
             AnyStore::Unreachable(_) => Err(unreachable()),
-            AnyStore::FailingProfileSave(s, _) => s.$method($($arg),*).await,
+            // Not recursive, so the futures stay nameable.
+            AnyStore::Faulty(s, _) => match &**s {
+                AnyStore::Memory(s) => s.$method($($arg),*).await,
+                AnyStore::File(s) => s.$method($($arg),*).await,
+                AnyStore::Sql(s) => s.$method($($arg),*).await,
+                _ => unreachable!("faults are injected into a base store"),
+            },
         }
     };
+}
+
+/// A write: fails if injected faults say so, else is delegated.
+macro_rules! write {
+    ($self:ident, $method:ident($($arg:expr),*)) => {{
+        $self.fault(stringify!($method))?;
+        delegate!($self, $method($($arg),*))
+    }};
 }
 
 impl StateStore for AnyStore {
@@ -797,30 +862,25 @@ impl StateStore for AnyStore {
         delegate!(self, load_profile(learner))
     }
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        if let AnyStore::FailingProfileSave(_, fail) = self
-            && fail.swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
-            return Err(Error::Port("the learner profile could not be saved".into()));
-        }
-        delegate!(self, save_profile(profile))
+        write!(self, save_profile(profile))
     }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        delegate!(self, delete_learner(learner))
+        write!(self, delete_learner(learner))
     }
     async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
         delegate!(self, learner_of(identity))
     }
     async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        delegate!(self, save_link(link))
+        write!(self, save_link(link))
     }
     async fn delete_link(&self, identity: &Identity) -> Result<()> {
-        delegate!(self, delete_link(identity))
+        write!(self, delete_link(identity))
     }
     async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
         delegate!(self, links_of(learner))
     }
     async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        delegate!(self, save_link_code(code))
+        write!(self, save_link_code(code))
     }
     async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
         delegate!(self, load_link_code(code))
@@ -829,28 +889,34 @@ impl StateStore for AnyStore {
         delegate!(self, load_session(key))
     }
     async fn save_session(&self, session: &Session) -> Result<()> {
-        delegate!(self, save_session(session))
+        write!(self, save_session(session))
     }
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        delegate!(self, delete_session(key))
+        write!(self, delete_session(key))
     }
-    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        delegate!(self, take_session(key))
+    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
+        write!(self, begin_grading(journal))
+    }
+    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
+        delegate!(self, load_grading(key))
+    }
+    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
+        delegate!(self, gradings())
+    }
+    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
+        write!(self, end_grading(key))
     }
     async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
-        delegate!(self, save_graded(graded))
+        write!(self, save_graded(graded))
     }
     async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         delegate!(self, load_graded(key))
-    }
-    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
-        delegate!(self, delete_graded(key))
     }
     async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
         delegate!(self, load_rounds(pr))
     }
     async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        delegate!(self, save_rounds(rounds))
+        write!(self, save_rounds(rounds))
     }
 }
 

@@ -37,6 +37,8 @@ fn key_prefix(pr: &PrRef) -> String {
 /// - Nothing to ask on the first round: the comment says so and the empty
 ///   session is graded right away.
 /// - Session exists but no answers yet: keep `Pending`.
+/// - Answers being graded, e.g. by an overlapping run: keep `Pending`
+///   (ADR-0002 D6).
 /// - Answers present: grade them and set `Success`, or `Failure` (`Neutral`
 ///   in `Advisory` mode).
 ///
@@ -90,23 +92,19 @@ where
     P: ScmProvider,
 {
     // Already graded: report the result again, ask nothing.
-    if let Some(graded) = app.graded(key).await? {
-        let status = final_status(graded.passed, app.config.mode);
-        let summary = format!(
-            "{} of {} answers correct: {}.",
-            graded.correct,
-            graded.total,
-            if graded.passed {
-                "passed"
-            } else {
-                "not passed"
-            }
-        );
-        scm.set_check(pr, status, &summary).await?;
+    if let Some(status) = report_graded(app, scm, pr, key).await? {
         return Ok(Some(status));
     }
     let Some(session) = app.pending_session(key).await? else {
-        return Ok(None);
+        // Looked up in the order a grading moves through: pending, being
+        // graded, graded. So a grading by another run is never missed, and
+        // no new session is opened for its key (ADR-0002 D6).
+        if app.being_graded(key).await? {
+            let summary = "The answers are being graded.";
+            scm.set_check(pr, CheckStatus::Pending, summary).await?;
+            return Ok(Some(CheckStatus::Pending));
+        }
+        return report_graded(app, scm, pr, key).await;
     };
 
     // Also on later runs, so that a run that failed to freeze the earlier
@@ -136,6 +134,37 @@ where
             finish(app, scm, pr, &outcome).await.map(Some)
         }
     }
+}
+
+/// Report the result of the session `key` again if it was graded.
+async fn report_graded<S, E, C, P>(
+    app: &Soqrates<S, E, C>,
+    scm: &P,
+    pr: &PrRef,
+    key: &SessionKey,
+) -> Result<Option<CheckStatus>>
+where
+    S: StateStore,
+    E: Examiner,
+    C: Clock,
+    P: ScmProvider,
+{
+    let Some(graded) = app.graded(key).await? else {
+        return Ok(None);
+    };
+    let status = final_status(graded.passed, app.config.mode);
+    let summary = format!(
+        "{} of {} answers correct: {}.",
+        graded.correct,
+        graded.total,
+        if graded.passed {
+            "passed"
+        } else {
+            "not passed"
+        }
+    );
+    scm.set_check(pr, status, &summary).await?;
+    Ok(Some(status))
 }
 
 /// Ask a new round for the head of `pull` (ADR-0002 D9).
