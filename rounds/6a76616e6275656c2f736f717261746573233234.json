@@ -1,0 +1,18 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 24
+  },
+  "rounds": [
+    {
+      "head": "b9b4f8a8f2caf488cd3d4ca6797114f3e9325287",
+      "session": "jvanbuel/soqrates#24@b9b4f8a8f2caf488cd3d4ca6797114f3e9325287",
+      "concepts": [
+        "soqrates.ci.grade-before-new-round",
+        "soqrates.ci.submitted-answers-semantics",
+        "soqrates.ci.idempotent-rerun"
+      ],
+      "at": "2026-11-08T16:53:31.922285510Z"
+    }
+  ]
+}
