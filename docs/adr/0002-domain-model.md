@@ -142,6 +142,9 @@ This defines the "mix" from ADR-0001 D7 (gap G3). The `i`-th question
 | Intermediate | multiple choice when `i` is even, open when `i` is odd |
 | Expert | always open |
 
+The kind of each question is chosen by the examiner, steered by the level
+(ADR-0007 D2).
+
 ### D6: Session rules
 **Enforcement:** automated
 
