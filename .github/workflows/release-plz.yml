@@ -6,11 +6,13 @@
 #   merged), tags vX.Y.Z and creates the GitHub release, then calls
 #   release.yml to build and attach the binaries.
 #
-# Repository setting needed: Settings -> Actions -> General -> "Allow GitHub
-# Actions to create and approve pull requests". A release PR opened with the
-# workflow token doesn't trigger other workflows, so CI doesn't run on it;
-# set the RELEASE_PLZ_TOKEN secret (a fine-grained token with contents and
-# pull-requests write) to have CI run there. See docs/releasing.md.
+# The release PR is opened with the Soqrates GitHub App's token when the
+# SOQRATES_APP_ID variable and SOQRATES_APP_PRIVATE_KEY secret are set (the
+# app needs contents and pull-requests write), so CI runs on it. Otherwise
+# RELEASE_PLZ_TOKEN or the workflow token is used: the workflow token needs
+# Settings -> Actions -> General -> "Allow GitHub Actions to create and
+# approve pull requests", and CI doesn't run on a PR it opens. See
+# docs/releasing.md.
 name: release-plz
 
 on:
@@ -78,9 +80,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Open the release PR as the Soqrates GitHub App when it is configured:
+      # unlike the workflow token, its events trigger CI on the release PR.
+      - name: Get the GitHub App token
+        id: app
+        if: vars.SOQRATES_APP_ID != ''
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.SOQRATES_APP_ID }}
+          private-key: ${{ secrets.SOQRATES_APP_PRIVATE_KEY }}
+
       - name: Run release-plz release-pr
         uses: release-plz/action@66b324fd6c72d05d2a08568492ecdd62bfb8a62b # v0.5.148
         with:
           command: release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || github.token }}
+          GITHUB_TOKEN: ${{ steps.app.outputs.token || secrets.RELEASE_PLZ_TOKEN || github.token }}

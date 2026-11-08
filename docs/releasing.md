@@ -40,16 +40,24 @@ You can also edit the version and changelog in the release PR before merging.
 
 ## One-time setup
 
-- **Settings → Actions → General → Workflow permissions**: tick **Allow
-  GitHub Actions to create and approve pull requests**, so release-plz can
-  open the release PR.
-- **Optional: `RELEASE_PLZ_TOKEN` secret.** A PR opened with the workflow
-  token doesn't trigger other workflows, so CI doesn't run on the release PR.
-  To have it run, add a fine-grained personal access token for this
-  repository with **Contents** and **Pull requests** read and write as the
-  repository secret `RELEASE_PLZ_TOKEN`; release-plz then opens the PR with
-  it. The Soqrates check skips release PRs (branches starting with
-  `release-plz-`) either way.
+Open the release PR as the Soqrates GitHub App, so CI runs on it:
+
+1. Give the app (see [github-app.md](github-app.md)) **Contents** and **Pull
+   requests** read and write, and accept the new permissions on its
+   installation.
+2. Set the repository variable `SOQRATES_APP_ID` and the secret
+   `SOQRATES_APP_PRIVATE_KEY`, the same ones the Soqrates check uses to post
+   as soqrates[bot].
+
+Without the app, release-plz falls back to the `RELEASE_PLZ_TOKEN` secret (a
+fine-grained token with Contents and Pull requests read and write), and then
+to the workflow token. The workflow token needs **Settings → Actions →
+General → Workflow permissions → Allow GitHub Actions to create and approve
+pull requests**, and a PR it opens triggers no other workflows, so CI doesn't
+run on the release PR.
+
+The Soqrates check skips release PRs (branches starting with `release-plz-`)
+either way.
 
 ## Dry run
 
