@@ -1,0 +1,14 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 28
+  },
+  "rounds": [
+    {
+      "head": "09977603d4a7751263619b60d6e7dc2e2847acbc",
+      "session": "jvanbuel/soqrates#28@09977603d4a7751263619b60d6e7dc2e2847acbc",
+      "concepts": [],
+      "at": "2026-11-08T17:33:20.188727194Z"
+    }
+  ]
+}
