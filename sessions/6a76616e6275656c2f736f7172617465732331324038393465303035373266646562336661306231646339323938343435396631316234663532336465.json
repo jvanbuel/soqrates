@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#12@894e00572fdeb3fa0b1dc92984459f11b4f523de",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.composite-actions/mc",
+      "concept": "github-actions.composite-actions",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A composite action runs a tool in one inner step and needs the calling workflow to use a value that the step computed (for example, whether the saved state changed) to decide whether to run a later step. What is the correct way to wire this up?",
+          "options": [
+            "Add an outputs block to the calling workflow's job that points to the composite action's internal steps",
+            "Declare an output in the action's metadata whose value references the inner step's output (for example via steps.<id>.outputs.<name>), and give the inner step an id",
+            "Write the value to an environment variable in the inner step; the calling workflow automatically sees it as an action output",
+            "Have the inner step write to its own step output; callers can read it as steps.<inner id>.outputs.<name> from the calling job"
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "Steps inside a composite action cannot read the caller's step outputs directly; the action must declare an output whose value references an inner step's output, which is then exposed to the calling workflow. Using only an inner step's set-output is not enough, because nothing is surfaced unless the action's outputs section maps it."
+    },
+    {
+      "id": "supply-chain.release-provenance.checksums-attestations/mc",
+      "concept": "supply-chain.release-provenance.checksums-attestations",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A project publishes release archives with a SHA-256 checksum file on the same release page, plus a signed build provenance attestation. A consumer already ran `sha256sum --check` successfully. Why should they also run `gh attestation verify` before executing the binary?",
+          "options": [
+            "Nothing, because the checksum already proves the binary came from the project's official CI workflow",
+            "It encrypts the archive so that only the consumer's machine can run the binary",
+            "It proves which workflow and repository built the artifact, which a checksum hosted alongside the archive cannot, since an attacker who swaps the archive could swap the checksum",
+            "It speeds up verification, since the attestation lets the consumer skip hashing the downloaded archive"
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "A checksum published next to the archive only shows the file matches that checksum, so an attacker who can replace the archive can replace the checksum too. A signed provenance attestation ties the artifact digest to the workflow identity that built it, so verifying it adds assurance about where the binary came from."
+    },
+    {
+      "id": "github-actions.release.tag-triggered-matrix-build/mc",
+      "concept": "github-actions.release.tag-triggered-matrix-build",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A release workflow is triggered by pushing a tag like v1.2.3. A build matrix compiles binaries on several OS runners and uploads them as artifacts. A final job that needs the matrix creates the GitHub release and moves the moving major tag v1 to the new commit. How should the GITHUB_TOKEN permissions be set up to follow least privilege, and why?",
+          "options": [
+            "Grant contents: write at the workflow level so every matrix job can create the release itself, since this avoids passing artifacts between jobs",
+            "Remove the permissions block entirely, because tag-triggered workflows always run with a read-only token",
+            "Give the matrix build jobs contents: write so they can each upload their own release asset, and make the publish job read-only",
+            "Give the matrix build jobs read-only permissions and grant contents: write only to the dependent publish job that creates the release and moves the major tag"
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "The build matrix jobs only need to read code and upload artifacts, while only the publish job needs write access to create the release and move the tag. Scoping contents: write to the publishing job limits the damage if a build step running third-party code is compromised; granting it workflow-wide is the tempting but over-privileged choice."
+    }
+  ],
+  "created_at": "2026-11-08T05:59:23.803978420Z"
+}
