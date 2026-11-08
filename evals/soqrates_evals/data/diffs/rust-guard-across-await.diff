@@ -1,0 +1,26 @@
+diff --git a/src/cache.rs b/src/cache.rs
+--- a/src/cache.rs
++++ b/src/cache.rs
+@@ -12,14 +12,19 @@ pub struct Cache {
+ }
+
+ impl Cache {
+     pub async fn get_or_fetch(&self, key: &str) -> Result<Bytes> {
+-        let mut entries = self.entries.lock().unwrap();
+-        if let Some(hit) = entries.get(key) {
+-            return Ok(hit.clone());
++        {
++            let entries = self.entries.lock().unwrap();
++            if let Some(hit) = entries.get(key) {
++                return Ok(hit.clone());
++            }
+         }
++        // Do not hold the std mutex across the await: the guard is not
++        // Send, and other tasks on this worker would block on the lock.
+         let fetched = self.client.fetch(key).await?;
+-        entries.insert(key.to_owned(), fetched.clone());
++        let mut entries = self.entries.lock().unwrap();
++        entries.entry(key.to_owned()).or_insert_with(|| fetched.clone());
+         Ok(fetched)
+     }
+ }

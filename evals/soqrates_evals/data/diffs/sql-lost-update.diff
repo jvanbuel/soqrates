@@ -1,0 +1,25 @@
+diff --git a/billing/wallet.py b/billing/wallet.py
+--- a/billing/wallet.py
++++ b/billing/wallet.py
+@@ -20,13 +20,17 @@ class Wallet:
+     def withdraw(self, conn, account_id: int, amount: int) -> None:
+-        balance = conn.execute(
+-            "SELECT balance FROM accounts WHERE id = %s", (account_id,)
+-        ).fetchone()[0]
+-        if balance < amount:
+-            raise InsufficientFunds(account_id)
+-        conn.execute(
+-            "UPDATE accounts SET balance = %s WHERE id = %s",
+-            (balance - amount, account_id),
+-        )
++        with conn.transaction():
++            balance = conn.execute(
++                "SELECT balance FROM accounts WHERE id = %s FOR UPDATE",
++                (account_id,),
++            ).fetchone()[0]
++            if balance < amount:
++                raise InsufficientFunds(account_id)
++            conn.execute(
++                "UPDATE accounts SET balance = balance - %s WHERE id = %s",
++                (amount, account_id),
++            )
