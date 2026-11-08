@@ -64,14 +64,6 @@ pub struct RawOption {
     pub why: String,
 }
 
-/// Reply to [`crate::prompts::REPAIR_REASONS_SYSTEM`].
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(title = "option_reasons")]
-pub struct ReasonsOutput {
-    /// One reason per option, in the order the options were given.
-    pub reasons: Vec<String>,
-}
-
 /// Reply to [`crate::prompts::WRITE_OPEN_SYSTEM`].
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(title = "open_question")]
@@ -81,35 +73,6 @@ pub struct OpenOutput {
     pub rubric: String,
     /// 1 to 3 plain-text sentences on what a good answer covers.
     pub explanation: String,
-}
-
-/// Reply to [`crate::prompts::CHECK_REASONS_SYSTEM`].
-#[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(title = "reasons_check")]
-pub struct ReasonsCheckOutput {
-    /// Each thing a reason treats as an answer option that the question
-    /// does not offer; empty if there is none.
-    pub stray_options: Vec<String>,
-}
-
-/// The problem to report to the repair prompt, or `None` if the reasons
-/// discuss only the options offered.
-pub fn stray_options_problem(output: ReasonsCheckOutput) -> Option<String> {
-    let stray: Vec<String> = output
-        .stray_options
-        .iter()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|s| format!("{s:?}"))
-        .collect();
-    if stray.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "the reasons discuss answers the question does not offer ({}); \
-         discuss only the options listed",
-        stray.join(", ")
-    ))
 }
 
 /// Reply to [`crate::prompts::GRADE_OPEN_SYSTEM`].
@@ -253,13 +216,7 @@ pub fn validate_multiple_choice(output: MultipleChoiceOutput) -> Result<Multiple
             options.len()
         ));
     }
-    let reasons = validate_reasons(
-        ReasonsOutput {
-            reasons: output.options.into_iter().map(|o| o.why).collect(),
-        },
-        &options,
-        correct,
-    )?;
+    let reasons = validate_reasons(&output.options, &options, correct)?;
     Ok(MultipleChoice {
         prompt,
         options,
@@ -268,25 +225,17 @@ pub fn validate_multiple_choice(output: MultipleChoiceOutput) -> Result<Multiple
     })
 }
 
-/// Check the reasons for `options`: one per option, each non-empty, cleaned
-/// to plain text (see [`clean_text`]) and independent of the order of the
-/// options (see [`normalise_option_refs`]). The correct option's reason is
-/// the explanation and may be longer than the others.
-pub fn validate_reasons(
-    output: ReasonsOutput,
+/// Check the reason of every option: non-empty, cleaned to plain text (see
+/// [`clean_text`]) and independent of the order of the options (see
+/// [`normalise_option_refs`]). The correct option's reason is the
+/// explanation and may be longer than the others.
+fn validate_reasons(
+    raw: &[RawOption],
     options: &[String],
     correct: usize,
 ) -> Result<Vec<String>, String> {
-    if output.reasons.len() != options.len() {
-        return Err(format!(
-            "there must be one reason per option: {} reasons for {} options",
-            output.reasons.len(),
-            options.len()
-        ));
-    }
-    output
-        .reasons
-        .iter()
+    raw.iter()
+        .map(|o| &o.why)
         .enumerate()
         .map(|(i, why)| {
             let max = if i == correct {

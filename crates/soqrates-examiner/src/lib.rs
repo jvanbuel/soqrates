@@ -169,13 +169,7 @@ impl Examiner for RigExaminer {
         self.core.extract_concepts(diff).await
     }
     async fn write_question(&self, concept: &Concept, format: QuestionFormat) -> Result<Question> {
-        let (question, check) = self.core.write_question_checked(concept, format).await?;
-        // On stderr, so that it shows in CI logs and evals (ADR-0001 D13)
-        // without touching MCP's stdout.
-        if let Some(note) = check.note() {
-            eprintln!("soqrates: examiner: {}: {note}", question.id.0);
-        }
-        Ok(question)
+        self.core.write_question(concept, format).await
     }
     async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
         self.core.grade(question, answer).await

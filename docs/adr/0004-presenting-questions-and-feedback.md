@@ -44,11 +44,11 @@ before grading (ADR-0001 D10). An author who picked a wrong option gets that
 option's reason, then the explanation; every other author gets the
 explanation alone, as do questions stored before reasons existed.
 
-Each reason belongs to an option that is shown, so it has no reason to
-discuss answers the question doesn't offer. As a backstop, a short model
-call checks the reasons for this, and flagged reasons are rewritten once,
-keeping the question and its options. The check is a judgement, so it never
-fails a question; its outcome is logged on stderr, naming only the question. For an
+The reasons are written in the same reply as the options, and each one is
+about an option that is shown, so there is no free-form explanation left to
+discuss answers the question doesn't offer. Evals (ADR-0001 D13) are to
+measure whether reasons still do; a separate check is added only if they
+show it is needed. For an
 open question, the explanation is the grader's rationale. `SessionOutcome`
 carries these results, and the PR, the terminal and MCP all present them.
 
@@ -133,8 +133,7 @@ live with answers that would be silently ignored.
 ## Consequences
 
 - The examiner's output grows: a reason per multiple-choice option, and
-  feedback per graded open answer. Each multiple-choice question costs one
-  more, short model call for the check, and two more when it is flagged.
+  feedback per graded open answer.
 - `Examiner::grade` returns a grade with feedback, and `ScmProvider`
   gains `post_results`, `superseded_questions` and `supersede_questions`.
 - The dogfooding workflow also runs on `issue_comment.edited` for comments

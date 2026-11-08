@@ -12,10 +12,7 @@ use soqrates_core::{
     QuestionFormat, QuestionId, Result,
 };
 
-use crate::output::{
-    self, ConceptsOutput, GradeOutput, MultipleChoice, MultipleChoiceOutput, OpenOutput,
-    ReasonsCheckOutput, ReasonsOutput,
-};
+use crate::output::{self, ConceptsOutput, GradeOutput, MultipleChoiceOutput, OpenOutput};
 use crate::prompts;
 
 /// One request to the model: a system prompt, a user prompt and the JSON
@@ -89,26 +86,24 @@ impl<L: Llm> Core<L> {
         .await
     }
 
-    #[cfg(test)]
     pub async fn write_question(
         &self,
         concept: &Concept,
         format: QuestionFormat,
     ) -> Result<Question> {
-        Ok(self.write_question_checked(concept, format).await?.0)
-    }
-
-    /// [`Self::write_question`], also saying how the check of a
-    /// multiple-choice question's reasons went (always [`Check::Clean`] for
-    /// an open question).
-    pub async fn write_question_checked(
-        &self,
-        concept: &Concept,
-        format: QuestionFormat,
-    ) -> Result<(Question, Check)> {
-        let (body, explanation, check) = match format {
+        let (body, explanation) = match format {
             QuestionFormat::MultipleChoice => {
-                let (mc, check) = self.write_multiple_choice(concept).await?;
+                // One reason per option, written with the options (issue #5):
+                // each reason is about an option that is shown, so there is
+                // no free-form explanation to discuss options not offered.
+                let mc = self
+                    .structured(
+                        "a multiple-choice question",
+                        prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
+                        prompts::write_multiple_choice(concept),
+                        |out: MultipleChoiceOutput| output::validate_multiple_choice(out),
+                    )
+                    .await?;
                 // The reasons name options by content, so they survive the
                 // shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
@@ -119,7 +114,7 @@ impl<L: Llm> Core<L> {
                     correct: mc.correct,
                     reasons: mc.reasons,
                 };
-                (body, explanation, check)
+                (body, explanation)
             }
             QuestionFormat::Open => {
                 let open = self
@@ -134,83 +129,16 @@ impl<L: Llm> Core<L> {
                     prompt: open.prompt,
                     rubric: open.rubric,
                 };
-                (body, open.explanation, Check::Clean)
+                (body, open.explanation)
             }
         };
-        let question = Question {
+        Ok(Question {
             id: question_id(concept, format),
             concept: concept.id.clone(),
             scope: concept.scope,
             body,
             explanation,
-        };
-        Ok((question, check))
-    }
-
-    /// Write a multiple-choice question with a reason for every option
-    /// (issue #5). Because each reason belongs to an option that is shown,
-    /// the question has no free-form explanation to discuss options it
-    /// doesn't offer. A model call checks this anyway; flagged reasons are
-    /// rewritten once, keeping the question and options.
-    ///
-    /// The check is a model's judgement and may be wrong, so it never fails
-    /// the question: the outcome is returned, for the caller to report.
-    async fn write_multiple_choice(&self, concept: &Concept) -> Result<(MultipleChoice, Check)> {
-        let mc = self
-            .structured(
-                "a multiple-choice question",
-                prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
-                prompts::write_multiple_choice(concept),
-                |out: MultipleChoiceOutput| output::validate_multiple_choice(out),
-            )
-            .await?;
-        let problem = match self.review(&mc).await {
-            Review::Clean => return Ok((mc, Check::Clean)),
-            Review::Unusable => return Ok((mc, Check::Unchecked)),
-            Review::Flagged(problem) => problem,
-        };
-        let repaired = self
-            .structured(
-                "the option reasons",
-                prompts::REPAIR_REASONS_SYSTEM,
-                prompts::repair_reasons(&mc.prompt, &mc.options, mc.correct, &mc.reasons, &problem),
-                |out: ReasonsOutput| output::validate_reasons(out, &mc.options, mc.correct),
-            )
-            .await;
-        let Ok(reasons) = repaired else {
-            return Ok((mc, Check::NotRepaired));
-        };
-        let mc = MultipleChoice { reasons, ..mc };
-        let check = match self.review(&mc).await {
-            Review::Clean => Check::Repaired,
-            Review::Unusable => Check::RepairedUnchecked,
-            Review::Flagged(_) => Check::StillFlagged,
-        };
-        Ok((mc, check))
-    }
-
-    /// Ask the model whether `mc`'s reasons treat as an option anything the
-    /// question does not offer. A failed call counts as an unusable reply:
-    /// the question is already written, and the check is only a backstop.
-    async fn review(&self, mc: &MultipleChoice) -> Review {
-        let reply = self
-            .llm
-            .complete(LlmRequest {
-                system: prompts::CHECK_REASONS_SYSTEM,
-                user: prompts::check_reasons(&mc.prompt, &mc.options, mc.correct, &mc.reasons),
-                schema: schemars::schema_for!(ReasonsCheckOutput),
-            })
-            .await;
-        match reply
-            .ok()
-            .and_then(|raw| output::parse_json::<ReasonsCheckOutput>(&raw).ok())
-        {
-            None => Review::Unusable,
-            Some(out) => match output::stray_options_problem(out) {
-                None => Review::Clean,
-                Some(problem) => Review::Flagged(problem),
-            },
-        }
+        })
     }
 
     /// Grade `answer`. Multiple choice is graded without the model and with
@@ -258,54 +186,6 @@ impl<L: Llm> Core<L> {
             }),
         }
     }
-}
-
-/// The outcome of the check that a multiple-choice question's reasons
-/// discuss only the options it offers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Check {
-    /// Nothing was flagged.
-    Clean,
-    /// The check gave no usable reply; the question is kept as written.
-    Unchecked,
-    /// Flagged, rewritten, and the rewrite passed the check.
-    Repaired,
-    /// Flagged and rewritten, but the second check gave no usable reply.
-    RepairedUnchecked,
-    /// Flagged, rewritten, and the rewrite was flagged too; it is kept.
-    StillFlagged,
-    /// Flagged, but no valid rewrite came back; the original is kept.
-    NotRepaired,
-}
-
-impl Check {
-    /// A one-line note for the log, or `None` if there is nothing to say.
-    /// It names no option or reason, so that it gives nothing away when
-    /// shown before the author answers.
-    pub fn note(self) -> Option<&'static str> {
-        Some(match self {
-            Check::Clean => return None,
-            Check::Unchecked => "the check of the option reasons gave no usable reply",
-            Check::Repaired => "the option reasons discussed answers not offered; rewrote them",
-            Check::RepairedUnchecked => {
-                "the option reasons discussed answers not offered; rewrote them, \
-                 but could not check the rewrite"
-            }
-            Check::StillFlagged => {
-                "the option reasons discussed answers not offered; rewrote them, \
-                 and the rewrite was flagged too"
-            }
-            Check::NotRepaired => {
-                "the option reasons discussed answers not offered; could not rewrite them"
-            }
-        })
-    }
-}
-
-enum Review {
-    Clean,
-    Unusable,
-    Flagged(String),
 }
 
 /// Feedback for an empty answer to an open question.
