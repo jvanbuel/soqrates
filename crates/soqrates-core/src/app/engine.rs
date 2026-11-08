@@ -286,7 +286,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let questions = self
             .compose_questions(author, diff, &BTreeSet::new(), &[])
             .await?;
-        self.open_session(key, author, questions).await
+        self.open_session(key, author, questions, 0).await
     }
 
     /// The questions a session for `author` about `diff` asks (ADR-0002
@@ -387,16 +387,19 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         Ok(known)
     }
 
-    /// Open and persist the session `key` for `author` with `questions`.
+    /// Open and persist the session `key` for `author` with `questions`,
+    /// the first `carried` of which are carried from an earlier round
+    /// (ADR-0002 D9). At most `config.max_questions` questions, or
+    /// `carried` if that is more: carried questions are never dropped, even
+    /// if the cap was lowered since they were asked (ADR-0002 D6, D10).
     pub async fn open_session(
         &self,
         key: SessionKey,
         author: &AuthorId,
         questions: Vec<Question>,
+        carried: usize,
     ) -> Result<Session> {
-        // Carried questions are never dropped, even if the cap was lowered
-        // since they were asked (ADR-0002 D10).
-        let cap = self.config.max_questions.max(questions.len());
+        let cap = self.config.max_questions.max(carried);
         let session = Session::open(key, author.clone(), questions, cap, self.clock.now())?;
         self.session_store_for(author)?
             .save_session(&session)

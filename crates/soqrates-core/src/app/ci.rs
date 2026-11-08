@@ -201,7 +201,7 @@ where
     }
 
     let session = app
-        .open_session(key.clone(), &pull.author, questions)
+        .open_session(key.clone(), &pull.author, questions, carried.len())
         .await?;
     // Also when there is nothing to ask: the comment then says so, and
     // earlier question comments can point to it (ADR-0004 D7).

@@ -469,6 +469,19 @@ fn session_opened_with_budget(w: &mut SpecWorld, id: String, max: usize) {
     open_session(w, &id, max);
 }
 
+#[when(
+    regex = r#"^the engine opens a session for "([^"]+)" whose first (\d+) questions are carried$"#
+)]
+async fn engine_opens_session(w: &mut SpecWorld, id: String, carried: usize) {
+    let who = author(&id);
+    let questions = w.domain.questions.clone();
+    let opened = w
+        .app
+        .open_session(session_key(&who), &who, questions, carried)
+        .await;
+    w.domain.opened = Some(opened);
+}
+
 #[given(regex = r#"^a session for "([^"]+)" opened with (?:questions about (.+)|no questions)$"#)]
 fn session_opened(w: &mut SpecWorld, id: String, list: String) {
     w.domain.questions = if list.is_empty() {
