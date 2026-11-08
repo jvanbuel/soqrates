@@ -1,8 +1,34 @@
 {
   "learner": "learner-88c2e1c14d5497f4",
   "starting_level": "Novice",
-  "level": "Novice",
+  "level": "Intermediate",
   "cards": {
+    "github-actions.composite-action.design": {
+      "card": {
+        "due": "2026-11-11T07:35:32.673791591Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T07:35:32.673791591Z"
+      }
+    },
+    "github-actions.reusable-workflows.release-pipeline": {
+      "card": {
+        "due": "2026-11-11T07:35:32.673791591Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T07:35:32.673791591Z"
+      }
+    },
     "github.actions.bot-identity-and-tokens": {
       "card": {
         "due": "2026-11-10T21:59:16.462401418Z",
@@ -158,6 +184,19 @@
         "state": "Review",
         "last_review": "2026-11-07T14:37:58.663945921Z"
       }
+    },
+    "supply-chain.release-artifacts.checksum-provenance": {
+      "card": {
+        "due": "2026-11-11T07:35:32.673791591Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T07:35:32.673791591Z"
+      }
     }
   },
   "history": [
@@ -244,7 +283,28 @@
       "grade": "Good",
       "at": "2026-11-07T21:59:16.462401418Z",
       "via": "github.com:16427728"
+    },
+    {
+      "concept": "github-actions.composite-action.design",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T07:35:32.673791591Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "github-actions.reusable-workflows.release-pipeline",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T07:35:32.673791591Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "supply-chain.release-artifacts.checksum-provenance",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T07:35:32.673791591Z",
+      "via": "github.com:16427728"
     }
   ],
-  "level_since": 0
+  "level_since": 15
 }
