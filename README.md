@@ -65,9 +65,10 @@ secret and one workflow file, given in full in
 ```
 
 The action downloads a released `soqrates` binary and checks its checksum
-and build provenance; it never builds anything or checks out your code. The
-pull request diff goes to your model provider, along with the files of the
-PR head that the examiner chooses to read
+and build provenance; it never builds or runs anything from your code. The
+pull request diff goes to your model provider, along with the code the
+examiner chooses to read (files, grep results, git log and blame) from a
+checkout of the PR head that is only read, never built or run
 ([ADR-0008](docs/adr/0008-examiner-reads-the-codebase.md)). Learner state
 stays on a branch of your repository or in your own database
 ([ADR-0006](docs/adr/0006-distribution-as-a-github-action.md)).

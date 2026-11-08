@@ -50,7 +50,9 @@ fn pull_request(
 #[when(regex = r"^the Soqrates check (?:has run|runs)$")]
 async fn check_runs(w: &mut SpecWorld) {
     let pr = w.current_pr().clone();
-    let status = run_check(&w.app, &w.scm, &pr).await.expect("run_check");
+    let status = run_check(&w.app, &w.scm, &crate::fakes::FakeCheckout, &pr)
+        .await
+        .expect("run_check");
     w.status = Some(status);
 }
 
@@ -156,7 +158,9 @@ fn check_says(w: &mut SpecWorld, text: String) {
 async fn check_runs_and_fails(w: &mut SpecWorld) {
     let pr = w.current_pr().clone();
     assert!(
-        run_check(&w.app, &w.scm, &pr).await.is_err(),
+        run_check(&w.app, &w.scm, &crate::fakes::FakeCheckout, &pr)
+            .await
+            .is_err(),
         "expected the check run to fail"
     );
 }

@@ -9,6 +9,7 @@
 //! soqrates install-hook           # install the git pre-commit hook
 //! ```
 
+mod code;
 mod config;
 mod event;
 mod local;
@@ -75,6 +76,10 @@ enum Command {
         /// PR number; defaults to the one in GITHUB_EVENT_PATH.
         #[arg(long)]
         pr: Option<u64>,
+        /// A git checkout of the pull request, for the examiner to read
+        /// (ADR-0008 D4). Without it the examiner sees only the diff.
+        #[arg(long, env = "SOQRATES_CODE_DIR")]
+        code_dir: Option<PathBuf>,
     },
     /// Serve the MCP tools over stdio (ADR-0001 D10).
     Mcp,
@@ -210,7 +215,10 @@ async fn run_hook(cli: &Cli, kind: HookArg) -> Result<ExitCode, String> {
     let author = local_author(vcs, &settings)?;
     let root = root.ok_or("not inside a repository")?;
     // What is being committed or pushed (ADR-0008 D4).
-    let code = local::LocalCodebase::new(vcs, root);
+    let code = match vcs {
+        Vcs::Git => code::GitCodebase::index(root),
+        Vcs::Jj => code::GitCodebase::jj_parent(root),
+    };
     let decision = hook::run_hook(&app, &mut prompter, kind, &author, &diff, &code)
         .await
         .map_err(|e| e.to_string())?;
@@ -223,7 +231,12 @@ async fn run_hook(cli: &Cli, kind: HookArg) -> Result<ExitCode, String> {
     })
 }
 
-async fn run_ci(cli: &Cli, repo: &str, pr: Option<u64>) -> Result<ExitCode, String> {
+async fn run_ci(
+    cli: &Cli,
+    repo: &str,
+    pr: Option<u64>,
+    code_dir: Option<&std::path::Path>,
+) -> Result<ExitCode, String> {
     let number = match pr {
         Some(n) => Some(n),
         None => {
@@ -245,9 +258,16 @@ async fn run_ci(cli: &Cli, repo: &str, pr: Option<u64>) -> Result<ExitCode, Stri
         repo: repo.to_string(),
         number,
     };
-    let status = ci::run_check(&app, &scm, &pr)
-        .await
-        .map_err(|e| e.to_string())?;
+    let status = match code_dir {
+        Some(dir) => {
+            let code = code::GitCheckout {
+                dir: dir.to_path_buf(),
+            };
+            ci::run_check(&app, &scm, &code, &pr).await
+        }
+        None => ci::run_check(&app, &scm, &soqrates_core::ports::NoCodeSource, &pr).await,
+    }
+    .map_err(|e| e.to_string())?;
     println!("soqrates: {repo}#{number}: {status:?}");
     Ok(ExitCode::SUCCESS)
 }
@@ -349,7 +369,7 @@ async fn main() -> ExitCode {
             }
             ok => ok,
         },
-        Command::Ci { repo, pr } => run_ci(&cli, repo, *pr).await,
+        Command::Ci { repo, pr, code_dir } => run_ci(&cli, repo, *pr, code_dir.as_deref()).await,
         Command::Mcp => match async { build_app(&cli, &settings(&cli, None)?).await }.await {
             Ok(app) => soqrates_mcp::SoqratesMcp::new(Arc::new(app))
                 .serve_stdio()

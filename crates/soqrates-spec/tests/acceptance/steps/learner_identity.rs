@@ -90,7 +90,9 @@ async fn open_pr(w: &mut SpecWorld, who: &str, pr: Option<PrRef>, concepts: &[St
         diff: diff_touching(concepts),
     });
     w.pr = Some(pr.clone());
-    let status = run_check(&w.app, &w.scm, &pr).await.expect("run_check");
+    let status = run_check(&w.app, &w.scm, &crate::fakes::FakeCheckout, &pr)
+        .await
+        .expect("run_check");
     w.status = Some(status);
     let session = w
         .scm
@@ -115,7 +117,9 @@ async fn answer_pr(w: &mut SpecWorld, correct: bool) {
         .collect();
     w.scm.reply(session.key(), answers);
     let pr = w.current_pr().clone();
-    let status = run_check(&w.app, &w.scm, &pr).await.expect("run_check");
+    let status = run_check(&w.app, &w.scm, &crate::fakes::FakeCheckout, &pr)
+        .await
+        .expect("run_check");
     w.status = Some(status);
 }
 

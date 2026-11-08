@@ -58,10 +58,22 @@ pub(crate) trait Llm: Send + Sync {
 const RETRIES: usize = 1;
 
 /// Bounds of the reading of one step (ADR-0008 D2).
-pub(crate) const MAX_TOOL_TURNS: usize = 6;
-pub(crate) const MAX_TOOL_CALLS: usize = 12;
+pub(crate) const MAX_TOOL_TURNS: usize = 8;
+pub(crate) const MAX_TOOL_CALLS: usize = 20;
 pub(crate) const MAX_FILE_BYTES: usize = 20_000;
-pub(crate) const MAX_TOOL_BYTES: usize = 80_000;
+pub(crate) const MAX_TOOL_BYTES: usize = 100_000;
+/// The most paths a glob, matches a grep, commits a log and lines a blame
+/// returns.
+pub(crate) const MAX_GLOB_PATHS: usize = 200;
+pub(crate) const MAX_GREP_MATCHES: usize = 60;
+pub(crate) const MAX_LOG_COMMITS: usize = 15;
+pub(crate) const MAX_BLAME_LINES: u32 = 150;
+/// Bytes kept free for the notes and tags around a file's text.
+const BLOCK_ROOM: usize = 400;
+/// Longer lines in grep and blame output are cut.
+pub(crate) const MAX_LINE_CHARS: usize = 240;
+/// The longest regular expression or glob accepted.
+pub(crate) const MAX_PATTERN_CHARS: usize = 200;
 
 /// What one step has read so far.
 #[derive(Debug, Default)]
@@ -93,12 +105,130 @@ fn cut(text: &str, max: usize) -> &str {
     }
 }
 
-/// Answer one call of the tool `tool` with the `path` argument from
-/// `code`, within `budget`: what the model sees, or why the call was
-/// refused (ADR-0008 D1-D3).
+/// `line` cut to [`MAX_LINE_CHARS`] characters.
+fn short(line: &str) -> String {
+    let mut chars = line.chars();
+    let head: String = chars.by_ref().take(MAX_LINE_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{head}…")
+    } else {
+        head
+    }
+}
+
+/// `raw` as a glob over repository paths (ADR-0008 D1): relative, without
+/// `..`, backslashes, control characters or `:` (git's pathspec magic). A
+/// pattern without `/` matches file names in any directory.
+pub(crate) fn code_glob(raw: &str) -> Option<String> {
+    let raw = raw.trim().trim_start_matches("./");
+    if raw.is_empty()
+        || raw.chars().count() > MAX_PATTERN_CHARS
+        || raw.starts_with('/')
+        || raw.contains(['\\', ':'])
+        || raw.chars().any(char::is_control)
+        || raw.split('/').any(|part| part == "..")
+    {
+        return None;
+    }
+    Some(if raw.contains('/') {
+        raw.to_owned()
+    } else {
+        format!("**/{raw}")
+    })
+}
+
+/// The paths of `files` that match `glob` (as [`code_glob`] returns it).
+pub(crate) fn matching<'a>(files: &'a [String], glob: &str) -> Option<Vec<&'a String>> {
+    let matcher = globset::GlobBuilder::new(glob)
+        .literal_separator(true)
+        .build()
+        .ok()?
+        .compile_matcher();
+    // `**/x` also matches `x` at the root.
+    let root = glob.strip_prefix("**/").and_then(|g| {
+        globset::GlobBuilder::new(g)
+            .literal_separator(true)
+            .build()
+            .ok()
+            .map(|g| g.compile_matcher())
+    });
+    Some(
+        files
+            .iter()
+            .filter(|f| matcher.is_match(f) || root.as_ref().is_some_and(|r| r.is_match(f)))
+            .collect(),
+    )
+}
+
+/// The entries directly in the directory `dir` (`""` is the root), given
+/// every file path: sorted, directories with a trailing `/`. `None` when
+/// `dir` holds no file, so is not a directory.
+pub(crate) fn children(files: &[String], dir: &str) -> Option<Vec<String>> {
+    let prefix = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let mut entries: Vec<String> = files
+        .iter()
+        .filter_map(|f| f.strip_prefix(&prefix))
+        .filter(|rest| !rest.is_empty())
+        .map(|rest| match rest.split_once('/') {
+            Some((sub, _)) => format!("{sub}/"),
+            None => rest.to_owned(),
+        })
+        .collect();
+    entries.sort();
+    entries.dedup();
+    (!entries.is_empty()).then_some(entries)
+}
+
+/// The arguments of a tool call.
+struct Args<'a>(&'a serde_json::Value);
+
+impl Args<'_> {
+    fn text(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(serde_json::Value::as_str)
+    }
+    fn line(&self, key: &str) -> std::result::Result<Option<u32>, String> {
+        match self.0.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => v
+                .as_u64()
+                .filter(|n| *n >= 1)
+                .and_then(|n| u32::try_from(n).ok())
+                .map(Some)
+                .ok_or_else(|| format!("`{key}` must be a line number, 1 or more.")),
+        }
+    }
+    fn flag(&self, key: &str) -> bool {
+        self.0
+            .get(key)
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    }
+    /// The `path` argument as a repository path.
+    fn path(&self) -> std::result::Result<String, String> {
+        let raw = self.text("path");
+        raw.and_then(code_path).ok_or_else(|| {
+            format!(
+                "Invalid path {:?}: give a path relative to the repository root, without `..`.",
+                raw.unwrap_or_default()
+            )
+        })
+    }
+}
+
+fn port_failure(what: &str, e: Error) -> String {
+    format!("{what} failed: {e}")
+}
+
+/// Answer one call of the tool `tool` with `args` from `code`, within
+/// `budget`: what the model sees, or why the call was refused
+/// (ADR-0008 D1-D3). Every tool of `prompts::tools` has its case here.
 pub(crate) async fn serve(
     tool: &str,
-    path: Option<&str>,
+    args: &serde_json::Value,
     code: &impl Codebase,
     budget: &mut Budget,
 ) -> std::result::Result<String, String> {
@@ -109,36 +239,156 @@ pub(crate) async fn serve(
         );
     }
     budget.calls += 1;
-    let Some(clean) = path.and_then(code_path) else {
-        return Err(format!(
-            "Invalid path {:?}: give a path relative to the repository root, without `..`.",
-            path.unwrap_or_default()
-        ));
-    };
+    let args = Args(args);
     let room = MAX_TOOL_BYTES.saturating_sub(budget.bytes);
     let text = match tool {
-        prompts::READ_FILE => match code.read_file(&clean).await {
-            Ok(Some(content)) => {
-                let shown = cut(&content, MAX_FILE_BYTES.min(room));
-                prompts::file_block(&clean, shown, content.len(), shown.len() < content.len())
-            }
-            Ok(None) => return Err(format!("There is no text file at {clean:?}.")),
-            Err(e) => return Err(format!("Reading {clean:?} failed: {e}")),
-        },
-        prompts::LIST_DIR => match code.list_dir(&clean).await {
-            Ok(Some(entries)) => {
-                let block = prompts::listing_block(&clean, &entries);
-                if block.len() > room {
-                    cut(&block, room).to_owned()
-                } else {
-                    block
+        prompts::READ_FILE => {
+            let path = args.path()?;
+            let (start, end) = (args.line("start_line")?, args.line("end_line")?);
+            let content = code
+                .read_file(&path)
+                .await
+                .map_err(|e| port_failure("Reading", e))?
+                .ok_or_else(|| format!("There is no text file at {path:?}."))?;
+            let (shown, range) = if start.is_none() && end.is_none() {
+                (content, None)
+            } else {
+                let total = content.lines().count();
+                let first = start.unwrap_or(1) as usize;
+                let last = end.map_or(total, |e| (e as usize).min(total));
+                if first > last {
+                    return Err(format!(
+                        "{path:?} has {total} lines; ask for a range within them."
+                    ));
                 }
+                let lines: Vec<&str> = content
+                    .lines()
+                    .skip(first - 1)
+                    .take(last + 1 - first)
+                    .collect();
+                (
+                    lines.join("\n") + "\n",
+                    Some((first as u32, last as u32, total)),
+                )
+            };
+            // Room for the block around it, too.
+            let max = MAX_FILE_BYTES.min(room.saturating_sub(BLOCK_ROOM));
+            let cut_text = cut(&shown, max);
+            let was_cut = (cut_text.len() < shown.len()).then_some(shown.len());
+            prompts::file_block(&path, cut_text, range, was_cut)
+        }
+        prompts::LIST_DIR => {
+            let path = args.path()?;
+            let files = code
+                .list_files()
+                .await
+                .map_err(|e| port_failure("Listing", e))?;
+            let entries = children(&files, &path)
+                .ok_or_else(|| format!("There is no directory at {path:?}."))?;
+            prompts::listing_block(&path, &entries)
+        }
+        prompts::GLOB => {
+            let raw = args.text("pattern").unwrap_or_default();
+            let glob = code_glob(raw).ok_or_else(|| {
+                format!("Invalid glob {raw:?}: give a relative pattern, without `..` or `:`.")
+            })?;
+            let files = code
+                .list_files()
+                .await
+                .map_err(|e| port_failure("Listing", e))?;
+            let found = matching(&files, &glob).ok_or_else(|| format!("Invalid glob {raw:?}."))?;
+            let shown: Vec<String> = found
+                .iter()
+                .take(MAX_GLOB_PATHS)
+                .map(|p| (*p).clone())
+                .collect();
+            prompts::files_block(raw, &shown, found.len())
+        }
+        prompts::GREP => {
+            let pattern = args.text("pattern").unwrap_or_default();
+            if pattern.is_empty()
+                || pattern.chars().count() > MAX_PATTERN_CHARS
+                || pattern.chars().any(|c| c.is_control() && c != '\t')
+            {
+                return Err(format!(
+                    "Invalid pattern: give a regular expression of 1 to {MAX_PATTERN_CHARS} characters."
+                ));
             }
-            Ok(None) => return Err(format!("There is no directory at {clean:?}.")),
-            Err(e) => return Err(format!("Listing {clean:?} failed: {e}")),
-        },
+            let glob = match args.text("glob") {
+                None | Some("") => None,
+                Some(raw) => Some(code_glob(raw).ok_or_else(|| {
+                    format!("Invalid glob {raw:?}: give a relative pattern, without `..` or `:`.")
+                })?),
+            };
+            let found = code
+                .grep(
+                    pattern,
+                    glob.as_deref(),
+                    args.flag("ignore_case"),
+                    MAX_GREP_MATCHES + 1,
+                )
+                .await
+                .map_err(|e| port_failure("Searching", e))?;
+            let more = found.len() > MAX_GREP_MATCHES;
+            let lines: Vec<String> = found
+                .iter()
+                .take(MAX_GREP_MATCHES)
+                .map(|m| format!("{}:{}: {}", m.path, m.line, short(&m.text)))
+                .collect();
+            prompts::matches_block(pattern, &lines, more)
+        }
+        prompts::GIT_LOG => {
+            let path = args.path()?;
+            let commits = code
+                .history(&path, MAX_LOG_COMMITS)
+                .await
+                .map_err(|e| port_failure("Reading the history", e))?;
+            let lines: Vec<String> = commits
+                .iter()
+                .map(|c| format!("{} {} {}: {}", c.id, c.date, c.author, short(&c.summary)))
+                .collect();
+            prompts::history_block(&path, &lines)
+        }
+        prompts::GIT_BLAME => {
+            let path = args.path()?;
+            let (Some(start), Some(end)) = (args.line("start_line")?, args.line("end_line")?)
+            else {
+                return Err("Give start_line and end_line.".into());
+            };
+            if end < start {
+                return Err("end_line must not be before start_line.".into());
+            }
+            let end = end.min(start.saturating_add(MAX_BLAME_LINES - 1));
+            let lines = code
+                .blame(&path, start, end)
+                .await
+                .map_err(|e| port_failure("Blaming", e))?
+                .ok_or_else(|| format!("There is no file at {path:?}."))?;
+            let lines: Vec<String> = lines
+                .iter()
+                .map(|l| {
+                    format!(
+                        "{} {} {} {} | {}",
+                        l.line,
+                        l.commit,
+                        l.date,
+                        l.author,
+                        short(&l.text)
+                    )
+                })
+                .collect();
+            prompts::blame_block(&path, &lines)
+        }
         other => return Err(format!("There is no tool {other:?}.")),
     };
+    // Never cut a block: its closing tag would go (ADR-0008 D3).
+    if text.len() > room {
+        return Err(
+            "This output doesn't fit in what is left of the reading limit: narrow it, or answer \
+             from what you have read."
+                .into(),
+        );
+    }
     budget.bytes += text.len();
     Ok(text)
 }

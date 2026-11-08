@@ -2,9 +2,9 @@
 Feature: The examiner reads the code the change is about
   Every examiner step may read the codebase: finding the concepts, writing
   the questions and grading the answers. Each surface gives it the
-  revision it asks about. In CI that is the pull request's head, and a
-  session is graded against the head it was asked for, even after a newer
-  push. A hook gives it what is being committed or pushed. The MCP server
+  revision it asks about. In CI that is the pull request's head, from the
+  checkout the action made, and a session is graded against the head it
+  was asked for, even after a newer push. A hook gives it what is being committed or pushed. The MCP server
   has no codebase: the harness has the code, and the examiner sees only
   the diff.
 

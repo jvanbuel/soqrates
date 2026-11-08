@@ -1,5 +1,6 @@
-//! The reading agent: Rig's agent runtime (`rig-agent`) with two read-only
-//! tools over the codebase (ADR-0008 D2).
+//! The reading agent: Rig's agent runtime (`rig-agent`) with a registry of
+//! read-only tools over the codebase (ADR-0008 D2): read_file, list_dir,
+//! glob, grep, git_log and git_blame, one row each in [`prompts::tools`].
 //!
 //! Rig runs the loop: it sends the requests, dispatches the tool calls and
 //! stops when the model answers. Soqrates keeps the policy:
@@ -27,9 +28,9 @@ use rig_agent::agent::{AgentHook, CompletionCallAction, CompletionCallEvent, Req
 use rig_agent::{AgentBuilder, HookContext};
 use rig_core::DynModel;
 use rig_core::completion::{Message, ToolAnnotations};
+use rig_core::message::ToolName;
 use rig_core::operation::Completion;
-use rig_core::tool::{Tool, ToolContext, ToolExecutionError};
-use serde::Deserialize;
+use rig_core::tool::{DynamicTool, ToolExecutionError, ToolOutput};
 use soqrates_core::ports::Codebase;
 use soqrates_core::{Error, Result};
 
@@ -39,7 +40,7 @@ use crate::prompts;
 /// One tool call, sent from a tool to [`run`], which answers it.
 struct Call {
     tool: &'static str,
-    path: Option<String>,
+    args: serde_json::Value,
     reply: oneshot::Sender<std::result::Result<String, String>>,
 }
 
@@ -49,50 +50,22 @@ struct Bridge(mpsc::UnboundedSender<Call>);
 
 impl Bridge {
     async fn ask(
-        &self,
+        self,
         tool: &'static str,
-        path: Option<String>,
-    ) -> std::result::Result<String, ToolExecutionError> {
+        args: serde_json::Value,
+    ) -> std::result::Result<ToolOutput, ToolExecutionError> {
+        let gone = || ToolExecutionError::refused("The codebase is no longer available.");
         let (reply, answer) = oneshot::channel();
         self.0
-            .unbounded_send(Call { tool, path, reply })
-            .map_err(|_| ToolExecutionError::refused("The codebase is no longer available."))?;
+            .unbounded_send(Call { tool, args, reply })
+            .map_err(|_| gone())?;
         match answer.await {
-            Ok(Ok(text)) => Ok(text),
+            Ok(Ok(text)) => Ok(ToolOutput::text(text)),
             // The model sees why, and can correct the call.
             Ok(Err(why)) => Err(ToolExecutionError::refused(why)),
-            Err(_) => Err(ToolExecutionError::refused(
-                "The codebase is no longer available.",
-            )),
+            Err(_) => Err(gone()),
         }
     }
-}
-
-/// The arguments of both tools. A missing or non-string path is refused by
-/// [`serve`], with a message the model can act on.
-#[derive(Deserialize)]
-struct PathArgs {
-    #[serde(default)]
-    path: Option<serde_json::Value>,
-}
-
-impl PathArgs {
-    fn path(self) -> Option<String> {
-        match self.path {
-            Some(serde_json::Value::String(p)) => Some(p),
-            _ => None,
-        }
-    }
-}
-
-/// The description and argument schema of tool `name`, from
-/// [`prompts::tools`], where evals find every text the model sees.
-fn spec(name: &str) -> (String, serde_json::Value) {
-    prompts::tools()
-        .into_iter()
-        .find(|(n, _, _)| *n == name)
-        .map(|(_, description, parameters)| (description.to_owned(), parameters))
-        .expect("every tool is in prompts::tools")
 }
 
 fn read_only() -> ToolAnnotations {
@@ -103,58 +76,31 @@ fn read_only() -> ToolAnnotations {
         .with_open_world(false)
 }
 
-/// `read_file`: one file of the codebase.
-struct ReadFile(Bridge);
-
-impl Tool for ReadFile {
-    const NAME: &'static str = prompts::READ_FILE;
-    type Args = PathArgs;
-    type Output = String;
-    type Error = ToolExecutionError;
-
-    fn description(&self) -> String {
-        spec(Self::NAME).0
-    }
-    fn parameters(&self) -> serde_json::Value {
-        spec(Self::NAME).1
-    }
-    fn annotations(&self) -> ToolAnnotations {
-        read_only()
-    }
-    async fn call(
-        &self,
-        _context: &mut ToolContext,
-        args: PathArgs,
-    ) -> std::result::Result<String, ToolExecutionError> {
-        self.0.ask(Self::NAME, args.path()).await
-    }
+/// The tool registry: every tool of [`prompts::tools`], as a Rig tool that
+/// sends its calls over `bridge` (ADR-0008 D2).
+fn toolset(bridge: &Bridge) -> Vec<DynamicTool> {
+    prompts::tools()
+        .into_iter()
+        .map(|(name, description, parameters)| {
+            let bridge = bridge.clone();
+            DynamicTool::new(
+                ToolName::new(name).expect("tool names are not empty"),
+                description,
+                parameters,
+                move |args| Box::pin(bridge.clone().ask(name, args)),
+            )
+            .with_annotations(read_only())
+        })
+        .collect()
 }
 
-/// `list_dir`: one directory of the codebase.
-struct ListDir(Bridge);
-
-impl Tool for ListDir {
-    const NAME: &'static str = prompts::LIST_DIR;
-    type Args = PathArgs;
-    type Output = String;
-    type Error = ToolExecutionError;
-
-    fn description(&self) -> String {
-        spec(Self::NAME).0
-    }
-    fn parameters(&self) -> serde_json::Value {
-        spec(Self::NAME).1
-    }
-    fn annotations(&self) -> ToolAnnotations {
-        read_only()
-    }
-    async fn call(
-        &self,
-        _context: &mut ToolContext,
-        args: PathArgs,
-    ) -> std::result::Result<String, ToolExecutionError> {
-        self.0.ask(Self::NAME, args.path()).await
-    }
+/// The names of the registry's tools.
+#[cfg(test)]
+pub(crate) fn tool_names() -> Vec<&'static str> {
+    prompts::tools()
+        .into_iter()
+        .map(|(name, _, _)| name)
+        .collect()
 }
 
 /// Takes the reading tools away for a model call after the reading turns,
@@ -197,8 +143,7 @@ pub(crate) async fn run(
     let spent = Arc::new(AtomicBool::new(false));
     let agent = AgentBuilder::new(model.clone())
         .preamble(prompts::with_tools(request.system))
-        .tool(ReadFile(bridge.clone()))
-        .tool(ListDir(bridge))
+        .dynamic_tools(toolset(&bridge))
         .output_schema_raw(request.schema)
         .add_hook(ReadingLimit {
             reads: transcript.is_empty(),
@@ -219,7 +164,7 @@ pub(crate) async fn run(
         match future::select(pending, answers.next()).await {
             Either::Left((finished, _)) => break finished,
             Either::Right((Some(call), still)) => {
-                let answer = serve(call.tool, call.path.as_deref(), code, &mut budget).await;
+                let answer = serve(call.tool, &call.args, code, &mut budget).await;
                 if budget.exhausted() {
                     spent.store(true, Ordering::SeqCst);
                 }

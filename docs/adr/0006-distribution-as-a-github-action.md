@@ -1,6 +1,6 @@
 # ADR-0006: Distributing Soqrates as a GitHub Action
 
-- **Status:** Accepted
+- **Status:** Accepted; D1 amended by ADR-0008
 - **Date:** 2026-11-07
 - **Refines:** ADR-0001 D8 (CI round trip), D14 (dogfooding)
 
@@ -44,9 +44,12 @@ The repository root holds a composite action, `action.yml`. It runs
 their own workflow file, with the triggers and the job-level `if:` filter
 for comment edits, since an action cannot declare its own triggers. The
 guide `docs/using-the-action.md` gives that file in full, to copy as is.
-The action never checks out
-the user's code: Soqrates reads the diff through the API, so no code from a
-pull request runs with the workflow's secrets. It fetches the state branch
+The action never runs the user's code: Soqrates reads the diff through the
+API, so no code from a pull request runs with the workflow's secrets.
+*Amended by [ADR-0008](0008-examiner-reads-the-codebase.md) D4:* the action
+checks out the pull request's head into a directory of its own, without
+credentials, only for the examiner to read; nothing from it is built or
+run. It fetches the state branch
 into a directory of its own, so it needs no checkout either.
 
 ### D2: The action runs a prebuilt, checksummed release binary

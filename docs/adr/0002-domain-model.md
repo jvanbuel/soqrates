@@ -45,7 +45,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Answer | `Answer` | assessment | The author's response to a question. | reply |
 | Grade | `Grade` | assessment | Again (wrong), Hard, Good or Easy. Only Again is incorrect. | score, mark |
 | Examiner | `Examiner` | assessment | Extracts concepts, writes questions and grades answers. An LLM in production. | grader, model |
-| Codebase | `Codebase` | app | The repository at the revision a change produces, as the examiner may read it: files and directories only, never the working tree (ADR-0008). | workspace, checkout |
+| Codebase | `Codebase` | app | The repository at the revision a change produces, as the examiner may read it: its files, searches and history, from git, never the working tree (ADR-0008). In CI it comes from a checkout of the pull request. | workspace |
 | Learner profile | `LearnerProfile` | learner | Everything Soqrates knows about one learner. An aggregate. | learner model, account |
 | Level | `Level` | learner | Novice, Intermediate or Expert. Drives the format. | rank, skill level |
 | Review card | `ReviewCard` | learner | The FSRS schedule state of one concept for one author. | flashcard |

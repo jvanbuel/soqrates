@@ -11,6 +11,7 @@ rig-core = { version = "0.46", features = ["reqwest"] }
 # The agent runtime that reads the codebase (ADR-0008 D2).
 rig-agent = { version = "0.46", default-features = false }
 futures = "0.3"
+globset = "0.4"
 schemars = "1"
 serde.workspace = true
 serde_json.workspace = true

@@ -357,9 +357,9 @@ fn action_inputs(action: &str) -> BTreeSet<String> {
         .collect()
 }
 
-// @adr-0006-d1
+// @adr-0006-d1 @adr-0008-d4
 #[test]
-fn soqrates_ships_as_a_composite_action_that_never_checks_out_code() {
+fn soqrates_ships_as_a_composite_action_that_never_runs_the_code() {
     let action = action_yml();
     assert!(
         action.contains("using: composite"),
@@ -369,17 +369,39 @@ fn soqrates_ships_as_a_composite_action_that_never_checks_out_code() {
         action.contains("\"$SOQRATES\" \"${args[@]}\"") && action.contains("args=(ci "),
         "ADR-0006 D1: the action runs `soqrates ci`"
     );
-    for file in [
-        "action.yml",
-        "action/install.sh",
-        "action/state-checkout.sh",
-    ] {
+    for file in ["action/install.sh", "action/state-checkout.sh"] {
         let text = read(workspace_root().join(file));
         assert!(
             !text.contains("actions/checkout"),
             "ADR-0006 D1: {file} must not check out the user's code"
         );
     }
+    // ADR-0008 D4: one checkout of the pull request, in a directory of its
+    // own, without credentials, and only Soqrates is pointed at it.
+    assert_eq!(
+        action.matches("actions/checkout@").count(),
+        1,
+        "ADR-0008 D4: the action checks out the pull request once"
+    );
+    for (needle, why) in [
+        ("path: .soqrates/code", "into a directory of its own"),
+        ("persist-credentials: false", "keeping no credentials in it"),
+        (
+            "continue-on-error: true",
+            "falling back to the diff if it fails",
+        ),
+        ("args+=(--code-dir \"$CODE_DIR\")", "for Soqrates to read"),
+    ] {
+        assert!(
+            action.contains(needle),
+            "ADR-0008 D4: the action checks out the pull request {why} (`{needle}`)"
+        );
+    }
+    assert_eq!(
+        action.matches(".soqrates/code").count(),
+        2,
+        "ADR-0008 D4: nothing but the checkout and Soqrates' --code-dir touches the code"
+    );
     let guide = read(workspace_root().join("docs/using-the-action.md"));
     for (needle, why) in [
         ("uses: jvanbuel/soqrates@v", "calls the released action"),

@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
 use soqrates_core::ports::{
-    Clock, Codebase, Examiner, LearnerStore, Prompter, ScmProvider, StateStore,
+    BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, Examiner, LearnerStore,
+    Prompter, ScmProvider, StateStore,
 };
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
@@ -639,12 +640,13 @@ impl FakeScm {
     }
 }
 
-/// The text of every file in the fake forge's repository at `revision`.
+/// The text of every file in the pull request's checkout at `revision`.
 pub fn file_at(revision: &str) -> String {
     format!("the code at {revision}")
 }
 
-/// A local codebase for hooks (ADR-0008 D4): every file reads as `text`.
+/// A codebase in which every file reads as its `text` (ADR-0008 D4). The
+/// other operations find nothing: the fake examiner only reads.
 #[derive(Debug, Clone)]
 pub struct FakeCodebase(pub String);
 
@@ -652,25 +654,39 @@ impl Codebase for FakeCodebase {
     async fn read_file(&self, _path: &str) -> Result<Option<String>> {
         Ok(Some(self.0.clone()))
     }
-    async fn list_dir(&self, _path: &str) -> Result<Option<Vec<String>>> {
-        Ok(Some(vec!["src/".into()]))
+    async fn list_files(&self) -> Result<Vec<String>> {
+        Ok(vec![PROBE_FILE.to_string()])
+    }
+    async fn grep(
+        &self,
+        _pattern: &str,
+        _glob: Option<&str>,
+        _ignore_case: bool,
+        _limit: usize,
+    ) -> Result<Vec<CodeMatch>> {
+        Ok(Vec::new())
+    }
+    async fn history(&self, _path: &str, _limit: usize) -> Result<Vec<CodeCommit>> {
+        Ok(Vec::new())
+    }
+    async fn blame(&self, _path: &str, _start: u32, _end: u32) -> Result<Option<Vec<BlameLine>>> {
+        Ok(None)
+    }
+}
+
+/// The checkout of a pull request, as the action makes it (ADR-0008 D4):
+/// every commit reads as [`file_at`] it.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FakeCheckout;
+
+impl CodeSource for FakeCheckout {
+    type Code = FakeCodebase;
+    fn at(&self, revision: &str) -> FakeCodebase {
+        FakeCodebase(file_at(revision))
     }
 }
 
 impl ScmProvider for FakeScm {
-    async fn read_file(&self, _pr: &PrRef, revision: &str, _path: &str) -> Result<Option<String>> {
-        Ok(Some(file_at(revision)))
-    }
-
-    async fn list_dir(
-        &self,
-        _pr: &PrRef,
-        _revision: &str,
-        _path: &str,
-    ) -> Result<Option<Vec<String>>> {
-        Ok(Some(vec!["src/".into()]))
-    }
-
     async fn pull_request(&self, pr: &PrRef) -> Result<PullRequest> {
         self.state
             .lock()

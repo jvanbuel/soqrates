@@ -82,11 +82,47 @@ pub trait StateStore: Send + Sync {
 /// stores only general concepts (D5). A port failure means "unreachable".
 pub trait LearnerStore: StateStore {}
 
+/// A line that [`Codebase::grep`] found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeMatch {
+    pub path: String,
+    /// 1-based.
+    pub line: u32,
+    pub text: String,
+}
+
+/// A commit in a file's history ([`Codebase::history`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeCommit {
+    /// Abbreviated commit id.
+    pub id: String,
+    pub author: String,
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    /// The first line of the message.
+    pub summary: String,
+}
+
+/// A line of a file with the commit that last changed it
+/// ([`Codebase::blame`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlameLine {
+    /// 1-based.
+    pub line: u32,
+    /// Abbreviated commit id; all zeros for a change not committed yet.
+    pub commit: String,
+    pub author: String,
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    pub text: String,
+}
+
 /// A read-only view of the repository at the revision a change produces
 /// (ADR-0008 D1). Reads only what version control holds at that revision:
 /// never the working tree, untracked or ignored files, or anything outside
 /// the repository. Paths are as [`crate::assessment::code_path`] returns
-/// them; implementations may assume so.
+/// them, and patterns are checked by the examiner; implementations may
+/// assume so.
 pub trait Codebase: Send + Sync {
     /// Whether there is any code to read. `false` for [`NoCodebase`]: the
     /// examiner then offers no tools (ADR-0008 D5).
@@ -94,12 +130,36 @@ pub trait Codebase: Send + Sync {
         true
     }
     /// The text of the file at `path`, or `None` when there is no such
-    /// file, it is a directory, or it isn't text.
+    /// file, or it isn't text.
     fn read_file(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send;
-    /// The entries directly in the directory `path` (`""` is the root),
-    /// sorted, directories with a trailing `/`; `None` when there is no
-    /// such directory.
-    fn list_dir(&self, path: &str) -> impl Future<Output = Result<Option<Vec<String>>>> + Send;
+    /// Every file path at the revision, sorted.
+    fn list_files(&self) -> impl Future<Output = Result<Vec<String>>> + Send;
+    /// The lines matching the extended regular expression `pattern`, in
+    /// files matching `glob` if given (`**` matches across directories),
+    /// at most `limit`, in path and line order. Binary files are skipped.
+    fn grep(
+        &self,
+        pattern: &str,
+        glob: Option<&str>,
+        ignore_case: bool,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<CodeMatch>>> + Send;
+    /// The latest `limit` commits that changed `path` (`""` for the whole
+    /// repository), newest first, up to the revision. May be cut short
+    /// where the history is.
+    fn history(
+        &self,
+        path: &str,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<CodeCommit>>> + Send;
+    /// Lines `start..=end` of `path` with the commit that last changed each;
+    /// `None` when there is no such file.
+    fn blame(
+        &self,
+        path: &str,
+        start: u32,
+        end: u32,
+    ) -> impl Future<Output = Result<Option<Vec<BlameLine>>>> + Send;
 }
 
 /// The codebase of a surface that has none, such as MCP (ADR-0008 D4).
@@ -113,7 +173,22 @@ impl Codebase for NoCodebase {
     async fn read_file(&self, _path: &str) -> Result<Option<String>> {
         Ok(None)
     }
-    async fn list_dir(&self, _path: &str) -> Result<Option<Vec<String>>> {
+    async fn list_files(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+    async fn grep(
+        &self,
+        _pattern: &str,
+        _glob: Option<&str>,
+        _ignore_case: bool,
+        _limit: usize,
+    ) -> Result<Vec<CodeMatch>> {
+        Ok(Vec::new())
+    }
+    async fn history(&self, _path: &str, _limit: usize) -> Result<Vec<CodeCommit>> {
+        Ok(Vec::new())
+    }
+    async fn blame(&self, _path: &str, _start: u32, _end: u32) -> Result<Option<Vec<BlameLine>>> {
         Ok(None)
     }
 }
@@ -125,25 +200,52 @@ impl<T: Codebase> Codebase for &T {
     fn read_file(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send {
         (**self).read_file(path)
     }
-    fn list_dir(&self, path: &str) -> impl Future<Output = Result<Option<Vec<String>>>> + Send {
-        (**self).list_dir(path)
+    fn list_files(&self) -> impl Future<Output = Result<Vec<String>>> + Send {
+        (**self).list_files()
+    }
+    fn grep(
+        &self,
+        pattern: &str,
+        glob: Option<&str>,
+        ignore_case: bool,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<CodeMatch>>> + Send {
+        (**self).grep(pattern, glob, ignore_case, limit)
+    }
+    fn history(
+        &self,
+        path: &str,
+        limit: usize,
+    ) -> impl Future<Output = Result<Vec<CodeCommit>>> + Send {
+        (**self).history(path, limit)
+    }
+    fn blame(
+        &self,
+        path: &str,
+        start: u32,
+        end: u32,
+    ) -> impl Future<Output = Result<Option<Vec<BlameLine>>>> + Send {
+        (**self).blame(path, start, end)
     }
 }
 
-/// The codebase of a pull request at one commit, read through its forge
-/// (ADR-0008 D4).
-pub struct ScmCodebase<'a, P> {
-    pub scm: &'a P,
-    pub pr: &'a PrRef,
-    pub revision: String,
+/// Where the CI check finds the code of a pull request at a commit
+/// (ADR-0008 D4): a checkout of it, or nowhere.
+pub trait CodeSource: Send + Sync {
+    type Code: Codebase;
+    /// The codebase at commit `revision`. Not available when the commit
+    /// isn't there, e.g. after a force-push beyond the checkout's history.
+    fn at(&self, revision: &str) -> Self::Code;
 }
 
-impl<P: ScmProvider> Codebase for ScmCodebase<'_, P> {
-    fn read_file(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send {
-        self.scm.read_file(self.pr, &self.revision, path)
-    }
-    fn list_dir(&self, path: &str) -> impl Future<Output = Result<Option<Vec<String>>>> + Send {
-        self.scm.list_dir(self.pr, &self.revision, path)
+/// A CI check without the code: every revision is [`NoCodebase`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoCodeSource;
+
+impl CodeSource for NoCodeSource {
+    type Code = NoCodebase;
+    fn at(&self, _revision: &str) -> NoCodebase {
+        NoCodebase
     }
 }
 
@@ -179,21 +281,6 @@ pub trait Examiner: Send + Sync {
 /// A forge/CI provider (D4). Implemented by `soqrates-scm-github` and friends.
 pub trait ScmProvider: Send + Sync {
     fn pull_request(&self, pr: &PrRef) -> impl Future<Output = Result<PullRequest>> + Send;
-    /// The file at `path` in commit `revision` of `pr`'s repository, as
-    /// [`Codebase::read_file`] (ADR-0008 D4).
-    fn read_file(
-        &self,
-        pr: &PrRef,
-        revision: &str,
-        path: &str,
-    ) -> impl Future<Output = Result<Option<String>>> + Send;
-    /// The directory `path` in commit `revision`, as [`Codebase::list_dir`].
-    fn list_dir(
-        &self,
-        pr: &PrRef,
-        revision: &str,
-        path: &str,
-    ) -> impl Future<Output = Result<Option<Vec<String>>>> + Send;
     /// The change on `pr` from commit `from` to commit `to`, or `None` when
     /// `from` is not an ancestor of `to`, e.g. after a force-push
     /// (ADR-0002 D9).

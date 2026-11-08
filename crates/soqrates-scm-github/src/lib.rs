@@ -31,12 +31,11 @@ use soqrates_core::{
 };
 
 use crate::format::{
-    AnswerComment, AnswerSource, ContentEntry, EDITOR_QUERY, STATUS_CONTEXT, StatusState,
-    author_id, boxes_read, commit_status, diff_of_files, dir_entries, editor_database_id,
-    encode_path, file_text, graphql_base, hinted_comment, host_of, is_slug, marker_key,
-    merge_answers, parse_checkboxes, render_graded_questions, render_hint, render_questions,
-    render_results, render_superseded_questions, select_answer_comment, session_marker, split_repo,
-    takes_answers,
+    AnswerComment, AnswerSource, EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, boxes_read,
+    commit_status, diff_of_files, editor_database_id, graphql_base, hinted_comment, host_of,
+    is_slug, marker_key, merge_answers, parse_checkboxes, render_graded_questions, render_hint,
+    render_questions, render_results, render_superseded_questions, select_answer_comment,
+    session_marker, split_repo, takes_answers,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -258,49 +257,6 @@ impl GitHubProvider {
         Ok(editor_database_id(&data).map(|id| self.author(id)))
     }
 
-    /// The contents API reply for `path` at commit `revision`: the file, or
-    /// a directory's entries. `None` when there is nothing at `path`
-    /// (ADR-0008 D4). Works for commits of forks too: GitHub keeps a PR's
-    /// head commits in the base repository.
-    async fn contents(
-        &self,
-        pr: &PrRef,
-        revision: &str,
-        path: &str,
-    ) -> Result<Option<Vec<ContentEntry>>> {
-        let (owner, name) = repo(pr)?;
-        let reply = self
-            .client()?
-            .repos(owner, name)
-            .get_content()
-            .path(encode_path(path))
-            .r#ref(revision)
-            .send()
-            .await;
-        let items = match reply {
-            Ok(items) => items.items,
-            Err(octocrab::Error::GitHub { source, .. }) if source.status_code.as_u16() == 404 => {
-                return Ok(None);
-            }
-            Err(e) => return Err(port("get contents")(e)),
-        };
-        Ok(Some(
-            items
-                .into_iter()
-                .map(|c| ContentEntry {
-                    // Inlined as base64 only up to 1 MB; larger files
-                    // have encoding `none` and no content.
-                    text: (c.encoding.as_deref() == Some("base64"))
-                        .then(|| c.decoded_content())
-                        .flatten(),
-                    name: c.name,
-                    path: c.path,
-                    kind: c.r#type,
-                })
-                .collect(),
-        ))
-    }
-
     /// Replace the body of the comment `id`.
     async fn edit_comment(&self, pr: &PrRef, id: u64, body: String, what: &str) -> Result<()> {
         let (owner, name) = repo(pr)?;
@@ -401,25 +357,6 @@ impl ScmProvider for GitHubProvider {
             head_sha,
             diff: Diff(diff),
         })
-    }
-
-    async fn read_file(&self, pr: &PrRef, revision: &str, path: &str) -> Result<Option<String>> {
-        Ok(self
-            .contents(pr, revision, path)
-            .await?
-            .and_then(|entries| file_text(entries, path)))
-    }
-
-    async fn list_dir(
-        &self,
-        pr: &PrRef,
-        revision: &str,
-        path: &str,
-    ) -> Result<Option<Vec<String>>> {
-        Ok(self
-            .contents(pr, revision, path)
-            .await?
-            .and_then(|entries| dir_entries(entries, path)))
     }
 
     async fn diff_between(&self, pr: &PrRef, from: &str, to: &str) -> Result<Option<Diff>> {
