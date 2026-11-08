@@ -15,13 +15,18 @@ use std::future::Future;
 use std::str::FromStr;
 
 use rig_core::DynModel;
-use rig_core::completion::CompletionRequest;
+use rig_core::completion::message::{
+    CallId, ToolChoice, ToolName, ToolResult, ToolResultContent, UserContent,
+};
+use rig_core::completion::{
+    AssistantContent, AssistantMessage, CompletionRequest, Message, ToolDefinition,
+};
 use rig_core::operation::Completion;
 use rig_core::providers::{anthropic::Anthropic, ollama::Ollama, openai::OpenAI};
-use soqrates_core::ports::Examiner;
+use soqrates_core::ports::{Codebase, Examiner};
 use soqrates_core::{Answer, Concept, Diff, Error, Grading, Question, QuestionBrief, Result};
 
-use crate::examiner::{Core, Llm, LlmRequest};
+use crate::examiner::{Core, Llm, LlmReply, LlmRequest, ToolCall, Turn};
 
 /// The model used when none is configured.
 pub const DEFAULT_MODEL: &str = "anthropic:claude-sonnet-5-5";
@@ -165,36 +170,123 @@ impl RigExaminer {
 }
 
 impl Examiner for RigExaminer {
-    async fn extract_concepts(&self, diff: &Diff) -> Result<Vec<Concept>> {
-        self.core.extract_concepts(diff).await
+    async fn extract_concepts(&self, diff: &Diff, code: &impl Codebase) -> Result<Vec<Concept>> {
+        self.core.extract_concepts(diff, code).await
     }
-    async fn write_question(&self, concept: &Concept, brief: &QuestionBrief) -> Result<Question> {
-        self.core.write_question(concept, brief).await
+    async fn write_question(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        code: &impl Codebase,
+    ) -> Result<Question> {
+        self.core.write_question(concept, brief, code).await
     }
-    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
-        self.core.grade(question, answer).await
+    async fn grade(
+        &self,
+        question: &Question,
+        answer: &Answer,
+        code: &impl Codebase,
+    ) -> Result<Grading> {
+        self.core.grade(question, answer, code).await
     }
 }
 
 /// The Rig side of the seam: one completion request per call, with the
 /// schema as native structured output where the provider supports it.
+/// Turns are rebuilt from their canonical fields on every request, which
+/// Rig replays on any provider.
 struct RigLlm {
     model: DynModel<Completion>,
     label: String,
 }
 
+fn tool_name(name: &str) -> Result<ToolName> {
+    ToolName::new(name).map_err(|_| Error::Port("examiner: a tool call has no name".into()))
+}
+
+/// `request` as a Rig request (ADR-0008 D2).
+fn rig_request(request: LlmRequest) -> Result<CompletionRequest> {
+    let mut history = vec![Message::user(request.user)];
+    for turn in request.turns {
+        history.push(match turn {
+            Turn::User(text) => Message::user(text),
+            Turn::Assistant { text, calls } => {
+                let mut content = Vec::new();
+                if !text.trim().is_empty() {
+                    content.push(AssistantContent::text(text));
+                }
+                for call in calls {
+                    content.push(AssistantContent::tool_call(
+                        call.id,
+                        tool_name(&call.name)?,
+                        call.arguments,
+                    ));
+                }
+                Message::Assistant(AssistantMessage::new(content))
+            }
+            Turn::ToolResults(outputs) => {
+                let mut content = Vec::with_capacity(outputs.len());
+                for output in outputs {
+                    content.push(UserContent::ToolResult(ToolResult {
+                        call: CallId::from_wire(output.call.id),
+                        name: tool_name(&output.call.name)?,
+                        content: vec![ToolResultContent::text(output.text)],
+                        is_error: output.is_error,
+                    }));
+                }
+                Message::User { content }
+            }
+        });
+    }
+    let prompt = history.pop().expect("holds the task prompt");
+    let mut rig = CompletionRequest::new(prompt)
+        .messages(history)
+        .preamble(request.system);
+    if !request.tools.is_empty() {
+        let mut tools = Vec::with_capacity(request.tools.len());
+        for tool in request.tools {
+            tools.push(ToolDefinition::new(
+                tool_name(tool.name)?,
+                tool.description,
+                tool.parameters,
+            ));
+        }
+        rig = rig.tools(tools).tool_choice(if request.may_call_tools {
+            ToolChoice::Auto
+        } else {
+            ToolChoice::None
+        });
+    }
+    if let Some(schema) = request.schema {
+        rig = rig.output_schema(schema);
+    }
+    Ok(rig)
+}
+
 impl Llm for RigLlm {
-    fn complete(&self, request: LlmRequest) -> impl Future<Output = Result<String>> + Send {
-        let request = CompletionRequest::new(request.user)
-            .preamble(request.system)
-            .output_schema(request.schema);
-        let call = self.model.call(request);
+    fn complete(&self, request: LlmRequest) -> impl Future<Output = Result<LlmReply>> + Send {
         let label = self.label.clone();
+        let call = rig_request(request).map(|r| self.model.call(r));
         async move {
-            let response = call
+            let response = call?
                 .await
                 .map_err(|e| Error::Port(format!("examiner: {label}: {e}")))?;
-            Ok(response.text())
+            let calls = response
+                .tool_calls()
+                .enumerate()
+                .map(|(i, c)| ToolCall {
+                    id: c
+                        .id
+                        .provider()
+                        .map_or_else(|| format!("call_{i}"), |id| id.as_str().to_owned()),
+                    name: c.function.name.to_string(),
+                    arguments: serde_json::Value::Object(c.function.arguments.clone()),
+                })
+                .collect();
+            Ok(LlmReply {
+                text: response.text(),
+                calls,
+            })
         }
     }
 }

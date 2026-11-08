@@ -3,6 +3,7 @@
 mod adaptive_questions;
 mod answer_commands;
 mod ci_check;
+mod codebase;
 mod common;
 mod domain_model;
 mod feedback;

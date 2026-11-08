@@ -465,6 +465,7 @@ async fn run_local_hook(w: &mut SpecWorld, id: Identity) {
         HookKind::PreCommit,
         &a,
         &diff_touching(&["rust.traits".to_string()]),
+        &crate::fakes::FakeCodebase("the staged change".into()),
     )
     .await
     .expect("run_hook");

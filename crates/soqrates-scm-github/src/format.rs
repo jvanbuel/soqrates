@@ -55,6 +55,63 @@ pub fn author_id(host: &str, user_id: u64) -> String {
 }
 
 /// Split `owner/name`.
+/// `path` for a URL: each segment percent-encoded, so that `?`, `#`, `%`
+/// and spaces stay part of the path (ADR-0008 D4).
+pub fn encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~/".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// One entry of a contents API reply: its path, its type (`file`, `dir`,
+/// `symlink`, `submodule`) and, for a file, its decoded text.
+pub struct ContentEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: String,
+    pub text: Option<String>,
+}
+
+/// Whether a contents API reply for `path` is that file itself, rather
+/// than a directory's entries.
+fn is_the_file(entries: &[ContentEntry], path: &str) -> bool {
+    matches!(entries, [one] if one.kind == "file" && one.path == path)
+}
+
+/// The text of the file at `path`, from the contents API reply for it.
+/// `None` for a directory, a file too large to be inlined, or a binary
+/// file.
+pub fn file_text(entries: Vec<ContentEntry>, path: &str) -> Option<String> {
+    if !is_the_file(&entries, path) {
+        return None;
+    }
+    let text = entries.into_iter().next()?.text?;
+    (!text.contains(['\0', '\u{FFFD}'])).then_some(text)
+}
+
+/// The entries of the directory `path`, sorted, directories with a
+/// trailing `/`; `None` when the reply is for a file.
+pub fn dir_entries(entries: Vec<ContentEntry>, path: &str) -> Option<Vec<String>> {
+    if is_the_file(&entries, path) {
+        return None;
+    }
+    let mut names: Vec<String> = entries
+        .into_iter()
+        .map(|e| match e.kind.as_str() {
+            "dir" | "submodule" => format!("{}/", e.name),
+            _ => e.name,
+        })
+        .collect();
+    names.sort();
+    Some(names)
+}
+
 pub fn split_repo(repo: &str) -> Option<(&str, &str)> {
     let (owner, name) = repo.split_once('/')?;
     (!owner.is_empty() && !name.is_empty() && !name.contains('/')).then_some((owner, name))
@@ -998,6 +1055,41 @@ pub fn diff_of_files(files: &[(String, Option<String>, Option<String>)]) -> Stri
 
 #[cfg(test)]
 mod tests {
+    // @adr-0008-d4
+    #[test]
+    fn contents_replies_become_files_and_listings() {
+        let entry = |name: &str, path: &str, kind: &str, text: Option<&str>| ContentEntry {
+            name: name.into(),
+            path: path.into(),
+            kind: kind.into(),
+            text: text.map(Into::into),
+        };
+        let file = || vec![entry("lib.rs", "src/lib.rs", "file", Some("fn x() {}\n"))];
+        assert_eq!(
+            file_text(file(), "src/lib.rs").as_deref(),
+            Some("fn x() {}\n")
+        );
+        assert_eq!(dir_entries(file(), "src/lib.rs"), None);
+        // A directory holding one file is still a directory.
+        assert_eq!(
+            dir_entries(file(), "src").unwrap(),
+            vec!["lib.rs".to_string()]
+        );
+        assert_eq!(file_text(file(), "src"), None);
+        let dir = vec![
+            entry("b.rs", "src/b.rs", "file", None),
+            entry("a", "src/a", "dir", None),
+        ];
+        assert_eq!(dir_entries(dir, "src").unwrap(), vec!["a/", "b.rs"]);
+        // Too large to inline, or binary.
+        assert_eq!(file_text(vec![entry("x", "x", "file", None)], "x"), None);
+        assert_eq!(
+            file_text(vec![entry("x", "x", "file", Some("PNG\0"))], "x"),
+            None
+        );
+        assert_eq!(encode_path("a b/c?d#e%.rs"), "a%20b/c%3Fd%23e%25.rs");
+    }
+
     use super::*;
     use chrono::TimeZone;
     use soqrates_core::{

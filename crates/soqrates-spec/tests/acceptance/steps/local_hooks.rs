@@ -12,9 +12,16 @@ async fn run(w: &mut SpecWorld, id: &str, hook: &str, diff: Diff) {
     let kind = hook_kind(hook);
     w.prompter.asked.clear();
     w.prompter.reported.clear();
-    let decision = run_hook(&w.app, &mut w.prompter, kind, &author(id), &diff)
-        .await
-        .expect("run_hook");
+    let decision = run_hook(
+        &w.app,
+        &mut w.prompter,
+        kind,
+        &author(id),
+        &diff,
+        &crate::fakes::FakeCodebase(format!("what the {hook} hook is about")),
+    )
+    .await
+    .expect("run_hook");
     w.hook_runs.push(HookRun {
         kind,
         decision,

@@ -196,7 +196,8 @@ async fn run_hook(cli: &Cli, kind: HookArg) -> Result<ExitCode, String> {
         HookArg::PreCommit => (Vcs::Git, HookKind::PreCommit),
         HookArg::PrePush => (Vcs::Jj, HookKind::PrePush),
     };
-    let settings = settings(cli, local::repo_root(vcs).as_deref())?;
+    let root = local::repo_root(vcs);
+    let settings = settings(cli, root.as_deref())?;
     let diff = Diff(local::diff(vcs)?);
     if diff.is_empty() {
         return Ok(ExitCode::SUCCESS);
@@ -207,7 +208,10 @@ async fn run_hook(cli: &Cli, kind: HookArg) -> Result<ExitCode, String> {
     };
     let app = build_app(cli, &settings).await?;
     let author = local_author(vcs, &settings)?;
-    let decision = hook::run_hook(&app, &mut prompter, kind, &author, &diff)
+    let root = root.ok_or("not inside a repository")?;
+    // What is being committed or pushed (ADR-0008 D4).
+    let code = local::LocalCodebase::new(vcs, root);
+    let decision = hook::run_hook(&app, &mut prompter, kind, &author, &diff, &code)
         .await
         .map_err(|e| e.to_string())?;
     Ok(match decision {

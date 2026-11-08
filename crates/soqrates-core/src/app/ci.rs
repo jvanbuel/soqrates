@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::Result;
 use crate::app::engine::{ProfileLocation, SessionOutcome, Soqrates};
-use crate::app::ports::{Clock, Examiner, ScmProvider, StateStore};
+use crate::app::ports::{Clock, Examiner, NoCodebase, ScmCodebase, ScmProvider, StateStore};
 use crate::assessment::Question;
 use crate::delivery::{CheckStatus, Mode, PrRef, PrRounds, PullRequest, Round, Session};
 use crate::ids::{ConceptId, SessionKey};
@@ -20,6 +20,27 @@ pub fn session_key(pr: &PullRequest) -> SessionKey {
 /// The start of every session key of `pr`, whatever its head.
 fn key_prefix(pr: &PrRef) -> String {
     format!("{}#{}@", pr.repo, pr.number)
+}
+
+/// The codebase the session `key` of `pr` was asked about: the head commit
+/// in its key, even after a newer push (ADR-0008 D4). `fallback` for a key
+/// of another form.
+fn codebase_of<'a, P: ScmProvider>(
+    scm: &'a P,
+    pr: &'a PrRef,
+    key: &SessionKey,
+    fallback: &str,
+) -> ScmCodebase<'a, P> {
+    let revision = key
+        .0
+        .strip_prefix(&key_prefix(pr))
+        .filter(|head| !head.is_empty())
+        .unwrap_or(fallback);
+    ScmCodebase {
+        scm,
+        pr,
+        revision: revision.to_owned(),
+    }
 }
 
 /// One run of the CI check. Call it on PR open/push and when the author
@@ -111,7 +132,7 @@ where
     // comments, or to grade an empty session, is made good by the next one.
     supersede_earlier(app, scm, pr, &session).await?;
     if session.questions().is_empty() {
-        let outcome = app.submit(key, &[]).await?;
+        let outcome = app.submit(key, &[], &NoCodebase).await?;
         return finish(app, scm, pr, &outcome).await.map(Some);
     }
     scm.hint_commands(pr, &session).await?;
@@ -129,7 +150,8 @@ where
             // (ADR-0004 D9).
             scm.acknowledge_answers(pr, &session).await?;
             scm.set_check(pr, CheckStatus::Pending, GRADING).await?;
-            let outcome = app.submit(key, &answers).await?;
+            let code = codebase_of(scm, pr, key, &pull.head_sha);
+            let outcome = app.submit(key, &answers, &code).await?;
             scm.post_results(pr, &session, &outcome).await?;
             finish(app, scm, pr, &outcome).await.map(Some)
         }
@@ -218,8 +240,9 @@ where
         None => Vec::new(),
     };
     let skip = already_asked(app, &rounds, &carried).await?;
+    let code = codebase_of(scm, pr, &key, &pull.head_sha);
     let questions = app
-        .compose_questions(&pull.author, &diff, &skip, &carried)
+        .compose_questions(&pull.author, &diff, &skip, &carried, &code)
         .await?;
 
     // Nothing new: the latest round stands, rather than reposting the same
@@ -255,7 +278,7 @@ where
     if session.questions().is_empty() {
         // Nothing to ask: grade the empty session right away.
         supersede_earlier(app, scm, pr, &session).await?;
-        let outcome = app.submit(&key, &[]).await?;
+        let outcome = app.submit(&key, &[], &NoCodebase).await?;
         return finish(app, scm, pr, &outcome).await;
     }
     let summary = format!(
@@ -300,7 +323,8 @@ where
     // Acknowledged like any pickup (ADR-0004 D9), but the status is left
     // to the new head's round.
     scm.acknowledge_answers(pr, &session).await?;
-    let outcome = app.submit(session.key(), &answers).await?;
+    let code = codebase_of(scm, pr, session.key(), &prev.head);
+    let outcome = app.submit(session.key(), &answers, &code).await?;
     scm.post_results(pr, &session, &outcome).await
 }
 

@@ -32,7 +32,7 @@ on:
     types: [created, edited]
 
 permissions:
-  contents: write       # push the soqrates-state branch (learner state)
+  contents: write       # push the soqrates-state branch; read the files of the PR head
   pull-requests: write  # read the pull request and its diff
   issues: write         # post the questions and results as comments
   statuses: write       # set the `soqrates` commit status
@@ -85,6 +85,10 @@ commit SHA if you prefer.
 
 - **The pull request diff** goes to the model provider you choose (Anthropic
   by default), which writes and grades the questions.
+- **Files of the PR head** that the examiner chooses to read go there too,
+  through the GitHub API: only files of the PR's head commit, never other
+  files of the runner, and at most 80 KB per examiner step
+  ([ADR-0008](adr/0008-examiner-reads-the-codebase.md)).
 - **Learner state** is kept on the `soqrates-state` branch of your
   repository: one JSON document per learner profile, identity link and
   pending session. **Anyone who can read the repository can read that

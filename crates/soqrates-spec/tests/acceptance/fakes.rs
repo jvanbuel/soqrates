@@ -9,7 +9,9 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
-use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
+use soqrates_core::ports::{
+    Clock, Codebase, Examiner, LearnerStore, Prompter, ScmProvider, StateStore,
+};
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
     ConceptScope, Diff, Error, Grade, GradedSession, Grading, GradingJournal, Identity,
@@ -63,6 +65,9 @@ pub const WRONG_TEXT: &str = "I don't know";
 /// - Grading (the answer key): the correct choice, or an open answer starting
 ///   with `correct`, gets the configurable `correct_grade` (default `Good`);
 ///   anything else gets `Again`.
+/// - Code (ADR-0008): every step reads [`PROBE_FILE`] from the codebase it
+///   is given, if there is one, and records what it read in
+///   [`FakeExaminer::reads`].
 /// - Scope (ADR-0003 D5): `General` unless a scenario classifies the concept
 ///   otherwise with [`FakeExaminer::classify`].
 #[derive(Debug, Clone)]
@@ -73,11 +78,25 @@ pub struct FakeExaminer {
     /// Whether multiple-choice questions come without option reasons, as
     /// questions stored before reasons existed do.
     without_reasons: Arc<Mutex<bool>>,
+    /// What each step read: the step and the text of [`PROBE_FILE`].
+    reads: Arc<Mutex<Vec<(ExaminerStep, String)>>>,
+}
+
+/// The file the [`FakeExaminer`] reads from every codebase it is given.
+pub const PROBE_FILE: &str = "src/lib.rs";
+
+/// An examiner step (ADR-0008 D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExaminerStep {
+    Extract,
+    Write,
+    Grade,
 }
 
 impl Default for FakeExaminer {
     fn default() -> Self {
         Self {
+            reads: Arc::default(),
             correct_grade: Arc::new(Mutex::new(Grade::Good)),
             scopes: Arc::new(Mutex::new(HashMap::new())),
             weights: Arc::new(Mutex::new(HashMap::new())),
@@ -87,6 +106,21 @@ impl Default for FakeExaminer {
 }
 
 impl FakeExaminer {
+    /// What each step read from its codebase, in order (ADR-0008 D2).
+    pub fn reads(&self) -> Vec<(ExaminerStep, String)> {
+        self.reads.lock().unwrap().clone()
+    }
+
+    /// Read [`PROBE_FILE`] from `code`, if there is any code, as `step`.
+    async fn probe(&self, step: ExaminerStep, code: &impl Codebase) -> Result<()> {
+        if code.is_available()
+            && let Some(text) = code.read_file(PROBE_FILE).await?
+        {
+            self.reads.lock().unwrap().push((step, text));
+        }
+        Ok(())
+    }
+
     pub fn set_correct_grade(&self, grade: Grade) {
         *self.correct_grade.lock().unwrap() = grade;
     }
@@ -165,7 +199,8 @@ impl FakeExaminer {
 }
 
 impl Examiner for FakeExaminer {
-    async fn extract_concepts(&self, diff: &Diff) -> Result<Vec<Concept>> {
+    async fn extract_concepts(&self, diff: &Diff, code: &impl Codebase) -> Result<Vec<Concept>> {
+        self.probe(ExaminerStep::Extract, code).await?;
         Ok(marker_lines(diff)
             .into_iter()
             .map(|(id, location)| {
@@ -185,7 +220,13 @@ impl Examiner for FakeExaminer {
     /// Writes the brief's first kind (ADR-0007 D2): the author's first hunk
     /// for `ExplainYourChange`, a general snippet for the other kinds that
     /// show code, with code options for `ChooseTheFix`.
-    async fn write_question(&self, concept: &Concept, brief: &QuestionBrief) -> Result<Question> {
+    async fn write_question(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        codebase: &impl Codebase,
+    ) -> Result<Question> {
+        self.probe(ExaminerStep::Write, codebase).await?;
         let format = brief.format;
         let kind = brief.kinds[0];
         let code = match kind {
@@ -238,7 +279,13 @@ impl Examiner for FakeExaminer {
         })
     }
 
-    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
+    async fn grade(
+        &self,
+        question: &Question,
+        answer: &Answer,
+        code: &impl Codebase,
+    ) -> Result<Grading> {
+        self.probe(ExaminerStep::Grade, code).await?;
         if answer.question != question.id {
             return Err(Error::Invalid(format!(
                 "answer for {:?} graded against {:?}",
@@ -592,7 +639,38 @@ impl FakeScm {
     }
 }
 
+/// The text of every file in the fake forge's repository at `revision`.
+pub fn file_at(revision: &str) -> String {
+    format!("the code at {revision}")
+}
+
+/// A local codebase for hooks (ADR-0008 D4): every file reads as `text`.
+#[derive(Debug, Clone)]
+pub struct FakeCodebase(pub String);
+
+impl Codebase for FakeCodebase {
+    async fn read_file(&self, _path: &str) -> Result<Option<String>> {
+        Ok(Some(self.0.clone()))
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Option<Vec<String>>> {
+        Ok(Some(vec!["src/".into()]))
+    }
+}
+
 impl ScmProvider for FakeScm {
+    async fn read_file(&self, _pr: &PrRef, revision: &str, _path: &str) -> Result<Option<String>> {
+        Ok(Some(file_at(revision)))
+    }
+
+    async fn list_dir(
+        &self,
+        _pr: &PrRef,
+        _revision: &str,
+        _path: &str,
+    ) -> Result<Option<Vec<String>>> {
+        Ok(Some(vec!["src/".into()]))
+    }
+
     async fn pull_request(&self, pr: &PrRef) -> Result<PullRequest> {
         self.state
             .lock()

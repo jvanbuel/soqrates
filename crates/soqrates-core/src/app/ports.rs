@@ -82,12 +82,82 @@ pub trait StateStore: Send + Sync {
 /// stores only general concepts (D5). A port failure means "unreachable".
 pub trait LearnerStore: StateStore {}
 
+/// A read-only view of the repository at the revision a change produces
+/// (ADR-0008 D1). Reads only what version control holds at that revision:
+/// never the working tree, untracked or ignored files, or anything outside
+/// the repository. Paths are as [`crate::assessment::code_path`] returns
+/// them; implementations may assume so.
+pub trait Codebase: Send + Sync {
+    /// Whether there is any code to read. `false` for [`NoCodebase`]: the
+    /// examiner then offers no tools (ADR-0008 D5).
+    fn is_available(&self) -> bool {
+        true
+    }
+    /// The text of the file at `path`, or `None` when there is no such
+    /// file, it is a directory, or it isn't text.
+    fn read_file(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send;
+    /// The entries directly in the directory `path` (`""` is the root),
+    /// sorted, directories with a trailing `/`; `None` when there is no
+    /// such directory.
+    fn list_dir(&self, path: &str) -> impl Future<Output = Result<Option<Vec<String>>>> + Send;
+}
+
+/// The codebase of a surface that has none, such as MCP (ADR-0008 D4).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoCodebase;
+
+impl Codebase for NoCodebase {
+    fn is_available(&self) -> bool {
+        false
+    }
+    async fn read_file(&self, _path: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    async fn list_dir(&self, _path: &str) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
+}
+
+impl<T: Codebase> Codebase for &T {
+    fn is_available(&self) -> bool {
+        (**self).is_available()
+    }
+    fn read_file(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send {
+        (**self).read_file(path)
+    }
+    fn list_dir(&self, path: &str) -> impl Future<Output = Result<Option<Vec<String>>>> + Send {
+        (**self).list_dir(path)
+    }
+}
+
+/// The codebase of a pull request at one commit, read through its forge
+/// (ADR-0008 D4).
+pub struct ScmCodebase<'a, P> {
+    pub scm: &'a P,
+    pub pr: &'a PrRef,
+    pub revision: String,
+}
+
+impl<P: ScmProvider> Codebase for ScmCodebase<'_, P> {
+    fn read_file(&self, path: &str) -> impl Future<Output = Result<Option<String>>> + Send {
+        self.scm.read_file(self.pr, &self.revision, path)
+    }
+    fn list_dir(&self, path: &str) -> impl Future<Output = Result<Option<Vec<String>>>> + Send {
+        self.scm.list_dir(self.pr, &self.revision, path)
+    }
+}
+
 /// The LLM-backed part of Soqrates: understands diffs, writes and grades
-/// questions (D3). Implemented by `soqrates-examiner` on top of Rig.
+/// questions (D3). Implemented by `soqrates-examiner` on top of Rig. Each
+/// step may read `code`, the codebase the change is made in (ADR-0008 D2).
 pub trait Examiner: Send + Sync {
     /// The concepts `diff` exercises, each with where in the diff it was
     /// found (ADR-0007 D4).
-    fn extract_concepts(&self, diff: &Diff) -> impl Future<Output = Result<Vec<Concept>>> + Send;
+    fn extract_concepts(
+        &self,
+        diff: &Diff,
+        code: &impl Codebase,
+    ) -> impl Future<Output = Result<Vec<Concept>>> + Send;
     /// Write a question about `concept` as `brief` asks: its format, the
     /// first of its kinds that suits the concept, and code from or
     /// mirroring its hunks (ADR-0007 D2-D4).
@@ -95,18 +165,35 @@ pub trait Examiner: Send + Sync {
         &self,
         concept: &Concept,
         brief: &QuestionBrief,
+        code: &impl Codebase,
     ) -> impl Future<Output = Result<Question>> + Send;
     /// Grade `answer` and explain the grade to the author (ADR-0004 D1).
     fn grade(
         &self,
         question: &Question,
         answer: &Answer,
+        code: &impl Codebase,
     ) -> impl Future<Output = Result<Grading>> + Send;
 }
 
 /// A forge/CI provider (D4). Implemented by `soqrates-scm-github` and friends.
 pub trait ScmProvider: Send + Sync {
     fn pull_request(&self, pr: &PrRef) -> impl Future<Output = Result<PullRequest>> + Send;
+    /// The file at `path` in commit `revision` of `pr`'s repository, as
+    /// [`Codebase::read_file`] (ADR-0008 D4).
+    fn read_file(
+        &self,
+        pr: &PrRef,
+        revision: &str,
+        path: &str,
+    ) -> impl Future<Output = Result<Option<String>>> + Send;
+    /// The directory `path` in commit `revision`, as [`Codebase::list_dir`].
+    fn list_dir(
+        &self,
+        pr: &PrRef,
+        revision: &str,
+        path: &str,
+    ) -> impl Future<Output = Result<Option<Vec<String>>>> + Send;
     /// The change on `pr` from commit `from` to commit `to`, or `None` when
     /// `from` is not an ancestor of `to`, e.g. after a force-push
     /// (ADR-0002 D9).

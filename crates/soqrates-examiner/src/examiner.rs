@@ -2,14 +2,20 @@
 //!
 //! [`Llm`] is the seam: [`crate::RigExaminer`] implements it with Rig, the
 //! tests with canned replies.
+//!
+//! Each step may first read the codebase in a bounded loop (ADR-0008 D2):
+//! the model calls `read_file` and `list_dir`, the examiner answers, and
+//! the model then gives its structured answer in a turn that may not call
+//! tools. Retries replay what was read; they don't read again.
 
 use std::future::Future;
 
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
+use soqrates_core::ports::Codebase;
 use soqrates_core::{
     Answer, AnswerBody, Concept, Diff, Error, Grade, Grading, Question, QuestionBody,
-    QuestionBrief, QuestionFormat, QuestionId, Result,
+    QuestionBrief, QuestionFormat, QuestionId, Result, code_path,
 };
 
 use crate::output::{
@@ -18,43 +24,292 @@ use crate::output::{
 };
 use crate::prompts;
 
-/// One request to the model: a system prompt, a user prompt and the JSON
-/// schema the reply must satisfy.
-#[derive(Debug, Clone)]
-pub(crate) struct LlmRequest {
-    pub system: &'static str,
-    pub user: String,
-    pub schema: schemars::Schema,
+/// A tool the model may call.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ToolSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    /// JSON schema of the arguments.
+    pub parameters: serde_json::Value,
 }
 
-/// Sends a request and returns the model's raw text reply.
+/// A tool call the model made.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ToolCall {
+    /// The provider's id for the call, echoed in its result.
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// The answer to one tool call.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ToolOutput {
+    pub call: ToolCall,
+    pub text: String,
+    /// The call was refused or failed; `text` says why.
+    pub is_error: bool,
+}
+
+/// One turn after the task prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Turn {
+    Assistant { text: String, calls: Vec<ToolCall> },
+    ToolResults(Vec<ToolOutput>),
+    User(String),
+}
+
+/// One request to the model: a system prompt, the task prompt, the turns
+/// that followed it, the tools, and the JSON schema the reply must satisfy
+/// if it is the answer.
+#[derive(Debug, Clone)]
+pub(crate) struct LlmRequest {
+    pub system: String,
+    pub user: String,
+    pub turns: Vec<Turn>,
+    /// Sent whenever the conversation used tools: providers want the
+    /// definitions of tools called earlier in it.
+    pub tools: Vec<ToolSpec>,
+    /// Whether the model may call `tools` in this turn.
+    pub may_call_tools: bool,
+    /// Set for an answer, which may not call tools.
+    pub schema: Option<schemars::Schema>,
+}
+
+impl LlmRequest {
+    /// A request for a `schema` answer to `user`, without tools.
+    fn answer(system: &str, user: String, schema: schemars::Schema) -> Self {
+        LlmRequest {
+            system: system.to_owned(),
+            user,
+            turns: Vec::new(),
+            tools: Vec::new(),
+            may_call_tools: false,
+            schema: Some(schema),
+        }
+    }
+}
+
+/// The model's reply: its text and the tools it called.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct LlmReply {
+    pub text: String,
+    pub calls: Vec<ToolCall>,
+}
+
+impl LlmReply {
+    #[cfg(test)]
+    pub fn text(text: impl Into<String>) -> Self {
+        LlmReply {
+            text: text.into(),
+            calls: Vec::new(),
+        }
+    }
+}
+
+/// Sends a request and returns the model's reply.
 pub(crate) trait Llm: Send + Sync {
-    fn complete(&self, request: LlmRequest) -> impl Future<Output = Result<String>> + Send;
+    fn complete(&self, request: LlmRequest) -> impl Future<Output = Result<LlmReply>> + Send;
 }
 
 /// How many times a reply that fails validation is asked for again.
 const RETRIES: usize = 1;
+
+/// Bounds of the reading loop of one step (ADR-0008 D2).
+pub(crate) const MAX_TOOL_TURNS: usize = 6;
+pub(crate) const MAX_TOOL_CALLS: usize = 12;
+pub(crate) const MAX_FILE_BYTES: usize = 20_000;
+pub(crate) const MAX_TOOL_BYTES: usize = 80_000;
+
+/// What one step has read so far.
+#[derive(Default)]
+struct Budget {
+    calls: usize,
+    bytes: usize,
+}
+
+impl Budget {
+    fn exhausted(&self) -> bool {
+        self.calls >= MAX_TOOL_CALLS || self.bytes >= MAX_TOOL_BYTES
+    }
+}
+
+pub(crate) fn tool_specs() -> Vec<ToolSpec> {
+    prompts::tools()
+        .into_iter()
+        .map(|(name, description, parameters)| ToolSpec {
+            name,
+            description,
+            parameters,
+        })
+        .collect()
+}
+
+/// `text` cut to at most `max` bytes at a char boundary, preferring a line
+/// boundary.
+fn cut(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let head = &text[..end];
+    match head.rfind('\n') {
+        Some(newline) if newline > 0 => &head[..=newline],
+        _ => head,
+    }
+}
+
+/// Answer `call` from `code`, within `budget`.
+async fn run_tool(call: &ToolCall, code: &impl Codebase, budget: &mut Budget) -> ToolOutput {
+    let refuse = |text: String| ToolOutput {
+        call: call.clone(),
+        text,
+        is_error: true,
+    };
+    if budget.exhausted() {
+        return refuse(
+            "The reading limit is reached. Do not call more tools; answer from what you have read."
+                .into(),
+        );
+    }
+    budget.calls += 1;
+    let raw = call.arguments.get("path").and_then(|p| p.as_str());
+    let Some(path) = raw.and_then(code_path) else {
+        return refuse(format!(
+            "Invalid path {:?}: give a path relative to the repository root, without `..`.",
+            raw.unwrap_or_default()
+        ));
+    };
+    let room = MAX_TOOL_BYTES.saturating_sub(budget.bytes);
+    let text = match call.name.as_str() {
+        prompts::READ_FILE => match code.read_file(&path).await {
+            Ok(Some(content)) => {
+                let shown = cut(&content, MAX_FILE_BYTES.min(room));
+                prompts::file_block(&path, shown, content.len(), shown.len() < content.len())
+            }
+            Ok(None) => return refuse(format!("There is no text file at {path:?}.")),
+            Err(e) => return refuse(format!("Reading {path:?} failed: {e}")),
+        },
+        prompts::LIST_DIR => match code.list_dir(&path).await {
+            Ok(Some(entries)) => {
+                let block = prompts::listing_block(&path, &entries);
+                if block.len() > room {
+                    cut(&block, room).to_owned()
+                } else {
+                    block
+                }
+            }
+            Ok(None) => return refuse(format!("There is no directory at {path:?}.")),
+            Err(e) => return refuse(format!("Listing {path:?} failed: {e}")),
+        },
+        other => return refuse(format!("There is no tool {other:?}.")),
+    };
+    budget.bytes += text.len();
+    ToolOutput {
+        call: call.clone(),
+        text,
+        is_error: false,
+    }
+}
+
+/// What a step read before answering: the system prompt to answer with,
+/// and the turns to replay in every attempt (ADR-0008 D2, D6).
+pub(crate) struct Reading {
+    system: String,
+    turns: Vec<Turn>,
+}
+
+impl Reading {
+    /// A request for a `schema` answer to `user`, after what was read.
+    fn answer(&self, user: String, schema: schemars::Schema) -> LlmRequest {
+        LlmRequest {
+            system: self.system.clone(),
+            user,
+            turns: self.turns.clone(),
+            // Only when the conversation called tools.
+            tools: if self.turns.is_empty() {
+                Vec::new()
+            } else {
+                tool_specs()
+            },
+            may_call_tools: false,
+            schema: Some(schema),
+        }
+    }
+}
 
 pub(crate) struct Core<L> {
     pub llm: L,
 }
 
 impl<L: Llm> Core<L> {
-    /// Ask for a `T`, validate it with `validate`, and retry once with the
-    /// problem explained if the reply is unusable.
+    /// Let the model read `code` for the task `user`, if there is any
+    /// code. Without a codebase, nothing is sent and the step answers as
+    /// it did before it could read (ADR-0008 D5).
+    async fn read(&self, system: &str, user: &str, code: &impl Codebase) -> Result<Reading> {
+        if !code.is_available() {
+            return Ok(Reading {
+                system: system.to_owned(),
+                turns: Vec::new(),
+            });
+        }
+        let system = prompts::with_tools(system);
+        let mut turns = Vec::new();
+        let mut budget = Budget::default();
+        for _ in 0..MAX_TOOL_TURNS {
+            let reply = self
+                .llm
+                .complete(LlmRequest {
+                    system: system.clone(),
+                    user: user.to_owned(),
+                    turns: turns.clone(),
+                    tools: tool_specs(),
+                    may_call_tools: true,
+                    schema: None,
+                })
+                .await?;
+            if reply.calls.is_empty() {
+                // Done reading. Its text, if any, is not the answer: that
+                // comes next, with the schema.
+                break;
+            }
+            let mut outputs = Vec::with_capacity(reply.calls.len());
+            for call in &reply.calls {
+                outputs.push(run_tool(call, code, &mut budget).await);
+            }
+            turns.push(Turn::Assistant {
+                text: reply.text,
+                calls: reply.calls,
+            });
+            turns.push(Turn::ToolResults(outputs));
+        }
+        if !turns.is_empty() {
+            turns.push(Turn::User(prompts::FINISH.to_owned()));
+        }
+        Ok(Reading { system, turns })
+    }
+
+    /// Let the model read `code`, then ask for a `T`, validate it with
+    /// `validate`, and retry once with the problem explained if the reply
+    /// is unusable.
     async fn structured<T, U>(
         &self,
         what: &str,
         system: &'static str,
         user: String,
+        code: &impl Codebase,
         validate: impl Fn(T) -> std::result::Result<U, String> + Sync,
     ) -> Result<U>
     where
         T: DeserializeOwned + JsonSchema,
     {
         let schema = schemars::schema_for!(T);
+        let reading = self.read(system, &user, code).await?;
         self.retrying(what, user, |prompt| {
-            self.attempt(system, prompt, &schema, &validate)
+            self.attempt(&reading, prompt, &schema, &validate)
         })
         .await
     }
@@ -82,11 +337,11 @@ impl<L: Llm> Core<L> {
         )))
     }
 
-    /// One request for a `T`, parsed and validated: `Ok(Err(problem))` if
-    /// the reply is unusable.
+    /// One request for a `T` after `reading`, parsed and validated:
+    /// `Ok(Err(problem))` if the reply is unusable.
     async fn attempt<T, U>(
         &self,
-        system: &'static str,
+        reading: &Reading,
         prompt: String,
         schema: &schemars::Schema,
         validate: &(impl Fn(T) -> std::result::Result<U, String> + Sync),
@@ -96,12 +351,9 @@ impl<L: Llm> Core<L> {
     {
         let raw = self
             .llm
-            .complete(LlmRequest {
-                system,
-                user: prompt,
-                schema: schema.clone(),
-            })
-            .await?;
+            .complete(reading.answer(prompt, schema.clone()))
+            .await?
+            .text;
         Ok(output::parse_json::<T>(&raw).and_then(validate))
     }
 
@@ -117,31 +369,30 @@ impl<L: Llm> Core<L> {
         &self,
         concept: &Concept,
         brief: &QuestionBrief,
+        code: &impl Codebase,
     ) -> Result<MultipleChoice> {
         let schema = schemars::schema_for!(MultipleChoiceOutput);
         let schema = &schema;
-        self.retrying(
-            "a multiple-choice question",
-            prompts::write_multiple_choice(concept, brief),
-            |prompt| async move {
-                let mc = match self
-                    .attempt(
-                        prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
-                        prompt,
-                        schema,
-                        &|out| output::validate_multiple_choice(out, brief),
-                    )
-                    .await?
-                {
-                    Ok(mc) => mc,
-                    Err(why) => return Ok(Err(why)),
-                };
-                Ok(match self.unlisted_options(&mc).await? {
-                    None => Ok(mc),
-                    Some(why) => Err(why),
+        let user = prompts::write_multiple_choice(concept, brief);
+        let reading = self
+            .read(prompts::WRITE_MULTIPLE_CHOICE_SYSTEM, &user, code)
+            .await?;
+        let reading = &reading;
+        self.retrying("a multiple-choice question", user, |prompt| async move {
+            let mc = match self
+                .attempt(reading, prompt, schema, &|out| {
+                    output::validate_multiple_choice(out, brief)
                 })
-            },
-        )
+                .await?
+            {
+                Ok(mc) => mc,
+                Err(why) => return Ok(Err(why)),
+            };
+            Ok(match self.unlisted_options(&mc).await? {
+                None => Ok(mc),
+                Some(why) => Err(why),
+            })
+        })
         .await
     }
 
@@ -152,9 +403,9 @@ impl<L: Llm> Core<L> {
     async fn unlisted_options(&self, mc: &MultipleChoice) -> Result<Option<String>> {
         let raw = self
             .llm
-            .complete(LlmRequest {
-                system: prompts::CHECK_OPTIONS_SYSTEM,
-                user: prompts::check_options(
+            .complete(LlmRequest::answer(
+                prompts::CHECK_OPTIONS_SYSTEM,
+                prompts::check_options(
                     &mc.prompt,
                     mc.code.as_ref(),
                     &mc.options,
@@ -162,15 +413,20 @@ impl<L: Llm> Core<L> {
                     &mc.reasons,
                     mc.correct,
                 ),
-                schema: schemars::schema_for!(OptionCheckOutput),
-            })
-            .await?;
+                schemars::schema_for!(OptionCheckOutput),
+            ))
+            .await?
+            .text;
         Ok(output::parse_json::<OptionCheckOutput>(&raw)
             .ok()
             .and_then(output::unlisted_option_problem))
     }
 
-    pub async fn extract_concepts(&self, diff: &Diff) -> Result<Vec<Concept>> {
+    pub async fn extract_concepts(
+        &self,
+        diff: &Diff,
+        code: &impl Codebase,
+    ) -> Result<Vec<Concept>> {
         if diff.is_empty() {
             return Ok(Vec::new());
         }
@@ -179,6 +435,7 @@ impl<L: Llm> Core<L> {
             "concept extraction",
             prompts::EXTRACT_CONCEPTS_SYSTEM,
             prompts::extract_concepts(&diff.0),
+            code,
             |out: ConceptsOutput| output::validate_concepts(out, &files),
         )
         .await
@@ -191,13 +448,14 @@ impl<L: Llm> Core<L> {
         &self,
         concept: &Concept,
         brief: &QuestionBrief,
+        code: &impl Codebase,
     ) -> Result<Question> {
         let format = brief.format;
         let (kind, body, explanation) = match format {
             QuestionFormat::MultipleChoice => {
                 // One reason per option, written with the options and
                 // checked to discuss only those (issue #5).
-                let mc = self.multiple_choice(concept, brief).await?;
+                let mc = self.multiple_choice(concept, brief, code).await?;
                 // The reasons name options by content, so they survive the
                 // shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
@@ -218,6 +476,7 @@ impl<L: Llm> Core<L> {
                         "an open question",
                         prompts::WRITE_OPEN_SYSTEM,
                         prompts::write_open(concept, brief),
+                        code,
                         |out: OpenOutput| output::validate_open(out, brief),
                     )
                     .await?;
@@ -245,7 +504,15 @@ impl<L: Llm> Core<L> {
     /// option). An open answer is graded by
     /// the model, whose rationale becomes the feedback. The question's
     /// explanation is never sent to the model.
-    pub async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
+    ///
+    /// The grader may read `code` to check what the answer says about it
+    /// (ADR-0008 D2).
+    pub async fn grade(
+        &self,
+        question: &Question,
+        answer: &Answer,
+        code: &impl Codebase,
+    ) -> Result<Grading> {
         let choice = |grade| Grading {
             grade,
             feedback: String::new(),
@@ -266,7 +533,7 @@ impl<L: Llm> Core<L> {
             (
                 QuestionBody::Open {
                     prompt,
-                    code,
+                    code: snippet,
                     rubric,
                 },
                 AnswerBody::Text(text),
@@ -280,7 +547,8 @@ impl<L: Llm> Core<L> {
                 self.structured(
                     "grading",
                     prompts::GRADE_OPEN_SYSTEM,
-                    prompts::grade_open(prompt, code.as_ref(), rubric, text),
+                    prompts::grade_open(prompt, snippet.as_ref(), rubric, text),
+                    code,
                     |out: GradeOutput| output::validate_grade(out),
                 )
                 .await

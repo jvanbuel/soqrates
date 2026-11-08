@@ -178,7 +178,11 @@ fn engine_session(w: &SpecWorld) -> Session {
 }
 
 async fn submit_expecting_error(w: &mut SpecWorld, key: &SessionKey, answers: &[Answer]) {
-    match w.app.submit(key, answers).await {
+    match w
+        .app
+        .submit(key, answers, &soqrates_core::ports::NoCodebase)
+        .await
+    {
         Ok(o) => panic!("the submission was accepted: {o:?}"),
         Err(e) => w.domain.submit_error = Some(e),
     }

@@ -4,7 +4,7 @@
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 use soqrates_core::ci::{run_check, session_key};
-use soqrates_core::ports::StateStore;
+use soqrates_core::ports::{NoCodebase, StateStore};
 use soqrates_core::{ConceptId, PrRef, PullRequest, Session};
 
 use super::{answer_table, author, check_status, concepts, correctness, quoted};
@@ -63,8 +63,8 @@ async fn submitted_twice_concurrently(w: &mut SpecWorld) {
         .map(|q| FakeExaminer::answer(q, true))
         .collect();
     let (a, b) = tokio::join!(
-        w.app.submit(s.key(), &answers),
-        w.app.submit(s.key(), &answers)
+        w.app.submit(s.key(), &answers, &NoCodebase),
+        w.app.submit(s.key(), &answers, &NoCodebase)
     );
     let ok = [a.is_ok(), b.is_ok()].iter().filter(|x| **x).count();
     assert_eq!(ok, 1, "exactly one submission is graded: {a:?} / {b:?}");

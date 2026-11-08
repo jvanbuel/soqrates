@@ -26,6 +26,9 @@
 //! `session_key`, a key is derived from the author and the current time
 //! (`mcp:<author>:<time>:<n>`).
 //!
+//! The examiner sees only the diff: the harness has the code, Soqrates
+//! doesn't (ADR-0008 D4).
+//!
 //! Result: `{session_key, questions: [{id, concept, format, prompt,
 //! options?}]}`. `options` is present for multiple-choice questions only.
 //!
@@ -77,7 +80,7 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use soqrates_core::ports::{Clock, Examiner, StateStore};
+use soqrates_core::ports::{Clock, Examiner, NoCodebase, StateStore};
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, Diff, Error, Identity, QuestionBody, QuestionId, Result,
     SessionKey, Soqrates,
@@ -203,7 +206,7 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
         };
         let session = self
             .app
-            .start_session(key, &author, &Diff(args.diff))
+            .start_session(key, &author, &Diff(args.diff), &NoCodebase)
             .await?;
         // Only what the learner may see: never `correct` or `rubric`.
         let questions: Vec<Value> = session
@@ -266,7 +269,8 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let outcome = self.app.submit(&key, &answers).await?;
+        // The harness has the code; Soqrates sees only the diff (ADR-0008 D4).
+        let outcome = self.app.submit(&key, &answers, &NoCodebase).await?;
         let grades: Vec<Value> = outcome
             .grades
             .iter()
@@ -517,18 +521,29 @@ mod wire {
     //! JSON-RPC, as an MCP client would.
 
     use super::*;
+    use soqrates_core::ports::Codebase;
     use soqrates_core::{Answer, Concept, Question, QuestionBrief};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     struct NoExaminer;
     impl Examiner for NoExaminer {
-        async fn extract_concepts(&self, _: &Diff) -> Result<Vec<Concept>> {
+        async fn extract_concepts(&self, _: &Diff, _: &impl Codebase) -> Result<Vec<Concept>> {
             Ok(Vec::new())
         }
-        async fn write_question(&self, _: &Concept, _: &QuestionBrief) -> Result<Question> {
+        async fn write_question(
+            &self,
+            _: &Concept,
+            _: &QuestionBrief,
+            _: &impl Codebase,
+        ) -> Result<Question> {
             Err(Error::Invalid("no questions".into()))
         }
-        async fn grade(&self, _: &Question, _: &Answer) -> Result<soqrates_core::Grading> {
+        async fn grade(
+            &self,
+            _: &Question,
+            _: &Answer,
+            _: &impl Codebase,
+        ) -> Result<soqrates_core::Grading> {
             Err(Error::Invalid("no grading".into()))
         }
     }
