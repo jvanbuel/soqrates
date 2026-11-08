@@ -120,6 +120,19 @@
         "last_review": "2026-11-08T11:19:21.919639663Z"
       }
     },
+    "project.session.question-budget-cap": {
+      "card": {
+        "due": "2026-11-09T16:24:56.473686819Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-08T16:24:56.473686819Z"
+      }
+    },
     "rust.async.enum-dispatch-trait": {
       "card": {
         "due": "2026-11-10T15:40:54.957182562Z",
@@ -135,15 +148,15 @@
     },
     "rust.cargo.optional-features": {
       "card": {
-        "due": "2026-11-08T15:40:54.957182562Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
+        "due": "2026-11-11T16:24:56.473686819Z",
+        "stability": 2.60517702373931,
+        "difficulty": 7.118300161986166,
+        "elapsed_days": 1,
+        "scheduled_days": 3,
+        "reps": 2,
         "lapses": 0,
         "state": "Review",
-        "last_review": "2026-11-07T15:40:54.957182562Z"
+        "last_review": "2026-11-08T16:24:56.473686819Z"
       }
     },
     "rust.control-flow.option-match-filter": {
@@ -174,15 +187,15 @@
     },
     "rust.sqlx.any-driver": {
       "card": {
-        "due": "2026-11-08T15:40:54.957182562Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
+        "due": "2026-11-09T16:24:56.473686819Z",
+        "stability": 0.27491830347692675,
+        "difficulty": 9.198653481986167,
+        "elapsed_days": 1,
         "scheduled_days": 1,
-        "reps": 1,
-        "lapses": 0,
+        "reps": 2,
+        "lapses": 1,
         "state": "Review",
-        "last_review": "2026-11-07T15:40:54.957182562Z"
+        "last_review": "2026-11-08T16:24:56.473686819Z"
       }
     },
     "rust.traits.from_str": {
@@ -228,7 +241,7 @@
       "card": {
         "due": "2026-11-09T15:09:26.049766993Z",
         "stability": 0.27491830347692675,
-        "difficulty": 9.198653481986167,
+        "difficulty": 9.198653481986169,
         "elapsed_days": 1,
         "scheduled_days": 1,
         "reps": 2,
@@ -430,6 +443,27 @@
       "format": "MultipleChoice",
       "grade": "Again",
       "at": "2026-11-08T15:09:26.049766993Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.cargo.optional-features",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-08T16:24:56.473686819Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.sqlx.any-driver",
+      "format": "Open",
+      "grade": "Again",
+      "at": "2026-11-08T16:24:56.473686819Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.session.question-budget-cap",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-08T16:24:56.473686819Z",
       "via": "github.com:16427728"
     }
   ],
