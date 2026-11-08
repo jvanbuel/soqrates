@@ -202,6 +202,7 @@ impl Grade {
 
 #[cfg(test)]
 mod tests {
+    use super::{Diff, QuestionBody};
 
     #[test]
     fn questions_stored_before_option_reasons_still_load() {
@@ -228,7 +229,6 @@ mod tests {
         assert_eq!(body.reason(2), None, "a blank reason is no reason");
         assert_eq!(body.reason(3), None);
     }
-    use super::{Diff, QuestionBody};
 
     fn file(path: &str, line: &str) -> String {
         format!(

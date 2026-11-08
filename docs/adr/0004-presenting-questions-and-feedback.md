@@ -48,9 +48,11 @@ The reasons are written in the same reply as the options, and each one is
 about an option that is shown, so there is no free-form explanation left to
 discuss answers the question doesn't offer. Evals (ADR-0001 D13) are to
 measure whether reasons still do; a separate check is added only if they
-show it is needed. For an
-open question, the explanation is the grader's rationale. `SessionOutcome`
-carries these results, and the PR, the terminal and MCP all present them.
+show it is needed.
+
+For an open question, the explanation is the grader's rationale.
+`SessionOutcome` carries these results, and the PR, the terminal and MCP
+all present them.
 
 ### D2: The PR shows this session's results, never the profile
 **Enforcement:** automated
