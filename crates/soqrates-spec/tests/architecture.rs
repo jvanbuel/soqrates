@@ -532,8 +532,8 @@ fn releases_are_semver_tags_and_this_repository_runs_the_action_from_source() {
     }
     let release_plz = read(workspace_root().join(".github/workflows/release-plz.yml"));
     for (needle, why) in [
-        ("command: release-pr", "keeps a release PR open"),
-        ("command: release", "tags merged releases"),
+        ("command: release-pr\n", "keeps a release PR open"),
+        ("command: release\n", "tags merged releases"),
         (
             "uses: ./.github/workflows/release.yml",
             "builds the binaries of a new release",

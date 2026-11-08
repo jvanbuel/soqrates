@@ -48,7 +48,8 @@ You can also edit the version and changelog in the release PR before merging.
   To have it run, add a fine-grained personal access token for this
   repository with **Contents** and **Pull requests** read and write as the
   repository secret `RELEASE_PLZ_TOKEN`; release-plz then opens the PR with
-  it. The Soqrates check skips pull requests by bots either way.
+  it. The Soqrates check skips release PRs (branches starting with
+  `release-plz-`) either way.
 
 ## Dry run
 
