@@ -1,0 +1,126 @@
+# Release binaries (ADR-0006 D2, D5). The release-plz workflow calls this
+# with the tag it just created (vX.Y.Z): it builds `soqrates` for each
+# supported runner, attests where each archive was built, attaches the
+# archives with SHA-256 checksums to the GitHub release, and moves the major
+# tag vX there. The action downloads these archives; it never compiles.
+#
+# Run it by hand (workflow_dispatch) for a dry run: it builds and packages,
+# and publishes nothing.
+name: release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag, vX.Y.Z, matching the crate version.
+        required: true
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Empty on a dry run.
+  TAG: ${{ inputs.tag }}
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Built on the oldest supported Ubuntu, so the binary runs on
+          # older glibc too.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write       # sign the build provenance attestation
+      attestations: write   # store it
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Check the tag matches the crate version
+        if: env.TAG != ''
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG doesn't match the crate version $version"
+            exit 1
+          fi
+
+      # rustup on the runner picks up rust-toolchain.toml.
+      - name: Build
+        run: cargo build --release --locked -p soqrates-cli --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          asset="soqrates-${{ matrix.target }}.tar.gz"
+          tar -czf "$asset" -C "target/${{ matrix.target }}/release" soqrates
+          shasum -a 256 "$asset" > "$asset.sha256"
+          cat "$asset.sha256"
+
+      - name: Attest build provenance
+        if: env.TAG != ''
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: soqrates-${{ matrix.target }}.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soqrates-${{ matrix.target }}
+          path: soqrates-${{ matrix.target }}.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: inputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release and move the major tag
+    # No checkout: both steps go through the API, so no git credentials are
+    # ever written to disk.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # release-plz created the release, with the changelog as its notes;
+      # attach the archives to it.
+      - name: Attach the archives to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l dist
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --generate-notes --verify-tag
+          fi
+
+      # Users pin the major version (`@v0`, `@v1`); point it at this release.
+      - name: Move the major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          major="${TAG%%.*}"
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" \
+              -f sha="$sha" -F force=true > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$major" -f sha="$sha" > /dev/null
+          fi
+          echo "$major -> $sha"

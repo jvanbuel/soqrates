@@ -52,11 +52,29 @@ The tables are created on first use. The URL is only read from the
 environment or `--database-url`, never from a config file, since it may
 hold a password.
 
-### As a PR check
+### In your repository
 
-[`.github/workflows/soqrates.yml`](.github/workflows/soqrates.yml) runs
-`soqrates ci` on every PR and posts the questions as a PR comment
-(ADR-0004):
+Add the Soqrates GitHub Action to any repository: an `ANTHROPIC_API_KEY`
+secret and one workflow file, given in full in
+[docs/using-the-action.md](docs/using-the-action.md):
+
+```yaml
+      - uses: jvanbuel/soqrates@v0
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+The action downloads a released `soqrates` binary and checks its checksum
+and build provenance; it never builds anything or checks out your code. The
+pull request diff goes to your model provider, and learner state stays on a
+branch of your repository or in your own database
+([ADR-0006](docs/adr/0006-distribution-as-a-github-action.md)).
+
+### As a PR check on this repository
+
+[`.github/workflows/soqrates.yml`](.github/workflows/soqrates.yml) runs the
+action from this checkout (`uses: ./`), with `soqrates` built from source,
+on every PR, and posts the questions as a PR comment (ADR-0004):
 
 - **Multiple choice:** tick one option per question, then tick
   **Grade my answers**.
@@ -112,6 +130,9 @@ flowchart LR
 | `crates/soqrates-mcp` | MCP server exposing the core. |
 | `crates/soqrates-cli` | The `soqrates` binary. |
 | `crates/soqrates-spec` | Executable ADRs: architecture tests, traceability, BDD acceptance tests. |
+| `action.yml`, `action/` | The Soqrates GitHub Action and its scripts (ADR-0006). |
+| `release-plz.toml`, `.github/workflows/release-plz.yml` | Release PRs, tags and changelog with release-plz ([docs/releasing.md](docs/releasing.md)). |
+| `.github/workflows/release.yml` | Builds, attests and attaches the release binaries the action runs. |
 | `skills/` | Portable `SKILL.md` skills. |
 | `evals/` | Eval harness and benchmarks (Python, Inspect AI). |
 | `assets/logo/` | The logo: a question mark drawn as git history, with the merge commit as its dot. |

@@ -1,6 +1,6 @@
 # ADR-0006: Distributing Soqrates as a GitHub Action
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-07
 - **Refines:** ADR-0001 D8 (CI round trip), D14 (dogfooding)
 
@@ -36,31 +36,35 @@ CLI, and a database store (ADR-0005).
 
 ## Decisions
 
-### D1: Soqrates ships as a reusable action, `jvanbuel/soqrates@v1`
-**Enforcement:** manual. There is no `action.yml` yet; a fitness test
-follows with it (its inputs and steps).
+### D1: Soqrates ships as a reusable action, `jvanbuel/soqrates@vX`
+**Enforcement:** automated
 
 The repository root holds a composite action, `action.yml`. It runs
 `soqrates ci` for the pull request of the triggering event. Users keep
 their own workflow file, with the triggers and the job-level `if:` filter
 for comment edits, since an action cannot declare its own triggers. The
-README gives that file in full, to copy as is. The action never checks out
+guide `docs/using-the-action.md` gives that file in full, to copy as is.
+The action never checks out
 the user's code: Soqrates reads the diff through the API, so no code from a
-pull request runs with the workflow's secrets.
+pull request runs with the workflow's secrets. It fetches the state branch
+into a directory of its own, so it needs no checkout either.
 
 ### D2: The action runs a prebuilt, checksummed release binary
-**Enforcement:** manual. Releases are made by a workflow that doesn't exist
-yet.
+**Enforcement:** automated
 
-Each version tag (`v0.2.0`) publishes `soqrates` binaries for Linux x86_64
-and aarch64 on GitHub Releases, with SHA-256 checksums. The action downloads
-the binary that matches its own version, and verifies it before running it.
-It never compiles. The same binaries serve local hooks, with macOS added
-there.
+Each version tag (`v0.2.0`) publishes `soqrates` archives for Linux x86_64
+and aarch64 (built on Ubuntu 22.04, for older glibc) and macOS arm64 on
+GitHub Releases, each with a SHA-256 checksum and a build provenance
+attestation. The action reads its own version from the `Cargo.toml` of its
+checkout and downloads the matching archive. Before running it, it checks
+the checksum (integrity) and the attestation (built by this repository's
+release workflow). It never compiles. The same archives serve local hooks.
+
+The `binary` input runs a given binary instead. It exists for testing the
+action from source (D5), not for users.
 
 ### D3: Users bring their own model key and state
-**Enforcement:** manual. The action's inputs are checked by the fitness
-test of D1.
+**Enforcement:** automated
 
 The action takes:
 
@@ -84,10 +88,13 @@ which has to find the pending session. The state branch does. A
 such as a hosted PostgreSQL. A SQLite URL only works on a self-hosted runner
 whose database file stays on disk between jobs. On GitHub-hosted runners the
 file is gone after the job, so the action refuses a `sqlite:` URL there
-(`RUNNER_ENVIRONMENT` is `github-hosted`), and
-says why.
+(`RUNNER_ENVIRONMENT` is `github-hosted`), and says why.
 
-Wherever state lives, the action and the README say what it holds and who
+Without the credentials of the chosen provider the action skips the check
+with a notice instead of failing, as on pull requests from forks, which get
+no secrets.
+
+Wherever state lives, the action and its guide say what it holds and who
 can read it. Anyone who can read the repository can read the state branch,
 including what each author got wrong.
 
@@ -95,7 +102,7 @@ The action fetches and pushes the state branch with the workflow token, so
 the job needs `contents: write`.
 
 ### D4: Comments post as github-actions[bot], or as the user's own app
-**Enforcement:** manual. Checked by the fitness test of D1.
+**Enforcement:** automated
 
 By default the action posts with the workflow token. With the optional
 inputs `app-id` and `app-private-key`, it mints a token for the user's own
@@ -104,14 +111,21 @@ posts as that app, under its name and with its logo. A shared soqrates[bot]
 across organisations needs the hosted app (D6).
 
 ### D5: Versions follow semver, with a moving major tag
-**Enforcement:** manual. A release process, not code.
+**Enforcement:** automated
 
-Releases are tagged `vX.Y.Z`, and `vX` moves to the latest release of that
-major version. Breaking changes to inputs, to the comment format, or to the
+Releases are made with [release-plz](https://release-plz.dev). On every
+push to `main` it keeps a release PR open that bumps the workspace version
+and updates `CHANGELOG.md` from the commits. Merging that PR tags `vX.Y.Z`,
+matching the crate version, and creates the GitHub release; the release
+workflow then builds and attaches the binaries and moves `vX` to the latest
+release of that major version. Until 1.0.0 that tag is `v0`. Soqrates isn't
+published to crates.io: release-plz reads the previous version from the git
+tags, and only `soqrates-cli`, the binary users run, gets a tag and a
+changelog. Breaking changes to inputs, to the comment format, or to the
 state's layout (the file store's documents, the database schema) need a new
 major version. This repository's own workflow uses the action from its
-checkout (`uses: ./`), so every pull request tests the action as users will
-run it.
+checkout (`uses: ./`), with a binary built from the same source, so every
+pull request tests the action's steps as users will run them.
 
 ### D6: The hosted public app waits for demand
 **Enforcement:** manual. A product decision.
@@ -126,7 +140,10 @@ per-installation tokens.
 ## Consequences
 
 - A release workflow and binary builds join CI; their cost is paid once per
-  release, not on every pull request.
+  release, not on every pull request. release-plz derives the next version
+  from the commit messages, so a `feat:` or `fix:` prefix (Conventional
+  Commits) gives better version bumps and changelog entries than a plain
+  sentence, which counts as a patch.
 - The CLI's `ci` command, its flags and environment variables become a
   public interface, covered by D5.
 - `docs/github-app.md` becomes a guide for users' own apps, not only for
