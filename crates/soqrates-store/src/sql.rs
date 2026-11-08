@@ -13,8 +13,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    Error, GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
-    PrRounds, Result, Session, SessionKey,
+    Error, GradedSession, GradingJournal, Identity, IdentityLink, LearnerId, LearnerProfile,
+    LinkCode, PrRef, PrRounds, Result, Session, SessionKey,
 };
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
 use sqlx::{AnyConnection, AnyPool, Connection, Row};
@@ -53,6 +53,11 @@ const SCHEMA: &[&str] = &[
     // they can't misread it (ADR-0002 D9).
     "CREATE TABLE IF NOT EXISTS soqrates_rounds (
         pr TEXT PRIMARY KEY,
+        doc TEXT NOT NULL
+    )",
+    // Also added within version 1 (ADR-0002 D6).
+    "CREATE TABLE IF NOT EXISTS soqrates_gradings (
+        session_key TEXT PRIMARY KEY,
         doc TEXT NOT NULL
     )",
 ];
@@ -227,6 +232,7 @@ impl SqlStore {
             "soqrates_link_codes",
             "soqrates_sessions",
             "soqrates_graded",
+            "soqrates_gradings",
             "soqrates_rounds",
         ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
@@ -381,13 +387,66 @@ impl StateStore for SqlStore {
         )
         .await
     }
-    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        // One statement: the row is deleted and returned atomically, so of
-        // several concurrent callers exactly one gets it (ADR-0002 D6).
+    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
+        // One transaction: the session row is deleted, which of several
+        // concurrent callers only one can do, and the journal inserted
+        // (ADR-0002 D6, ADR-0005 D4).
+        let key = journal.key().0.clone();
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let claimed =
+            sqlx::query("DELETE FROM soqrates_sessions WHERE session_key = $1 RETURNING doc")
+                .bind(key.clone())
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(db)?
+                .is_some();
+        if !claimed {
+            tx.rollback().await.map_err(db)?;
+            return Ok(false);
+        }
+        let inserted = sqlx::query(
+            "INSERT INTO soqrates_gradings (session_key, doc) VALUES ($1, $2)
+             ON CONFLICT (session_key) DO NOTHING",
+        )
+        .bind(key)
+        .bind(to_json(journal)?)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?
+        .rows_affected();
+        if inserted != 1 {
+            tx.rollback().await.map_err(db)?;
+            return Ok(false);
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(true)
+    }
+    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
         self.fetch_doc(
-            "DELETE FROM soqrates_sessions WHERE session_key = $1 RETURNING doc",
-            "session",
+            "SELECT doc FROM soqrates_gradings WHERE session_key = $1",
+            "grading journal",
             &key.0,
+        )
+        .await
+    }
+    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
+        let rows =
+            sqlx::query("SELECT session_key, doc FROM soqrates_gradings ORDER BY session_key")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db)?;
+        rows.iter()
+            .map(|row| {
+                let key: String = row.try_get(0).map_err(db)?;
+                let doc: String = row.try_get(1).map_err(db)?;
+                from_json("grading journal", &key, &doc)
+            })
+            .collect()
+    }
+    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
+        self.exec(
+            "DELETE FROM soqrates_gradings WHERE session_key = $1",
+            &[&key.0],
         )
         .await
     }
@@ -405,13 +464,6 @@ impl StateStore for SqlStore {
             "SELECT doc FROM soqrates_graded WHERE session_key = $1",
             "graded session",
             &key.0,
-        )
-        .await
-    }
-    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
-        self.exec(
-            "DELETE FROM soqrates_graded WHERE session_key = $1",
-            &[&key.0],
         )
         .await
     }

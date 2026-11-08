@@ -13,6 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ids::{AuthorId, ConceptId, Identity, QuestionId, SessionKey};
 
+mod journal;
+pub use journal::{GradingJournal, StoreId};
+
 /// Whether a failed session blocks (ADR-0001 D8, D9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Mode {

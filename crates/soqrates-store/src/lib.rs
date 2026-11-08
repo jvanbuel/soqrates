@@ -14,8 +14,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    Error, GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
-    PrRounds, Result, Session, SessionKey,
+    Error, GradedSession, GradingJournal, Identity, IdentityLink, LearnerId, LearnerProfile,
+    LinkCode, PrRef, PrRounds, Result, Session, SessionKey,
 };
 
 #[derive(Debug, Default)]
@@ -25,6 +25,7 @@ struct Data {
     codes: BTreeMap<String, LinkCode>,
     sessions: BTreeMap<SessionKey, Session>,
     graded: BTreeMap<SessionKey, GradedSession>,
+    gradings: BTreeMap<SessionKey, GradingJournal>,
     rounds: BTreeMap<String, PrRounds>,
 }
 
@@ -101,8 +102,25 @@ impl StateStore for InMemoryStore {
         self.with(|d| d.sessions.remove(key));
         Ok(())
     }
-    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        Ok(self.with(|d| d.sessions.remove(key)))
+    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
+        let key = journal.key();
+        Ok(self.with(|d| {
+            if d.gradings.contains_key(key) || d.sessions.remove(key).is_none() {
+                return false;
+            }
+            d.gradings.insert(key.clone(), journal.clone());
+            true
+        }))
+    }
+    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
+        Ok(self.with(|d| d.gradings.get(key).cloned()))
+    }
+    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
+        Ok(self.with(|d| d.gradings.values().cloned().collect()))
+    }
+    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
+        self.with(|d| d.gradings.remove(key));
+        Ok(())
     }
     async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
         self.with(|d| d.graded.insert(graded.key.clone(), graded.clone()));
@@ -110,10 +128,6 @@ impl StateStore for InMemoryStore {
     }
     async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         Ok(self.with(|d| d.graded.get(key).cloned()))
-    }
-    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
-        self.with(|d| d.graded.remove(key));
-        Ok(())
     }
     async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
         Ok(self.with(|d| d.rounds.get(&pr.id()).cloned()))
@@ -126,9 +140,9 @@ impl StateStore for InMemoryStore {
 
 impl LearnerStore for InMemoryStore {}
 
-/// One JSON document per profile, link, link code, pending session, graded
-/// session and pull request's rounds, under a directory. File names are the
-/// hex-encoded keys.
+/// One JSON document per profile, link, link code, pending session, grading
+/// journal, graded session and pull request's rounds, under a directory.
+/// File names are the hex-encoded keys.
 #[derive(Debug, Clone)]
 pub struct FileStore {
     pub root: PathBuf,
@@ -193,9 +207,6 @@ impl FileStore {
     }
 }
 
-/// Distinguishes claims made by one process.
-static CLAIMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 fn io(e: std::io::Error) -> Error {
     Error::Port(e.to_string())
 }
@@ -246,33 +257,42 @@ impl StateStore for FileStore {
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         self.remove("sessions", &key.0)
     }
-    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        // Claim by renaming: rename is atomic, so exactly one caller wins.
-        let path = self.path("sessions", &key.0);
-        let claim = path.with_extension(format!(
-            "json.claimed-{}-{}",
-            std::process::id(),
-            CLAIMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        match std::fs::rename(&path, &claim) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(io(e)),
+    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
+        let key = &journal.key().0;
+        // Between processes, an advisory lock makes checking and claiming
+        // one step. The OS releases it if the process stops.
+        let dir = self.root.join("gradings");
+        std::fs::create_dir_all(&dir).map_err(io)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(".lock"))
+            .map_err(io)?;
+        lock.lock().map_err(io)?;
+        if self.path("gradings", key).exists() || !self.path("sessions", key).exists() {
+            return Ok(false);
         }
-        let bytes = std::fs::read(&claim).map_err(io)?;
-        let _ = std::fs::remove_file(&claim);
-        serde_json::from_slice(&bytes)
-            .map(Some)
-            .map_err(|e| Error::Port(format!("corrupt session {:?}: {e}", key.0)))
+        // Journal first: a stop before the session is removed leaves both,
+        // and finishing the journal removes the session (ADR-0002 D6).
+        self.write("gradings", key, journal)?;
+        self.remove("sessions", key)?;
+        Ok(true)
+    }
+    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
+        self.read("gradings", &key.0)
+    }
+    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
+        self.all("gradings")
+    }
+    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
+        self.remove("gradings", &key.0)
     }
     async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
         self.write("graded", &graded.key.0, graded)
     }
     async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         self.read("graded", &key.0)
-    }
-    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
-        self.remove("graded", &key.0)
     }
     async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
         self.read("rounds", &pr.id())
@@ -357,17 +377,23 @@ impl StateStore for Store {
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         delegate!(self, delete_session(key))
     }
-    async fn take_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        delegate!(self, take_session(key))
+    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
+        delegate!(self, begin_grading(journal))
+    }
+    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
+        delegate!(self, load_grading(key))
+    }
+    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
+        delegate!(self, gradings())
+    }
+    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
+        delegate!(self, end_grading(key))
     }
     async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
         delegate!(self, save_graded(graded))
     }
     async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         delegate!(self, load_graded(key))
-    }
-    async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
-        delegate!(self, delete_graded(key))
     }
     async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
         delegate!(self, load_rounds(pr))
@@ -383,7 +409,7 @@ impl LearnerStore for Store {}
 mod tests {
     use std::sync::Arc;
 
-    use soqrates_core::{AuthorId, Session, SessionKey};
+    use soqrates_core::{AuthorId, Session, SessionKey, StoreId};
 
     use super::*;
 
@@ -398,25 +424,46 @@ mod tests {
         .unwrap()
     }
 
+    /// A grading journal for `s`, saving the profile of `learner`.
+    fn journal(s: &Session, learner: &str) -> GradingJournal {
+        GradingJournal {
+            session: s.clone(),
+            graded: GradedSession {
+                key: s.key().clone(),
+                author: s.author().clone(),
+                correct: 1,
+                total: 1,
+                passed: true,
+                at: s.created_at(),
+            },
+            profiles: vec![(
+                StoreId::LearnerStore,
+                LearnerProfile::new(LearnerId(learner.into())),
+            )],
+        }
+    }
+
     /// Of many concurrent claims on one session, exactly one wins
     /// (ADR-0002 D6).
     async fn exactly_one_claim<S: StateStore + 'static>(store: Arc<S>) {
         let key = session().key().clone();
         store.save_session(&session()).await.unwrap();
         let handles: Vec<_> = (0..16)
-            .map(|_| {
-                let (store, key) = (store.clone(), key.clone());
-                tokio::spawn(async move { store.take_session(&key).await.unwrap() })
+            .map(|i| {
+                let store = store.clone();
+                let journal = journal(&session(), &format!("learner-{i}"));
+                tokio::spawn(async move { store.begin_grading(&journal).await.unwrap() })
             })
             .collect();
         let mut won = 0;
         for h in handles {
-            if h.await.unwrap().is_some() {
+            if h.await.unwrap() {
                 won += 1;
             }
         }
         assert_eq!(won, 1);
         assert!(store.load_session(&key).await.unwrap().is_none());
+        assert_eq!(store.gradings().await.unwrap().len(), 1);
     }
 
     fn json<T: Serialize>(v: &T) -> serde_json::Value {
@@ -508,11 +555,28 @@ mod tests {
         assert_eq!(json(&loaded), json(&s));
         store.delete_session(s.key()).await.unwrap();
         assert!(store.load_session(s.key()).await.unwrap().is_none());
-        assert!(store.take_session(s.key()).await.unwrap().is_none());
+
+        // Grading journals (ADR-0002 D6): beginning to grade claims the
+        // session, once, and only a pending one.
+        let j = journal(&s, "ada");
+        assert!(!store.begin_grading(&j).await.unwrap());
+        assert!(store.load_grading(s.key()).await.unwrap().is_none());
         store.save_session(&s).await.unwrap();
-        let taken = store.take_session(s.key()).await.unwrap().unwrap();
-        assert_eq!(json(&taken), json(&s));
-        assert!(store.take_session(s.key()).await.unwrap().is_none());
+        assert!(store.begin_grading(&j).await.unwrap());
+        assert!(store.load_session(s.key()).await.unwrap().is_none());
+        assert_eq!(store.load_grading(s.key()).await.unwrap(), Some(j.clone()));
+        assert_eq!(store.gradings().await.unwrap(), vec![j.clone()]);
+        assert!(!store.begin_grading(&j).await.unwrap());
+        // While it is being graded, the session can't be claimed again, even
+        // if it is saved again.
+        store.save_session(&s).await.unwrap();
+        assert!(!store.begin_grading(&j).await.unwrap());
+        assert!(store.load_session(s.key()).await.unwrap().is_some());
+        store.delete_session(s.key()).await.unwrap();
+        store.end_grading(s.key()).await.unwrap();
+        store.end_grading(s.key()).await.unwrap();
+        assert!(store.load_grading(s.key()).await.unwrap().is_none());
+        assert!(store.gradings().await.unwrap().is_empty());
 
         let graded = GradedSession {
             key: s.key().clone(),
@@ -523,9 +587,8 @@ mod tests {
             at: now,
         };
         store.save_graded(&graded).await.unwrap();
+        store.save_graded(&graded).await.unwrap();
         assert_eq!(store.load_graded(s.key()).await.unwrap(), Some(graded));
-        store.delete_graded(s.key()).await.unwrap();
-        assert!(store.load_graded(s.key()).await.unwrap().is_none());
 
         // The rounds of a pull request (ADR-0002 D9).
         let pr = |repo: &str, number| PrRef {
@@ -563,16 +626,20 @@ mod tests {
             store.save_session(&s).await.unwrap();
         }
         for key in ["o/r#1@abc", "o/r#1@abc ", "O/R#1@ABC", "o/r#1@ab'c"] {
-            let got = store.take_session(&SessionKey(key.into())).await.unwrap();
+            let got = store.load_session(&SessionKey(key.into())).await.unwrap();
             assert_eq!(got.map(|s| s.key().0.clone()).as_deref(), Some(key));
+            store.delete_session(&SessionKey(key.into())).await.unwrap();
         }
     }
+
+    /// Distinguishes temporary directories made by one process.
+    static DIRS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn temp_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "soqrates-store-{name}-{}-{}",
             std::process::id(),
-            CLAIMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            DIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ))
     }
 

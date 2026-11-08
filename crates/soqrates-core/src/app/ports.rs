@@ -10,7 +10,9 @@ use chrono::{DateTime, Utc};
 use crate::Result;
 use crate::app::engine::SessionOutcome;
 use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionBrief};
-use crate::delivery::{CheckStatus, GradedSession, PrRef, PrRounds, PullRequest, Session};
+use crate::delivery::{
+    CheckStatus, GradedSession, GradingJournal, PrRef, PrRounds, PullRequest, Session,
+};
 use crate::ids::{Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 
@@ -47,12 +49,20 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<Session>>> + Send;
     fn save_session(&self, session: &Session) -> impl Future<Output = Result<()>> + Send;
     fn delete_session(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
-    /// Atomically remove and return the pending session `key`. Of several
-    /// concurrent callers, at most one gets `Some` (ADR-0002 D6).
-    fn take_session(
+    /// Atomically claim the pending session `journal.key()` and store
+    /// `journal` as its grading journal: the session is no longer pending
+    /// but being graded. Of several concurrent callers, at most one gets
+    /// `true`; `false` when the session is not pending (ADR-0002 D6).
+    fn begin_grading(&self, journal: &GradingJournal) -> impl Future<Output = Result<bool>> + Send;
+    /// The grading journal of the session `key`, while it is being graded.
+    fn load_grading(
         &self,
         key: &SessionKey,
-    ) -> impl Future<Output = Result<Option<Session>>> + Send;
+    ) -> impl Future<Output = Result<Option<GradingJournal>>> + Send;
+    /// Every grading journal in this store.
+    fn gradings(&self) -> impl Future<Output = Result<Vec<GradingJournal>>> + Send;
+    /// Remove the grading journal `key` once its writes are done.
+    fn end_grading(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
 
     /// Record that a session was graded (ADR-0002 D6).
     fn save_graded(&self, graded: &GradedSession) -> impl Future<Output = Result<()>> + Send;
@@ -60,8 +70,6 @@ pub trait StateStore: Send + Sync {
         &self,
         key: &SessionKey,
     ) -> impl Future<Output = Result<Option<GradedSession>>> + Send;
-    /// Undo [`StateStore::save_graded`] when grading is rolled back.
-    fn delete_graded(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
 
     /// The rounds asked on `pr` so far (ADR-0002 D9).
     fn load_rounds(&self, pr: &PrRef) -> impl Future<Output = Result<Option<PrRounds>>> + Send;

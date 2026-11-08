@@ -52,6 +52,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Due review | `due_reviews` | learner | A concept whose review card is due. It is asked before new concepts. | |
 | Session | `Session` | delivery | The questions put to one author about one change, and their grading. An aggregate. Informally a "quiz". | test, exam |
 | Session key | `SessionKey` | shared | Identity of a session. In CI: PR plus head commit. | |
+| Grading journal | `GradingJournal` | delivery | The graded record and learner profiles that grading one session writes, stored before any of them. While it is stored, the session is being graded. | |
 | Round | `Round` | delivery | What Soqrates asked about one head of a pull request: the session that answers for that head, and the concepts it asked. | |
 | Rounds | `PrRounds` | delivery | The rounds of one pull request, oldest first. | |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
@@ -163,20 +164,31 @@ The kind of each question is chosen by the examiner, steered by the level
 - A session passes if the fraction of correct grades is at least
   `pass_threshold`. An empty session passes.
 
-How "at most once" is achieved: submitting claims the session atomically
-(`StateStore::take_session`), so of concurrent submissions exactly one
-grades it. Grading writes the graded record and the profiles; if any write
-fails, all of them are rolled back and the session is given back.
+How "at most once" is achieved: grading is written ahead, in a grading
+journal kept with the session.
 
-**Known limitation.** The rollback is best effort. A store failure during
-rollback, or a crash between the writes, can leave partial state: a lost
-session, or a graded record without its reviews. While a submission holds
-the claim, a CI check from a caller outside the workflow's concurrency
-group sees neither a pending nor a graded session and may open a new one
-for the same key. Closing this needs
-durable multi-write atomicity, such as a write-ahead grading journal
-recovered at the start of each run. It is deferred: CI runs are serialised,
-and the stores have no transactions.
+1. **Grade.** The examiner grades the answers and the engine works out the
+   graded record and the learner profiles with the new reviews. Nothing is
+   written yet.
+2. **Claim.** In one atomic step (`StateStore::begin_grading`), the pending
+   session is removed and a journal entry holding the session, the graded
+   record and the profiles is stored. Of concurrent submissions exactly one
+   claims the session; the others fail with `NotFound`. A failure before
+   this step leaves the session pending.
+3. **Apply.** The profiles are saved, the session removed if a file store
+   still holds it, then the graded record. Each write replaces or removes
+   a whole document, so applying again changes nothing.
+4. **Commit.** The journal entry is removed.
+
+While the entry exists, the session is being graded. Every engine operation
+that touches a learner or a session first finishes the entries left behind,
+e.g. by a crash or a failed write, by applying them again. Entries whose
+graded record exists only need removing: their profiles are not saved
+again, since that could undo later reviews. An operation that can't finish
+an entry fails, except looking up a session: the CI check then reports
+"being graded" rather than asking again. It looks a session up in the
+order grading moves it, pending, being graded, graded, so it never misses a
+grading by another run and never opens a second session for its key.
 
 ### D7: Domain events
 **Enforcement:** automated

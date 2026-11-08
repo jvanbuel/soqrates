@@ -55,12 +55,13 @@ newer than the build's is refused rather than misread. On PostgreSQL, schema
 creation holds a transaction-scoped advisory lock, so processes connecting
 at the same time don't collide.
 
-### D4: A session is claimed with one atomic statement
+### D4: A session is claimed in one transaction
 **Enforcement:** automated
 
-`take_session` is a single `DELETE … RETURNING`, so of several concurrent
-callers, in any number of processes, exactly one gets the session (ADR-0002
-D6). Deleting a learner removes the profile and its links in one
+`begin_grading` deletes the session row with `DELETE … RETURNING` and
+inserts the grading journal in one transaction, so of several concurrent
+callers, in any number of processes, exactly one claims the session, and
+the claim and the journal are stored together (ADR-0002 D6). Deleting a learner removes the profile and its links in one
 transaction (ADR-0003 D6).
 
 ### D5: The database is chosen by URL, from a flag or the environment only
