@@ -12,7 +12,10 @@ use soqrates_core::{
     QuestionBrief, QuestionFormat, QuestionId, Result,
 };
 
-use crate::output::{self, ConceptsOutput, GradeOutput, MultipleChoiceOutput, OpenOutput};
+use crate::output::{
+    self, ConceptsOutput, GradeOutput, MultipleChoice, MultipleChoiceOutput, OpenOutput,
+    OptionCheckOutput,
+};
 use crate::prompts;
 
 /// One request to the model: a system prompt, a user prompt and the JSON
@@ -44,24 +47,30 @@ impl<L: Llm> Core<L> {
         what: &str,
         system: &'static str,
         user: String,
-        validate: impl Fn(T) -> std::result::Result<U, String> + Send,
+        validate: impl Fn(T) -> std::result::Result<U, String> + Sync,
     ) -> Result<U>
     where
         T: DeserializeOwned + JsonSchema,
     {
         let schema = schemars::schema_for!(T);
+        self.retrying(what, user, |prompt| {
+            self.attempt(system, prompt, &schema, &validate)
+        })
+        .await
+    }
+
+    /// Run `attempt` with `user`, and once more with the problem explained
+    /// if it gives an unusable result (`Ok(Err(problem))`). Errors of the
+    /// model itself are not retried.
+    async fn retrying<U, F, Fut>(&self, what: &str, user: String, mut attempt: F) -> Result<U>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: Future<Output = Result<std::result::Result<U, String>>>,
+    {
         let mut prompt = user.clone();
         let mut problem = String::new();
         for _ in 0..=RETRIES {
-            let raw = self
-                .llm
-                .complete(LlmRequest {
-                    system,
-                    user: prompt,
-                    schema: schema.clone(),
-                })
-                .await?;
-            match output::parse_json::<T>(&raw).and_then(&validate) {
+            match attempt(prompt).await? {
                 Ok(value) => return Ok(value),
                 Err(why) => problem = why,
             }
@@ -71,6 +80,94 @@ impl<L: Llm> Core<L> {
             "examiner: the model gave invalid output for {what} after {} attempts: {problem}",
             RETRIES + 1
         )))
+    }
+
+    /// One request for a `T`, parsed and validated: `Ok(Err(problem))` if
+    /// the reply is unusable.
+    async fn attempt<T, U>(
+        &self,
+        system: &'static str,
+        prompt: String,
+        schema: &schemars::Schema,
+        validate: &(impl Fn(T) -> std::result::Result<U, String> + Sync),
+    ) -> Result<std::result::Result<U, String>>
+    where
+        T: DeserializeOwned,
+    {
+        let raw = self
+            .llm
+            .complete(LlmRequest {
+                system,
+                user: prompt,
+                schema: schema.clone(),
+            })
+            .await?;
+        Ok(output::parse_json::<T>(&raw).and_then(validate))
+    }
+
+    /// Write a multiple-choice question whose reasons discuss only the
+    /// options it offers (issue #5). A question that passes validation is
+    /// checked with a second, short prompt; one that fails the check counts
+    /// as invalid output, so it is asked for again once, with the passages
+    /// quoted, and fails like any other invalid output after that.
+    ///
+    /// The question is written as `brief` asks (ADR-0007), and the check
+    /// is shown its code too (D7).
+    async fn multiple_choice(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+    ) -> Result<MultipleChoice> {
+        let schema = schemars::schema_for!(MultipleChoiceOutput);
+        let schema = &schema;
+        self.retrying(
+            "a multiple-choice question",
+            prompts::write_multiple_choice(concept, brief),
+            |prompt| async move {
+                let mc = match self
+                    .attempt(
+                        prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
+                        prompt,
+                        schema,
+                        &|out| output::validate_multiple_choice(out, brief),
+                    )
+                    .await?
+                {
+                    Ok(mc) => mc,
+                    Err(why) => return Ok(Err(why)),
+                };
+                Ok(match self.unlisted_options(&mc).await? {
+                    None => Ok(mc),
+                    Some(why) => Err(why),
+                })
+            },
+        )
+        .await
+    }
+
+    /// Ask the model whether `mc`'s reasons discuss answers it doesn't
+    /// offer: the problem if they do. An unusable reply from the check
+    /// keeps the question; the check is a safeguard on output that has
+    /// already passed validation, not a reason to lose it.
+    async fn unlisted_options(&self, mc: &MultipleChoice) -> Result<Option<String>> {
+        let raw = self
+            .llm
+            .complete(LlmRequest {
+                system: prompts::CHECK_OPTIONS_SYSTEM,
+                user: prompts::check_options(
+                    &mc.prompt,
+                    mc.code.as_ref(),
+                    &mc.options,
+                    mc.options_language.as_deref(),
+                    &mc.reasons,
+                    mc.correct,
+                ),
+                schema: schemars::schema_for!(OptionCheckOutput),
+            })
+            .await?;
+        Ok(output::parse_json::<OptionCheckOutput>(&raw)
+            .ok()
+            .and_then(output::unlisted_option_problem))
     }
 
     pub async fn extract_concepts(&self, diff: &Diff) -> Result<Vec<Concept>> {
@@ -98,17 +195,9 @@ impl<L: Llm> Core<L> {
         let format = brief.format;
         let (kind, body, explanation) = match format {
             QuestionFormat::MultipleChoice => {
-                // One reason per option, written with the options (issue #5):
-                // each reason is about an option that is shown, so there is
-                // no free-form explanation to discuss options not offered.
-                let mc = self
-                    .structured(
-                        "a multiple-choice question",
-                        prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
-                        prompts::write_multiple_choice(concept, brief),
-                        |out: MultipleChoiceOutput| output::validate_multiple_choice(out, brief),
-                    )
-                    .await?;
+                // One reason per option, written with the options and
+                // checked to discuss only those (issue #5).
+                let mc = self.multiple_choice(concept, brief).await?;
                 // The reasons name options by content, so they survive the
                 // shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);

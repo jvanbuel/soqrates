@@ -128,6 +128,28 @@ fn replies_table(w: &mut SpecWorld, step: &Step) {
     w.scm.reply(s.key(), answers);
 }
 
+#[given(regex = r"^the author ticks (correct|wrong) answers without submitting them$")]
+fn ticks_without_submitting(w: &mut SpecWorld, how: String) {
+    let s = latest_posted(w);
+    let answers = s
+        .questions()
+        .iter()
+        .map(|q| FakeExaminer::answer(q, correctness(&how)))
+        .collect();
+    w.scm.answer_as(&s, s.author(), false, answers);
+}
+
+#[given(regex = r#"^"([^"]+)" submits (correct|wrong) answers to the questions$"#)]
+fn someone_submits(w: &mut SpecWorld, id: String, how: String) {
+    let s = latest_posted(w);
+    let answers = s
+        .questions()
+        .iter()
+        .map(|q| FakeExaminer::answer(q, correctness(&how)))
+        .collect();
+    w.scm.answer_as(&s, &author(&id), true, answers);
+}
+
 #[given(regex = r#"^the author pushes head "([^"]+)" touching (.+)$"#)]
 #[when(regex = r#"^the author pushes head "([^"]+)" touching (.+)$"#)]
 fn pushes(w: &mut SpecWorld, head: String, list: String) {
@@ -361,4 +383,30 @@ fn compared_times(w: &mut SpecWorld, n: usize) {
         .filter(|(p, ..)| p == w.current_pr())
         .count();
     assert_eq!(times, n);
+}
+
+#[then(regex = r#"^the results posted are for head "([^"]+)"$"#)]
+fn results_for(w: &mut SpecWorld, head: String) {
+    let key = key_at(w, &head);
+    let state = w.scm.state.lock().unwrap();
+    let (_, posted, _) = state
+        .results
+        .iter()
+        .rev()
+        .find(|(p, ..)| p == w.current_pr())
+        .expect("no results were posted on the pull request");
+    assert_eq!(*posted, key);
+}
+
+#[then(regex = r"^the check was never (\w+)$")]
+fn never_status(w: &mut SpecWorld, s: String) {
+    let status = check_status(&s);
+    let state = w.scm.state.lock().unwrap();
+    assert!(
+        !state
+            .checks
+            .iter()
+            .any(|(p, c)| p == w.current_pr() && *c == status),
+        "the check was set to {s}"
+    );
 }

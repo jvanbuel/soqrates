@@ -1,0 +1,16 @@
+diff --git a/src/dashboard.ts b/src/dashboard.ts
+--- a/src/dashboard.ts
++++ b/src/dashboard.ts
+@@ -8,11 +8,13 @@ export async function loadDashboard(userId: string): Promise<Dashboard> {
+-  const profile = await api.profile(userId);
+-  const orders = await api.orders(userId);
+-  const alerts = await api.alerts(userId);
++  // The three requests are independent: start them together, and fail
++  // fast if any of them fails.
++  const [profile, orders, alerts] = await Promise.all([
++    api.profile(userId),
++    api.orders(userId),
++    api.alerts(userId),
++  ]);
+   return { profile, orders, alerts };
+ }

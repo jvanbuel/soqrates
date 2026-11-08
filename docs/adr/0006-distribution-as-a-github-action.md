@@ -107,8 +107,10 @@ the job needs `contents: write`.
 By default the action posts with the workflow token. With the optional
 inputs `app-id` and `app-private-key`, it mints a token for the user's own
 GitHub App first, as the dogfooding workflow does today. That token then
-posts as that app, under its name and with its logo. A shared soqrates[bot]
-across organisations needs the hosted app (D6).
+posts as that app, under its name and with its logo. The action also
+passes the app's slug, from the token step or the `app-slug` input, so
+authors can answer with `@<app slug> answer` (ADR-0004 D8). A shared
+soqrates[bot] across organisations needs the hosted app (D6).
 
 ### D5: Versions follow semver, with a moving major tag
 **Enforcement:** automated
@@ -126,6 +128,11 @@ state's layout (the file store's documents, the database schema) need a new
 major version. This repository's own workflow uses the action from its
 checkout (`uses: ./`), with a binary built from the same source, so every
 pull request tests the action's steps as users will run them.
+Comment-triggered runs check out the default branch, so every push to
+`main` builds and caches `main`'s binary ahead of them, and answers are
+graded without waiting for a build (issue #17). They keep building from source rather than
+using the latest release, so the binary that reads the comments and state
+is never older than the one that wrote them.
 
 ### D6: The hosted public app waits for demand
 **Enforcement:** manual. A product decision.

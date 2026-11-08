@@ -118,6 +118,10 @@ them, as before.
   inert text. Reading the boxes and deciding whether a comment still takes
   answers ignore everything inside fenced blocks, so code can't forge a
   box or a heading. ADR-0004 D4 allows exactly these fenced blocks.
+- **Answer commands** (ADR-0004 D8): a comment that starts with code, a
+  fenced block or an indented line, is neither a command nor a near miss,
+  and in an answer comment every line of a fenced block belongs to the
+  answer it is in, so numbered lines in code don't start new answers.
 - **Terminal:** the code as it is, indented, with control characters
   (other than tabs) removed, so it can't drive the terminal.
 - **MCP:** the snippet and whether the options are code are returned as
@@ -145,9 +149,9 @@ line is added to the rubric of an open question, so the grader judges
 against the same code the author saw. A `ChooseTheFix` option that just
 repeats the flawed line can't be the correct one.
 
-The option check of issue #5 is to cover the code as well: it is to be
-given the snippet and the code options, so that it can catch reasons that
-discuss code that isn't shown.
+The option check of issue #5 (ADR-0004 D1) covers the code as well: its
+question block holds the snippet and the code options as the author sees
+them, so that it can catch reasons that discuss code that isn't shown.
 
 ## Consequences
 

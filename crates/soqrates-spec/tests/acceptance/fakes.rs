@@ -8,12 +8,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
+use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
 use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider, StateStore};
 use soqrates_core::{
-    Answer, AnswerBody, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId, ConceptScope,
-    Diff, Error, Grade, GradedSession, Grading, Identity, IdentityLink, LearnerId, LearnerProfile,
-    LinkCode, PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionBrief, QuestionFormat,
-    QuestionId, QuestionKind, Result, Session, SessionKey, SessionOutcome, SnippetOrigin, Weight,
+    Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
+    ConceptScope, Diff, Error, Grade, GradedSession, Grading, Identity, IdentityLink, LearnerId,
+    LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionBrief,
+    QuestionFormat, QuestionId, QuestionKind, Result, Session, SessionKey, SessionOutcome,
+    SnippetOrigin, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -396,6 +398,9 @@ pub struct ScmState {
     pub summaries: Vec<(PrRef, String)>,
     /// Replies by the author, keyed by the session they answer.
     pub replies: HashMap<SessionKey, Vec<Answer>>,
+    /// Answers that don't count as a reply (ADR-0004 D3): ticked but not
+    /// submitted, or given by someone other than the author.
+    pub ignored: Vec<(SessionKey, Vec<Answer>)>,
     /// Make the next `post_questions` call fail, as on a transient error.
     pub fail_next_post: bool,
     /// Every `post_results` call, in order.
@@ -405,6 +410,49 @@ pub struct ScmState {
     pub superseded: Vec<(PrRef, SessionKey, Option<Session>, SessionKey)>,
     /// Make the next `supersede_questions` call fail.
     pub fail_next_supersede: bool,
+    /// The slug of the app Soqrates posts as, if any (ADR-0004 D8).
+    pub app_slug: Option<String>,
+    /// Comments posted on pull requests after a question comment, in order.
+    pub comments: Vec<FakeComment>,
+    /// The comments that got a hint, by id, in order (ADR-0004 D8).
+    pub hints: Vec<u64>,
+    /// What submitted the answers that `fetch_answers` last found, by
+    /// session (ADR-0004 D9).
+    pub submitted_by: HashMap<SessionKey, Submitter>,
+    /// The reactions currently on submitting comments (ADR-0004 D9).
+    pub reactions: Vec<(Submitter, Reaction)>,
+    /// What the author saw happen on the pull request, in order: check
+    /// summaries, reactions and results (ADR-0004 D9).
+    pub timeline: Vec<String>,
+}
+
+/// A comment on a pull request, posted after the question comment of
+/// `session`.
+#[derive(Debug, Clone)]
+pub struct FakeComment {
+    pub id: u64,
+    pub pr: PrRef,
+    pub session: SessionKey,
+    pub author: AuthorId,
+    pub body: String,
+}
+
+/// What submitted a session's answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Submitter {
+    /// Answers given with [`FakeScm::reply`], e.g. by ticking boxes.
+    Reply,
+    /// The comment with this id.
+    Comment(u64),
+}
+
+/// A reaction Soqrates puts on the submitting comment (ADR-0004 D9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reaction {
+    /// 👀: the answers were picked up and are being graded.
+    Eyes,
+    /// ✅ (👍 on GitHub): the answers were graded.
+    Done,
 }
 
 /// A fake forge. Records what Soqrates posts and lets steps inject the
@@ -489,6 +537,52 @@ impl FakeScm {
             .collect()
     }
 
+    /// Answers to `session` by `by`, `submitted` or only ticked. Only those
+    /// the session's author submitted are a reply (ADR-0004 D3).
+    pub fn answer_as(
+        &self,
+        session: &Session,
+        by: &AuthorId,
+        submitted: bool,
+        answers: Vec<Answer>,
+    ) {
+        if submitted && by == session.author() {
+            self.reply(session.key(), answers);
+        } else {
+            self.state
+                .lock()
+                .unwrap()
+                .ignored
+                .push((session.key().clone(), answers));
+        }
+    }
+
+    /// Post a comment by `author` after the question comment of `session`;
+    /// returns its id.
+    pub fn comment(&self, pr: &PrRef, session: &SessionKey, author: &AuthorId, body: &str) -> u64 {
+        let mut state = self.state.lock().unwrap();
+        let id = state.comments.len() as u64 + 1;
+        state.comments.push(FakeComment {
+            id,
+            pr: pr.clone(),
+            session: session.clone(),
+            author: author.clone(),
+            body: body.to_string(),
+        });
+        id
+    }
+
+    /// Replace the body of the comment `id`, as an edit does.
+    pub fn edit_comment(&self, id: u64, body: &str) {
+        let mut state = self.state.lock().unwrap();
+        let comment = state
+            .comments
+            .iter_mut()
+            .find(|c| c.id == id)
+            .expect("edit an existing comment");
+        comment.body = body.to_string();
+    }
+
     pub fn reply(&self, session: &SessionKey, answers: Vec<Answer>) {
         self.state
             .lock()
@@ -547,22 +641,80 @@ impl ScmProvider for FakeScm {
         session: &Session,
         outcome: &SessionOutcome,
     ) -> Result<()> {
-        self.state.lock().unwrap().results.push((
-            pr.clone(),
-            session.key().clone(),
-            outcome.clone(),
-        ));
+        let mut state = self.state.lock().unwrap();
+        state
+            .results
+            .push((pr.clone(), session.key().clone(), outcome.clone()));
+        state.timeline.push("results".into());
+        // 👀 becomes ✅ (ADR-0004 D9).
+        if let Some(by) = state.submitted_by.get(session.key()).copied() {
+            state
+                .reactions
+                .retain(|(s, r)| !(*s == by && *r == Reaction::Eyes));
+            state.reactions.push((by, Reaction::Done));
+            state.timeline.push(format!("{by:?}: {:?}", Reaction::Done));
+        }
         Ok(())
     }
 
-    async fn fetch_answers(&self, _pr: &PrRef, session: &Session) -> Result<Option<Vec<Answer>>> {
-        Ok(self
-            .state
-            .lock()
-            .unwrap()
-            .replies
-            .get(session.key())
-            .cloned())
+    /// The structured answers given with [`FakeScm::reply`], else the
+    /// latest answer comment of the author, read as the GitHub adapter
+    /// reads it (ADR-0004 D8).
+    async fn fetch_answers(&self, pr: &PrRef, session: &Session) -> Result<Option<Vec<Answer>>> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(answers) = state.replies.get(session.key()).cloned() {
+            state
+                .submitted_by
+                .insert(session.key().clone(), Submitter::Reply);
+            return Ok(Some(answers));
+        }
+        let slug = state.app_slug.clone();
+        let found = state
+            .comments
+            .iter()
+            .rev()
+            .filter(|c| c.pr == *pr && c.session == *session.key() && c.author == *session.author())
+            .find(|c| matches!(read_command(&c.body, slug.as_deref()), Command::Answer(_)))
+            .map(|c| {
+                (
+                    c.id,
+                    parse_answers(&c.body, session.questions(), slug.as_deref()),
+                )
+            });
+        match found {
+            Some((id, answers @ Some(_))) => {
+                state
+                    .submitted_by
+                    .insert(session.key().clone(), Submitter::Comment(id));
+                Ok(answers)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    async fn hint_commands(&self, pr: &PrRef, session: &Session) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        let slug = state.app_slug.clone();
+        let candidates: Vec<(u64, String)> = state
+            .comments
+            .iter()
+            .filter(|c| c.pr == *pr && c.session == *session.key() && c.author == *session.author())
+            .map(|c| (c.id, c.body.clone()))
+            .collect();
+        let candidates: Vec<(u64, &str)> =
+            candidates.iter().map(|(i, b)| (*i, b.as_str())).collect();
+        let due = hints_due(&candidates, &state.hints, slug.as_deref());
+        state.hints.extend(due);
+        Ok(())
+    }
+
+    async fn acknowledge_answers(&self, _pr: &PrRef, session: &Session) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(by) = state.submitted_by.get(session.key()).copied() {
+            state.reactions.push((by, Reaction::Eyes));
+            state.timeline.push(format!("{by:?}: {:?}", Reaction::Eyes));
+        }
+        Ok(())
     }
 
     async fn superseded_questions(&self, pr: &PrRef, current: &Session) -> Result<Vec<SessionKey>> {
@@ -612,6 +764,7 @@ impl ScmProvider for FakeScm {
         let mut state = self.state.lock().unwrap();
         state.checks.push((pr.clone(), status));
         state.summaries.push((pr.clone(), summary.to_string()));
+        state.timeline.push(format!("check {status:?}: {summary}"));
         Ok(())
     }
 }

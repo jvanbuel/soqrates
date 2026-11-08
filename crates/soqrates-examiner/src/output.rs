@@ -106,6 +106,15 @@ pub struct RawOption {
     pub why: String,
 }
 
+/// Reply to [`crate::prompts::CHECK_OPTIONS_SYSTEM`] (issue #5).
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(title = "option_check")]
+pub struct OptionCheckOutput {
+    /// Every passage of a reason that argues for or against an answer that
+    /// is not one of the listed options, quoted. Empty if there is none.
+    pub unlisted: Vec<String>,
+}
+
 /// Reply to [`crate::prompts::WRITE_OPEN_SYSTEM`].
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(title = "open_question")]
@@ -530,6 +539,32 @@ fn validate_reasons(
             normalise_option_refs(&why, options)
         })
         .collect()
+}
+
+/// The most passages quoted back to the model when the option check rejects
+/// a question, and the longest each may be, in characters.
+const MAX_QUOTED_PASSAGES: usize = 3;
+const MAX_QUOTED_CHARS: usize = 200;
+
+/// What is wrong with a multiple-choice question according to the option
+/// check (issue #5): `None` if its reasons discuss only the listed options,
+/// otherwise the problem to explain when the question is asked for again.
+pub fn unlisted_option_problem(output: OptionCheckOutput) -> Option<String> {
+    let quoted: Vec<String> = output
+        .unlisted
+        .iter()
+        .filter_map(|p| clean_text(p, MAX_QUOTED_CHARS))
+        .take(MAX_QUOTED_PASSAGES)
+        .map(|p| format!("{p:?}"))
+        .collect();
+    if quoted.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "a reason discusses an answer that is not one of the options ({}); the author \
+         sees only the options listed, so discuss and contrast only those",
+        quoted.join("; ")
+    ))
 }
 
 /// Shuffle the options deterministically, seeded by `seed` (the concept
