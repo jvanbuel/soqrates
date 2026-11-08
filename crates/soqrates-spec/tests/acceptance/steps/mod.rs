@@ -1,6 +1,7 @@
 //! Step definitions, one module per feature area, plus shared parsing helpers.
 
 mod adaptive_questions;
+mod answer_commands;
 mod ci_check;
 mod common;
 mod domain_model;

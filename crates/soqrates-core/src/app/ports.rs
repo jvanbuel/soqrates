@@ -117,9 +117,33 @@ pub trait ScmProvider: Send + Sync {
         pr: &PrRef,
         session: &Session,
     ) -> impl Future<Output = Result<Option<Vec<Answer>>>> + Send;
+    /// Point out, once each, the author's comments on `session` that start
+    /// like an answer command but aren't one, e.g. with a hint to use
+    /// `/soqrates answer` (ADR-0004 D8). Best effort: providers without
+    /// comments do nothing.
+    fn hint_commands(
+        &self,
+        _pr: &PrRef,
+        _session: &Session,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async { Ok(()) }
+    }
+    /// Show the author that their answers to `session` were picked up and
+    /// are being graded, e.g. with a 👀 reaction on the comment that
+    /// submitted them (ADR-0004 D9). Called after
+    /// [`ScmProvider::fetch_answers`] returned answers, before grading.
+    fn acknowledge_answers(
+        &self,
+        _pr: &PrRef,
+        _session: &Session,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async { Ok(()) }
+    }
     /// Post the per-question results of a graded session and mark the
     /// question comment as graded (ADR-0004 D1, D2, D5). Shows this
-    /// session's results only, never the learner's profile.
+    /// session's results only, never the learner's profile. Replaces the
+    /// acknowledgement of [`ScmProvider::acknowledge_answers`] with one
+    /// saying the answers were graded (ADR-0004 D9).
     fn post_results(
         &self,
         pr: &PrRef,
