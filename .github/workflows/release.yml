@@ -4,8 +4,10 @@
 # archives with SHA-256 checksums to the GitHub release, and moves the major
 # tag vX there. The action downloads these archives; it never compiles.
 #
-# Run it by hand (workflow_dispatch) for a dry run: it builds and packages,
-# and publishes nothing.
+# Run it by hand (workflow_dispatch) without a tag for a dry run: it builds
+# and packages, and publishes nothing. With the tag of an existing release,
+# it (re)builds and attaches that release's binaries, e.g. after a failed
+# build.
 name: release
 
 on:
@@ -16,6 +18,14 @@ on:
         required: true
         type: string
   workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Leave empty for a dry run. Or the tag of an existing release
+          (vX.Y.Z) to build and attach its binaries.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -35,7 +45,7 @@ jobs:
           # older glibc too.
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
-          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: aarch64-apple-darwin, os: macos-15 }
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read

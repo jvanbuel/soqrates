@@ -22,8 +22,9 @@ configured in `release-plz.toml` and run by `.github/workflows/release-plz.yml`.
 Nothing is published to crates.io. release-plz reads the previous version
 from the `vX.Y.Z` tags, and only `soqrates-cli` gets a tag and a changelog.
 
-The first release PR proposes `v0.1.0`, the current version, since there is
-no tag yet.
+The very first run released the current version, `v0.1.0`, straight away:
+with no `vX.Y.Z` tag yet, release-plz treats the version in `Cargo.toml` as
+unreleased. Every later release goes through a release PR.
 
 ## Version bumps and the changelog
 
@@ -59,7 +60,12 @@ run on the release PR.
 The Soqrates check skips release PRs (branches starting with `release-plz-`)
 either way.
 
-## Dry run
+## Dry run, and rebuilding a release
 
-Run the **release** workflow by hand (Actions → release → Run workflow): it
-builds and packages the three binaries and publishes nothing.
+Run the **release** workflow by hand (Actions → release → Run workflow):
+
+- with the **tag** left empty, it builds and packages the three binaries and
+  publishes nothing;
+- with the tag of an existing release (e.g. `v0.1.0`), it builds the
+  binaries of that tag and attaches them to the release, and moves the
+  major tag. Use this when a release's build failed.
