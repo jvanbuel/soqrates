@@ -1,0 +1,55 @@
+{
+  "key": "jvanbuel/soqrates#18@de5d6cba6a0a6c8ef1c1470b97f2884ab4ca4095",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "project.ci.incremental-rounds/mc",
+      "concept": "project.ci.incremental-rounds",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A developer pushes a new commit to a PR that already has a round with a pending, unanswered quiz. The new commit only touches concepts that were already asked on this PR, and none of them is due for review. What should the per-PR incremental round logic do?",
+          "options": [
+            "The check is skipped for that push and reports no status, leaving the previous status on the PR untouched without any new record.",
+            "All concepts from the whole PR are asked again so the author is re-verified from scratch.",
+            "The latest round's session is carried forward, so its pending questions stay open or its graded result is reported again.",
+            "A new empty session is created and the check passes immediately, since there are no questions left to answer."
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "If nothing new is asked, the latest round's session is carried forward, so a pending quiz stays open and a graded result is reported again, and the check status continues to reflect the author's real standing. Starting an empty session would pass without any verification, and re-asking old concepts would defeat the incremental design."
+    },
+    {
+      "id": "project.architecture.ports-and-adapters/open",
+      "concept": "project.architecture.ports-and-adapters",
+      "scope": "Project",
+      "body": {
+        "Open": {
+          "prompt": "Your change adds `load_rounds`, `save_rounds` and `diff_between` to the `StateStore` and `ScmProvider` traits defined in the core, and every backend (GitHub, in-memory, file, SQL and test fakes) has to implement them. Why is it done this way instead of having the engine call the SQL or GitHub APIs directly for this data? What does this design give you, and what does it cost when you add methods like these?",
+          "rubric": "A good answer covers these key points:\n1. The engine depends on the traits (ports) that the core defines, not on concrete backends, so storage and SCM details and domain-specific rules stay out of the engine. Dependencies point inward.\n2. Backends can be swapped or added (file, SQL, in-memory, GitHub) without changing engine logic. Tests can use in-memory or fake implementations, which makes the engine fast and deterministic to test without network or database access.\n3. Costs and trade-offs: adding a method to a trait forces every adapter, including the test fakes, to implement it, so the change touches many places. The trait must be designed around what the engine needs rather than around one backend's quirks, and the semantics must stay consistent across adapters (for example, what `load_rounds` returns when nothing is stored, or how `diff_between` behaves for unreachable commits).\n4. Without the abstraction, the engine would be coupled to specific APIs and schemas, making it hard to test and requiring engine changes whenever a backend changes.\n\nCommon misconceptions that make an answer wrong:\n- Saying traits are only for code reuse or to reduce duplicated code.\n- Claiming the abstraction removes the need to implement the methods in each backend.\n- Saying it is mainly a performance optimization.\n- Describing the pattern only by name, without explaining the dependency direction or the testability benefit."
+        }
+      },
+      "explanation": "A good answer explains that the core owns the trait definitions so the engine depends only on abstractions, and that each backend (GitHub, in-memory, file, SQL, fakes) must implement the new methods. This keeps the engine testable and backend-agnostic, at the cost of a wider interface that every adapter has to satisfy, and it keeps storage and SCM details out of the core."
+    },
+    {
+      "id": "project.ci.idempotent-recovery/mc",
+      "concept": "project.ci.idempotent-recovery",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A CI check run posts its questions to the pull request and then fails while recording the round. The check is re-run on the same head commit. Given the design where questions are posted before the round is recorded and `report` re-runs superseding and grading, what should happen on the re-run?",
+          "options": [
+            "The next run finds the pending session, repairs the missing record from it, and re-runs superseding and grading, so the result is the same as if the first attempt had succeeded.",
+            "The round stays permanently unrecorded until a maintainer manually deletes the pending session, since automatic repair could grade the same answers twice.",
+            "The next run discards the pending session and posts a fresh set of questions, accepting that the author sees duplicate questions on the same head.",
+            "The check run is marked as passed on the next run because the questions were already posted, without grading any answers."
+          ],
+          "correct": 0
+        }
+      },
+      "explanation": "Because questions are posted before the round is recorded, a failure to record leaves a pending session behind. The next run can repair the record from that session and re-run superseding and grading, so repeated runs on the same head converge instead of duplicating or losing the round. Skipping recovery or posting twice would leave the round unrecorded or create duplicate questions."
+    }
+  ],
+  "created_at": "2026-11-08T12:17:23.361454148Z"
+}

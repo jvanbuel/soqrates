@@ -1,0 +1,18 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 18
+  },
+  "rounds": [
+    {
+      "head": "de5d6cba6a0a6c8ef1c1470b97f2884ab4ca4095",
+      "session": "jvanbuel/soqrates#18@de5d6cba6a0a6c8ef1c1470b97f2884ab4ca4095",
+      "concepts": [
+        "project.ci.incremental-rounds",
+        "project.architecture.ports-and-adapters",
+        "project.ci.idempotent-recovery"
+      ],
+      "at": "2026-11-08T12:17:23.361454148Z"
+    }
+  ]
+}
