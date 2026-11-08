@@ -218,6 +218,16 @@ check (ADR-0001 D8) decides each new round like this:
   Questions about the change follow (D10). The earlier question comment is
   frozen as superseded (ADR-0004 D7), so the new comment holds both. So a
   push can't make unanswered questions disappear.
+- **Submitted answers are graded first.** When the latest round's session
+  is still pending but its answers were submitted (ADR-0004 D3), e.g.
+  because a push landed before the run that grades them, the new round
+  grades that session first: its results are posted and its reviews
+  recorded, as on a run for its own head. It is then a graded round: not
+  carried, and its concepts count as asked. Its grade sets no check on the
+  new head, whose check is about the new round; with nothing new to ask,
+  its result is reported again, as below. Answers ticked but not
+  submitted, or given by anyone but the author, don't count: the questions
+  are carried. A re-run doesn't grade again (D6).
 - **No repeats within a pull request.** Concepts of graded rounds, and the
   carried ones, are not asked again, unless their review card is due: due
   reviews come first as always (ADR-0001 D6). Concepts of a round that was
