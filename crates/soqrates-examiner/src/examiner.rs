@@ -12,7 +12,10 @@ use soqrates_core::{
     QuestionFormat, QuestionId, Result,
 };
 
-use crate::output::{self, ConceptsOutput, GradeOutput, MultipleChoiceOutput, OpenOutput};
+use crate::output::{
+    self, ConceptsOutput, ExplanationCheckOutput, GradeOutput, MultipleChoice,
+    MultipleChoiceOutput, OpenOutput,
+};
 use crate::prompts;
 
 /// One request to the model: a system prompt, a user prompt and the JSON
@@ -93,14 +96,7 @@ impl<L: Llm> Core<L> {
     ) -> Result<Question> {
         let (body, explanation) = match format {
             QuestionFormat::MultipleChoice => {
-                let mc = self
-                    .structured(
-                        "a multiple-choice question",
-                        prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
-                        prompts::write_multiple_choice(concept),
-                        |out: MultipleChoiceOutput| output::validate_multiple_choice(out),
-                    )
-                    .await?;
+                let mc = self.write_multiple_choice(concept).await?;
                 // The explanation names options by content, so it survives
                 // the shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
@@ -134,6 +130,59 @@ impl<L: Llm> Core<L> {
             body,
             explanation,
         })
+    }
+
+    /// Write a multiple-choice question whose explanation discusses only the
+    /// options it offers (issue #5). A question whose explanation refers to
+    /// other options is written again, once, with the problem explained.
+    ///
+    /// The check is a model's judgement and may be wrong, so it never fails
+    /// the question: if the rewrite is flagged too, or the check gives no
+    /// usable reply, the last question written is kept.
+    async fn write_multiple_choice(&self, concept: &Concept) -> Result<MultipleChoice> {
+        let user = prompts::write_multiple_choice(concept);
+        let mut prompt = user.clone();
+        let mut attempt = 0;
+        loop {
+            let mc = self
+                .structured(
+                    "a multiple-choice question",
+                    prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
+                    prompt,
+                    |out: MultipleChoiceOutput| output::validate_multiple_choice(out),
+                )
+                .await?;
+            let Some(problem) = self.stray_options(&mc).await? else {
+                return Ok(mc);
+            };
+            if attempt == RETRIES {
+                return Ok(mc);
+            }
+            attempt += 1;
+            prompt = prompts::retry(&user, &problem);
+        }
+    }
+
+    /// Ask the model whether `mc`'s explanation treats as an option anything
+    /// the question does not offer. `Some(problem)` if it does; `None` if not,
+    /// or if the reply is unusable.
+    async fn stray_options(&self, mc: &MultipleChoice) -> Result<Option<String>> {
+        let raw = self
+            .llm
+            .complete(LlmRequest {
+                system: prompts::CHECK_EXPLANATION_SYSTEM,
+                user: prompts::check_explanation(
+                    &mc.prompt,
+                    &mc.options,
+                    mc.correct,
+                    &mc.explanation,
+                ),
+                schema: schemars::schema_for!(ExplanationCheckOutput),
+            })
+            .await?;
+        Ok(output::parse_json::<ExplanationCheckOutput>(&raw)
+            .ok()
+            .and_then(output::stray_options_problem))
     }
 
     /// Grade `answer`. Multiple choice is graded without the model and with

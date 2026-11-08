@@ -64,6 +64,35 @@ pub struct OpenOutput {
     pub explanation: String,
 }
 
+/// Reply to [`crate::prompts::CHECK_EXPLANATION_SYSTEM`].
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(title = "explanation_check")]
+pub struct ExplanationCheckOutput {
+    /// Each thing the explanation treats as an answer option that the
+    /// question does not offer; empty if there is none.
+    pub stray_options: Vec<String>,
+}
+
+/// The problem to report back to the question writer, or `None` if the
+/// explanation discusses only the options offered.
+pub fn stray_options_problem(output: ExplanationCheckOutput) -> Option<String> {
+    let stray: Vec<String> = output
+        .stray_options
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("{s:?}"))
+        .collect();
+    if stray.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "the explanation discusses answers the question does not offer ({}); \
+         discuss only the correct option and the options listed",
+        stray.join(", ")
+    ))
+}
+
 /// Reply to [`crate::prompts::GRADE_OPEN_SYSTEM`].
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(title = "grade")]

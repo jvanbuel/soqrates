@@ -38,7 +38,9 @@ After a session is graded, each question gets a result:
 - a short explanation.
 
 For a multiple-choice question, the examiner writes the explanation together
-with the question. It is never shown before grading (ADR-0001 D10). For an
+with the question. It is never shown before grading (ADR-0001 D10). The
+explanation discusses only the options the question offers: a second, short
+model call checks this, and a flagged question is written again once. For an
 open question, the explanation is the grader's rationale. `SessionOutcome`
 carries these results, and the PR, the terminal and MCP all present them.
 
