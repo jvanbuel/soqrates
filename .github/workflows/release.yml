@@ -78,9 +78,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the release and move the major tag
+    # No checkout: both steps go through the API, so no git credentials are
+    # ever written to disk.
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -99,7 +99,15 @@ jobs:
 
       # Users pin the major version (`@v0`, `@v1`); point it at this release.
       - name: Move the major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           major="${GITHUB_REF_NAME%%.*}"
-          git tag -f "$major" "$GITHUB_SHA"
-          git push -f origin "refs/tags/$major"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" \
+              -f sha="$GITHUB_SHA" -F force=true > /dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$major" -f sha="$GITHUB_SHA" > /dev/null
+          fi
+          echo "$major -> $GITHUB_SHA"

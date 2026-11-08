@@ -58,6 +58,10 @@ jobs:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
+Keep the `concurrency` group: the state branch expects one writer at a time,
+and a push that loses a race fails rather than overwrite the other run's
+state.
+
 That's all. The action needs no `actions/checkout`: it reads the diff through
 the GitHub API, so no code from a pull request runs with your secrets.
 
