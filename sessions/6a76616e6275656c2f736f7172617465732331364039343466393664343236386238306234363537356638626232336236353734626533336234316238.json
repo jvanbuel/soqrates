@@ -1,0 +1,55 @@
+{
+  "key": "jvanbuel/soqrates#16@944f96d4268b80b46575f8bb23b6574be33b41b8",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github.actions.token-triggered-workflows/mc",
+      "concept": "github.actions.token-triggered-workflows",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A release workflow uses the default GITHUB_TOKEN to open a pull request, but the CI workflow configured with `on: pull_request` never runs on that PR. The change switches to a GitHub App installation token to open the PR, and CI then runs. Why does this fix the problem?",
+          "options": [
+            "The GITHUB_TOKEN lacks the pull-requests write permission, so the PR is created in a draft state that CI skips",
+            "Workflows deliberately ignore events created with GITHUB_TOKEN to avoid recursive workflow runs, so the PR needs to be opened with a different credential such as an App installation token",
+            "The release PR was opened from a branch created by a bot, and branch protection rules always block CI on bot-created branches",
+            "The pull_request trigger only fires for PRs opened from forks, so a PR opened by a workflow in the same repository never runs CI"
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "GitHub deliberately suppresses workflow runs for events created by GITHUB_TOKEN (except workflow_dispatch and repository_dispatch) to prevent recursive runs. Using a GitHub App installation token or a PAT makes the event look like it came from a real actor, so the pull_request workflows fire. Permissions and workflow file location are not the cause."
+    },
+    {
+      "id": "github.apps.installation-token-generation/open",
+      "concept": "github.apps.installation-token-generation",
+      "scope": "General",
+      "body": {
+        "Open": {
+          "prompt": "A workflow needs to push commits and open pull requests. Instead of relying on the default GITHUB_TOKEN or a personal access token, the author uses a GitHub App's ID and private key to generate an installation token at runtime, with contents and pull-requests write permissions, and only runs that step when the app's variable is set. Explain why this approach might be chosen over the alternatives, what security properties it provides, and what could go wrong or how the workflow should behave if the variable is not set.",
+          "rubric": "A good answer must cover: (1) The installation token is generated at run time from the app ID and private key, is short-lived (about one hour) and scoped to the permissions granted to the app and to the repositories where it is installed, so a leak has limited impact compared with a long-lived PAT tied to a person's account. (2) Not tied to a personal user account: it survives employee departures and does not consume a seat. (3) A key practical reason versus GITHUB_TOKEN: events caused by GITHUB_TOKEN do not trigger further workflow runs, so PRs opened with it will not trigger CI checks; an app token does trigger them. Also GITHUB_TOKEN permissions may be restricted, for instance it cannot create PRs if the repo setting forbids it. (4) The private key must be stored as a secret and the app ID as a variable or secret; the conditional on the variable lets the workflow skip the step when the app is not configured (for example in forks or other repos, where secrets are unavailable), and the workflow should then fall back to GITHUB_TOKEN or skip the privileged work gracefully rather than failing confusingly. (5) Least privilege: only grant contents write and pull-requests write, nothing more. Common misconceptions that make an answer wrong: claiming the token is permanent, claiming it has the full permissions of the app owner or all repos in the org regardless of installation, saying the conditional is for performance, or saying the private key is itself sent as the token to the API with no exchange step."
+        }
+      },
+      "explanation": "A good answer says the app token is minted per run, expires quickly, and is limited to the app's granted permissions, which makes it safer than a long-lived PAT. It also covers that tokens from GITHUB_TOKEN do not trigger downstream workflows, and that the conditional step needs a sensible fallback when the app is not configured."
+    },
+    {
+      "id": "github.actions.expressions.fallback-chain/mc",
+      "concept": "github.actions.expressions.fallback-chain",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A workflow has a step that generates a GitHub App token and runs only when `if: vars.APP_ID != ''` is true. A later step sets its token to `${{ steps.app.outputs.token || secrets.PAT || github.token }}`. If the repository variable APP_ID is not set, what does the token expression evaluate to?",
+          "options": [
+            "The expression always evaluates to github.token, because secrets cannot be combined with step outputs using `||`.",
+            "The expression skips the empty app-token output and evaluates to the PAT secret if it is set, otherwise github.token.",
+            "The expression evaluates to the literal string 'null' from the skipped step, so the fallback values are never reached.",
+            "The workflow fails with an error because the expression references an output from a step that never ran."
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "When the app-token step is skipped, its output is an empty string, which is falsy, so `||` moves on to the next operand and uses the PAT secret, and finally github.token. The misconception is that a skipped step's output causes an error or yields a non-empty placeholder; in fact it simply evaluates as empty."
+    }
+  ],
+  "created_at": "2026-11-08T10:51:47.592841810Z"
+}
