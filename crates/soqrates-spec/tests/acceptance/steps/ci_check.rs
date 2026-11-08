@@ -131,14 +131,26 @@ fn replies_table(w: &mut SpecWorld, step: &Step) {
 #[given(regex = r#"^the author pushes head "([^"]+)" touching (.+)$"#)]
 #[when(regex = r#"^the author pushes head "([^"]+)" touching (.+)$"#)]
 fn pushes(w: &mut SpecWorld, head: String, list: String) {
+    let pr = w.current_pr().clone();
+    w.scm.push(&pr, &head, touching(&list));
+}
+
+#[given(regex = r#"^the author force-pushes head "([^"]+)" touching (.+)$"#)]
+#[when(regex = r#"^the author force-pushes head "([^"]+)" touching (.+)$"#)]
+fn force_pushes(w: &mut SpecWorld, head: String, list: String) {
     let mut pr = w.scm.pull_request_now(w.current_pr());
     pr.head_sha = head;
-    pr.diff = if list == "nothing" {
+    pr.diff = touching(&list);
+    w.scm.open(pr);
+}
+
+/// A diff touching the quoted concepts of `list`, or `nothing`.
+fn touching(list: &str) -> soqrates_core::Diff {
+    if list == "nothing" {
         diff_touching(&[])
     } else {
-        diff_touching(&quoted(&list))
-    };
-    w.scm.open(pr);
+        diff_touching(&quoted(list))
+    }
 }
 
 #[then(regex = r"^the check is (\w+)$")]
@@ -307,4 +319,29 @@ async fn pending_at_head(w: &mut SpecWorld, which: String, head: String) {
 fn posted_empty_for_head(w: &mut SpecWorld) {
     posted_for_head(w);
     assert_eq!(latest_posted(w).questions(), &[]);
+}
+
+// --- rounds (ADR-0002 D9) -------------------------------------------------
+
+#[then(regex = r#"^the change was compared from head "([^"]+)" to head "([^"]+)"$"#)]
+fn compared(w: &mut SpecWorld, from: String, to: String) {
+    let state = w.scm.state.lock().unwrap();
+    let (_, f, t) = state
+        .compared
+        .iter()
+        .rev()
+        .find(|(p, ..)| p == w.current_pr())
+        .expect("the change was never compared");
+    assert_eq!((f, t), (&from, &to));
+}
+
+#[then(regex = r"^the change was compared (\d+) times?$")]
+fn compared_times(w: &mut SpecWorld, n: usize) {
+    let state = w.scm.state.lock().unwrap();
+    let times = state
+        .compared
+        .iter()
+        .filter(|(p, ..)| p == w.current_pr())
+        .count();
+    assert_eq!(times, n);
 }

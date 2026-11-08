@@ -13,6 +13,59 @@ impl Diff {
     pub fn is_empty(&self) -> bool {
         self.0.trim().is_empty()
     }
+
+    /// The paths this diff touches, from its `diff --git a/… b/…` headers.
+    pub fn files(&self) -> Vec<&str> {
+        let mut files = Vec::new();
+        for file in self.sections().filter_map(|(path, _)| path) {
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
+        files
+    }
+
+    /// Only the parts of this diff that touch a file `other` touches too.
+    /// Text before the first file header is dropped as well. Used to keep
+    /// the changes a base-branch merge brought in out of the change since
+    /// the last round (ADR-0002 D9).
+    pub fn restricted_to_files_of(&self, other: &Diff) -> Diff {
+        let keep = other.files();
+        let mut out = String::new();
+        for (path, text) in self.sections() {
+            if path.is_some_and(|p| keep.contains(&p)) {
+                out.push_str(text);
+            }
+        }
+        Diff(out)
+    }
+
+    /// The diff split at each `diff --git` header, with the header's new
+    /// path (`None` for text before the first header).
+    fn sections(&self) -> impl Iterator<Item = (Option<&str>, &str)> {
+        let text = self.0.as_str();
+        let mut starts: Vec<usize> = text
+            .match_indices("diff --git ")
+            .map(|(i, _)| i)
+            .filter(|&i| i == 0 || text.as_bytes()[i - 1] == b'\n')
+            .collect();
+        if starts.first() != Some(&0) {
+            starts.insert(0, 0);
+        }
+        let ends: Vec<usize> = starts.iter().skip(1).copied().chain([text.len()]).collect();
+        starts.into_iter().zip(ends).filter_map(move |(s, e)| {
+            let section = &text[s..e];
+            if section.is_empty() {
+                return None;
+            }
+            let path = section
+                .strip_prefix("diff --git ")
+                .and_then(|rest| rest.lines().next())
+                .and_then(|header| header.rsplit_once(" b/"))
+                .map(|(_, b)| b);
+            Some((path, section))
+        })
+    }
 }
 
 /// Whether a concept is general technology knowledge or specific to one
@@ -126,5 +179,52 @@ impl Grade {
     /// Only `Again` is incorrect.
     pub fn is_correct(self) -> bool {
         !matches!(self, Grade::Again)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Diff;
+
+    fn file(path: &str, line: &str) -> String {
+        format!(
+            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1 @@\n+{line}\n"
+        )
+    }
+
+    // @adr-0002-d9
+    #[test]
+    fn a_diff_is_restricted_to_the_files_of_another() {
+        let since = Diff(format!(
+            "{}{}{}",
+            file("src/lib.rs", "mine"),
+            file("docs/merged.md", "from main"),
+            file("src/a b.rs", "spaced")
+        ));
+        let pr = Diff(format!(
+            "{}{}",
+            file("src/lib.rs", "old"),
+            file("src/a b.rs", "x")
+        ));
+        assert_eq!(
+            since.files(),
+            ["src/lib.rs", "docs/merged.md", "src/a b.rs"]
+        );
+        let kept = since.restricted_to_files_of(&pr);
+        assert_eq!(
+            kept.0,
+            format!(
+                "{}{}",
+                file("src/lib.rs", "mine"),
+                file("src/a b.rs", "spaced")
+            )
+        );
+        assert!(since.restricted_to_files_of(&Diff::default()).is_empty());
+        assert!(Diff("no header\n".into()).files().is_empty());
+        assert!(
+            Diff("no header\n".into())
+                .restricted_to_files_of(&pr)
+                .is_empty()
+        );
     }
 }

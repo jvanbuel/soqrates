@@ -1,14 +1,16 @@
 //! The Soqrates engine: orchestrates the aggregates (load, call, save,
 //! emit events). Holds no domain rules (ADR-0002 D3).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::app::events::DomainEvent;
 use crate::app::ports::{Clock, Examiner, StateStore};
-use crate::assessment::{Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, QuestionBody};
-use crate::delivery::{GradedSession, Mode, QuestionResult, Session};
+use crate::assessment::{
+    Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody,
+};
+use crate::delivery::{GradedSession, Mode, PrRef, PrRounds, QuestionResult, Session};
 use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, Level, LinkCode, LinkRejection, policy};
 use crate::{Error, Result};
@@ -279,7 +281,22 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         author: &AuthorId,
         diff: &Diff,
     ) -> Result<Session> {
-        let now = self.clock.now();
+        let questions = self
+            .compose_questions(author, diff, &BTreeSet::new())
+            .await?;
+        self.open_session(key, author, questions).await
+    }
+
+    /// The questions a session for `author` about `diff` asks, as in
+    /// [`Soqrates::start_session`], leaving out new concepts in `skip`.
+    /// Concepts in `skip` whose review is due are still asked (ADR-0002 D9).
+    /// Persists nothing.
+    pub async fn compose_questions(
+        &self,
+        author: &AuthorId,
+        diff: &Diff,
+        skip: &BTreeSet<ConceptId>,
+    ) -> Result<Vec<Question>> {
         let mut concepts: Vec<Concept> = Vec::new();
         let mut level = Level::Novice;
         if !diff.is_empty() {
@@ -296,7 +313,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 });
             }
             for c in self.examiner.extract_concepts(diff).await? {
-                if !concepts.iter().any(|k| k.id == c.id) {
+                if !skip.contains(&c.id) && !concepts.iter().any(|k| k.id == c.id) {
                     concepts.push(c);
                 }
             }
@@ -312,18 +329,43 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             q.scope = concept.scope;
             questions.push(q);
         }
+        Ok(questions)
+    }
 
+    /// Open and persist the session `key` for `author` with `questions`.
+    pub async fn open_session(
+        &self,
+        key: SessionKey,
+        author: &AuthorId,
+        questions: Vec<Question>,
+    ) -> Result<Session> {
         let session = Session::open(
             key,
             author.clone(),
             questions,
             self.config.max_questions,
-            now,
+            self.clock.now(),
         )?;
         self.session_store_for(author)?
             .save_session(&session)
             .await?;
         Ok(session)
+    }
+
+    /// The rounds asked so far on `pr`, authored by `author` (ADR-0002 D9).
+    /// Kept with the author's sessions, never in the shared learner store
+    /// when an organisation store exists (ADR-0003 D5).
+    pub async fn rounds(&self, pr: &PrRef, author: &AuthorId) -> Result<PrRounds> {
+        Ok(self
+            .session_store_for(author)?
+            .load_rounds(pr)
+            .await?
+            .unwrap_or_else(|| PrRounds::new(pr.clone())))
+    }
+
+    /// Persist `rounds` of a pull request by `author`.
+    pub async fn save_rounds(&self, author: &AuthorId, rounds: &PrRounds) -> Result<()> {
+        self.session_store_for(author)?.save_rounds(rounds).await
     }
 
     /// The pending session `key` and the store it lives in.

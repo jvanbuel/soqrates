@@ -797,6 +797,26 @@ pub fn commit_status(status: CheckStatus, summary: &str) -> (StatusState, String
     (state, truncate(&description, MAX_DESCRIPTION_CHARS))
 }
 
+/// A unified diff from the files of a compare response: `(path, previous
+/// path, patch)`. GitHub gives each file's hunks without headers, and no
+/// patch for binary or very large files, which are left out.
+pub fn diff_of_files(files: &[(String, Option<String>, Option<String>)]) -> String {
+    let mut out = String::new();
+    for (path, previous, patch) in files {
+        let Some(patch) = patch.as_deref().filter(|p| !p.trim().is_empty()) else {
+            continue;
+        };
+        let old = previous.as_deref().unwrap_or(path);
+        out.push_str(&format!(
+            "diff --git a/{old} b/{path}\n--- a/{old}\n+++ b/{path}\n{patch}"
+        ));
+        if !patch.ends_with('\n') {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1621,5 +1641,31 @@ mod tests {
             "snake_case <code>my\\_var</code>"
         );
         assert!(!inline("a\n\nb\r\n- [x] c").contains('\n'));
+    }
+
+    // @adr-0002-d9
+    #[test]
+    fn a_compare_response_becomes_a_unified_diff() {
+        let files = vec![
+            (
+                "src/lib.rs".to_string(),
+                None,
+                Some("@@ -1 +1 @@\n-a\n+b".to_string()),
+            ),
+            ("logo.png".to_string(), None, None),
+            (
+                "src/new.rs".to_string(),
+                Some("src/old.rs".to_string()),
+                Some("@@ -1 +1 @@\n-x\n+y\n".to_string()),
+            ),
+        ];
+        let diff = soqrates_core::Diff(diff_of_files(&files));
+        assert_eq!(
+            diff.0,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n\
+             diff --git a/src/old.rs b/src/new.rs\n--- a/src/old.rs\n+++ b/src/new.rs\n@@ -1 +1 @@\n-x\n+y\n"
+        );
+        assert_eq!(diff.files(), ["src/lib.rs", "src/new.rs"]);
+        assert_eq!(diff_of_files(&[]), "");
     }
 }

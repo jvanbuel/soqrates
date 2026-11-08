@@ -12,8 +12,8 @@ use soqrates_core::ports::{Clock, Examiner, LearnerStore, Prompter, ScmProvider,
 use soqrates_core::{
     Answer, AnswerBody, CheckStatus, Concept, ConceptId, ConceptScope, Diff, Error, Grade,
     GradedSession, Grading, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
-    PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result, Session, SessionKey,
-    SessionOutcome,
+    PrRounds, PullRequest, Question, QuestionBody, QuestionFormat, QuestionId, Result, Session,
+    SessionKey, SessionOutcome,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -267,6 +267,12 @@ impl Clock for FakeClock {
 #[derive(Debug, Default)]
 pub struct ScmState {
     pub pull_requests: HashMap<PrRef, PullRequest>,
+    /// The commits of each pull request's branch, oldest first: the head
+    /// after the commit and the change it made. The pull request's diff is
+    /// all of them together.
+    pub commits: HashMap<PrRef, Vec<(String, Diff)>>,
+    /// Every `diff_between` call, in order: the pull request, from and to.
+    pub compared: Vec<(PrRef, String, String)>,
     /// Every `post_questions` call, in order.
     pub posted: Vec<(PrRef, Session)>,
     /// Every `set_check` call, in order.
@@ -294,12 +300,28 @@ pub struct FakeScm {
 }
 
 impl FakeScm {
+    /// Open `pr`, or replace its branch with one commit making `pr.diff`, as
+    /// on a force-push.
     pub fn open(&self, pr: PullRequest) {
-        self.state
-            .lock()
-            .unwrap()
+        let mut state = self.state.lock().unwrap();
+        state
+            .commits
+            .insert(pr.pr.clone(), vec![(pr.head_sha.clone(), pr.diff.clone())]);
+        state.pull_requests.insert(pr.pr.clone(), pr);
+    }
+
+    /// Push one commit making `change` onto the branch of `pr`.
+    pub fn push(&self, pr: &PrRef, head: &str, change: Diff) {
+        let mut state = self.state.lock().unwrap();
+        let commits = state.commits.entry(pr.clone()).or_default();
+        commits.push((head.to_string(), change));
+        let diff = Diff(commits.iter().map(|(_, d)| d.0.as_str()).collect());
+        let pull = state
             .pull_requests
-            .insert(pr.pr.clone(), pr);
+            .get_mut(pr)
+            .expect("push to an open pull request");
+        pull.head_sha = head.to_string();
+        pull.diff = diff;
     }
 
     pub fn pull_request_now(&self, pr: &PrRef) -> PullRequest {
@@ -370,6 +392,29 @@ impl ScmProvider for FakeScm {
             .get(pr)
             .cloned()
             .ok_or_else(|| Error::NotFound(format!("{}#{}", pr.repo, pr.number)))
+    }
+
+    async fn diff_between(&self, pr: &PrRef, from: &str, to: &str) -> Result<Option<Diff>> {
+        let mut state = self.state.lock().unwrap();
+        state
+            .compared
+            .push((pr.clone(), from.to_string(), to.to_string()));
+        let commits = state.commits.get(pr).cloned().unwrap_or_default();
+        let (Some(start), Some(end)) = (
+            commits.iter().position(|(h, _)| h == from),
+            commits.iter().position(|(h, _)| h == to),
+        ) else {
+            return Ok(None);
+        };
+        if start > end {
+            return Ok(None);
+        }
+        Ok(Some(Diff(
+            commits[start + 1..=end]
+                .iter()
+                .map(|(_, d)| d.0.as_str())
+                .collect(),
+        )))
     }
 
     async fn post_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
@@ -602,6 +647,12 @@ impl StateStore for AnyStore {
     }
     async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
         delegate!(self, delete_graded(key))
+    }
+    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
+        delegate!(self, load_rounds(pr))
+    }
+    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
+        delegate!(self, save_rounds(rounds))
     }
 }
 

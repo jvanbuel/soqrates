@@ -207,7 +207,9 @@ head creates a session, posts the questions as a PR comment and sets the check
 to `Pending`. A later run (for example, when the author replies) reads the
 answers, grades them, updates the profile and sets the check to `Success` or
 `Failure`. In `Advisory` mode a failed quiz sets `Neutral` instead of
-`Failure`. A new push to the PR starts a new session for the new head.
+`Failure`. A new push to the PR starts a new session for the new head, about
+what changed since the previous one; a push with nothing new keeps the
+previous session (ADR-0002 D9).
 
 ### D9: Local hooks share one entry point
 **Enforcement:** automated

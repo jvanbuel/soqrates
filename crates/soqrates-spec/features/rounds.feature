@@ -1,0 +1,89 @@
+@adr-0002-d9 @adr-0001-d8 @adr-0001-d12
+Feature: After a push, ask only about what changed since the last round
+  Each push to a pull request starts a round. A later round asks about the
+  change since the latest round, not the whole pull request, and leaves out
+  concepts already asked on the pull request unless their review is due.
+  With nothing new to ask, the latest round still stands: its questions stay
+  open, or its result is reported again. After a force-push the whole pull
+  request is asked about, still without the concepts already asked.
+
+  Background:
+    Given a pull request "jvanbuel/soqrates#7" by "github:1001" at head "abc123" touching "rust.ownership", "rust.traits"
+    And Soqrates runs in Blocking mode
+    And the Soqrates check has run
+
+  Scenario: A push with a new concept asks only about that concept
+    When the author pushes head "def456" touching "rust.ownership", "tokio.select"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the change was compared from head "abc123" to head "def456"
+    And the questions were posted 2 times
+    And the latest posted session is for the current head
+    And the posted questions are about "tokio.select"
+
+  Scenario: Concepts asked in a superseded round are not asked again
+    Given the author pushes head "def456" touching "tokio.select"
+    And the Soqrates check has run
+    When the author pushes head "ghi789" touching "rust.traits", "tokio.select", "serde.derive"
+    And the Soqrates check runs
+    Then the change was compared from head "def456" to head "ghi789"
+    And the posted questions are about "serde.derive"
+
+  Scenario: A push with nothing new keeps the earlier questions open
+    When the author pushes head "fix001" touching "rust.ownership"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the questions were posted 1 time
+    And no question comment was marked superseded
+    And a pending session is stored for head "abc123"
+
+  Scenario: A push with nothing to ask at all keeps the earlier questions open
+    When the author pushes head "fix001" touching nothing
+    And the Soqrates check runs
+    Then the check is Pending
+    And the questions were posted 1 time
+    And no question comment was marked superseded
+
+  Scenario: Answering the earlier questions after a push with nothing new completes the check
+    Given the author pushes head "fix001" touching "rust.traits"
+    And the Soqrates check has run
+    And the author replies with correct answers
+    When the Soqrates check runs
+    Then the check is Success
+    And the questions were posted 1 time
+    And the history of "github:1001" has 2 graded answers
+
+  Scenario: A push with nothing new reports the latest graded result again
+    Given the author replies with wrong answers
+    And the Soqrates check has run
+    When the author pushes head "fix001" touching "rust.ownership"
+    And the Soqrates check runs
+    Then the check is Failure
+    And the questions were posted 1 time
+    And the history of "github:1001" has 2 graded answers
+
+  Scenario: A concept asked earlier on the pull request is asked again once its review is due
+    Given the author replies with correct answers
+    And the Soqrates check has run
+    And 60 days pass
+    When the author pushes head "def456" touching "rust.ownership"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the questions were posted 2 times
+    And the posted questions are about "rust.ownership", "rust.traits"
+
+  Scenario: After a force-push the whole pull request is asked about, without the concepts already asked
+    When the author force-pushes head "zzz999" touching "rust.traits", "tokio.select"
+    And the Soqrates check runs
+    Then the check is Pending
+    And the change was compared from head "abc123" to head "zzz999"
+    And the posted questions are about "tokio.select"
+    And the question comment for head "abc123" was marked superseded 1 time
+
+  Scenario: Re-running the check on a head with nothing new changes nothing
+    Given the author pushes head "fix001" touching nothing
+    And the Soqrates check has run
+    When the Soqrates check runs
+    Then the check is Pending
+    And the questions were posted 1 time
+    And the change was compared 1 time

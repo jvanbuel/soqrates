@@ -48,6 +48,8 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Due review | `due_reviews` | learner | A concept whose review card is due. It is asked before new concepts. | |
 | Session | `Session` | delivery | The questions put to one author about one change, and their grading. An aggregate. Informally a "quiz". | test, exam |
 | Session key | `SessionKey` | shared | Identity of a session. In CI: PR plus head commit. | |
+| Round | `Round` | delivery | What Soqrates asked about one head of a pull request: the session that answers for that head, and the concepts it asked. | |
+| Rounds | `PrRounds` | delivery | The rounds of one pull request, oldest first. | |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
 | Hook | `HookKind` | delivery | A local git `pre-commit` or jj `pre-push` invocation. | |
 | Mode | `Mode` | delivery | Advisory (never blocks) or Blocking. | |
@@ -191,6 +193,36 @@ something needs it.
 
 Due reviews are ordered by due time, earliest first, with ties broken by
 concept ID in ascending order (gap G4).
+
+### D9: A round asks only about what changed since the last round
+**Enforcement:** automated
+
+Every push to a pull request starts a round, recorded in the PR's
+`PrRounds` with its head, its session and the concepts it asked. The CI
+check (ADR-0001 D8) decides each new round like this:
+
+- **Incremental change.** The first round asks about the whole pull
+  request. A later round asks about the change from the latest round's head
+  to the new head (`ScmProvider::diff_between`), restricted to the files the
+  pull request's own diff touches, so that merging the base branch doesn't
+  bring in other people's changes. After a force-push, when the old head is
+  not an ancestor of the new one, the whole pull request is asked about.
+- **No repeats within a pull request.** Concepts asked in any earlier round,
+  graded or not, are not asked again, unless their review card is due: due
+  reviews come first as always (ADR-0001 D6).
+- **Nothing new.** When a later round has nothing to ask, the new head
+  carries the latest round's session forward instead of asking an empty
+  round. If that session is still pending, its question comment stays open,
+  and answering it sets the check on the new head. If it was graded, its
+  result is reported again. So a push can't wipe out a failed or unanswered
+  round by asking nothing.
+
+The rounds hold heads, session keys and concept IDs, no question or answer
+text, and are kept with the author's sessions: in the organisation's store
+when there is one, never in the shared learner store (ADR-0003 D5). The
+round is recorded after its questions are posted. If recording fails, the
+next run records it from the pending session; a round whose session is
+gone, e.g. because posting failed, is asked again.
 
 ## Consequences
 

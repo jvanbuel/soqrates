@@ -14,8 +14,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    Error, GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, Result,
-    Session, SessionKey,
+    Error, GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
+    PrRounds, Result, Session, SessionKey,
 };
 
 #[derive(Debug, Default)]
@@ -25,6 +25,7 @@ struct Data {
     codes: BTreeMap<String, LinkCode>,
     sessions: BTreeMap<SessionKey, Session>,
     graded: BTreeMap<SessionKey, GradedSession>,
+    rounds: BTreeMap<String, PrRounds>,
 }
 
 /// Keeps everything in memory. Useful for tests and for the MCP server's
@@ -114,12 +115,20 @@ impl StateStore for InMemoryStore {
         self.with(|d| d.graded.remove(key));
         Ok(())
     }
+    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
+        Ok(self.with(|d| d.rounds.get(&pr.id()).cloned()))
+    }
+    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
+        self.with(|d| d.rounds.insert(rounds.pr().id(), rounds.clone()));
+        Ok(())
+    }
 }
 
 impl LearnerStore for InMemoryStore {}
 
-/// One JSON document per profile, link, link code and pending session,
-/// under a directory. File names are the hex-encoded keys.
+/// One JSON document per profile, link, link code, pending session, graded
+/// session and pull request's rounds, under a directory. File names are the
+/// hex-encoded keys.
 #[derive(Debug, Clone)]
 pub struct FileStore {
     pub root: PathBuf,
@@ -265,6 +274,12 @@ impl StateStore for FileStore {
     async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
         self.remove("graded", &key.0)
     }
+    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
+        self.read("rounds", &pr.id())
+    }
+    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
+        self.write("rounds", &rounds.pr().id(), rounds)
+    }
 }
 
 impl LearnerStore for FileStore {}
@@ -353,6 +368,12 @@ impl StateStore for Store {
     }
     async fn delete_graded(&self, key: &SessionKey) -> Result<()> {
         delegate!(self, delete_graded(key))
+    }
+    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
+        delegate!(self, load_rounds(pr))
+    }
+    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
+        delegate!(self, save_rounds(rounds))
     }
 }
 
@@ -505,6 +526,28 @@ mod tests {
         assert_eq!(store.load_graded(s.key()).await.unwrap(), Some(graded));
         store.delete_graded(s.key()).await.unwrap();
         assert!(store.load_graded(s.key()).await.unwrap().is_none());
+
+        // The rounds of a pull request (ADR-0002 D9).
+        let pr = |repo: &str, number| PrRef {
+            repo: repo.into(),
+            number,
+        };
+        assert!(store.load_rounds(&pr("o/r", 1)).await.unwrap().is_none());
+        let mut rounds = PrRounds::new(pr("o/r", 1));
+        rounds.record(soqrates_core::Round {
+            head: "abc".into(),
+            session: s.key().clone(),
+            concepts: vec![soqrates_core::ConceptId("rust.traits".into())],
+            at: now,
+        });
+        store.save_rounds(&rounds).await.unwrap();
+        store.save_rounds(&rounds).await.unwrap();
+        assert_eq!(
+            store.load_rounds(&pr("o/r", 1)).await.unwrap(),
+            Some(rounds)
+        );
+        assert!(store.load_rounds(&pr("o/r", 11)).await.unwrap().is_none());
+        assert!(store.load_rounds(&pr("O/R", 1)).await.unwrap().is_none());
 
         // Keys are used verbatim: no collisions between similar keys.
         for key in ["o/r#1@abc", "o/r#1@abc ", "O/R#1@ABC", "o/r#1@ab'c"] {
