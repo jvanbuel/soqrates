@@ -5,9 +5,10 @@
 # tag vX there. The action downloads these archives; it never compiles.
 #
 # Run it by hand (workflow_dispatch) without a tag for a dry run: it builds
-# and packages, and publishes nothing. With the tag of an existing release,
-# it (re)builds and attaches that release's binaries, e.g. after a failed
-# build.
+# and packages, and publishes nothing. To rebuild an existing release (e.g.
+# after a failed build), run it from that release's tag ("Use workflow from:
+# vX.Y.Z") with the same tag as input, so the build, its provenance and the
+# workflow all come from the tagged commit.
 name: release
 
 on:
@@ -52,6 +53,17 @@ jobs:
       id-token: write       # sign the build provenance attestation
       attestations: write   # store it
     steps:
+      # The attestation records the commit the workflow runs from, so a
+      # rebuild must run from the tag it builds.
+      - name: Check a rebuild runs from its tag
+        if: github.event_name == 'workflow_dispatch' && env.TAG != ''
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "::error::run the rebuild of $TAG from that tag (Use workflow from: $TAG), not from $GITHUB_REF"
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
@@ -94,6 +106,10 @@ jobs:
   publish:
     needs: build
     if: inputs.tag != ''
+    # One release at a time moves the major tag.
+    concurrency:
+      group: release-major-tag
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the release and move the major tag
@@ -125,6 +141,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           major="${TAG%%.*}"
+          # Never move the major tag back to an older release, e.g. when an
+          # older release is rebuilt after a newer one was published.
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$major." --jq '.[].ref' \
+            | sed 's#^refs/tags/##' | grep -E "^${major}\.[0-9]+\.[0-9]+$" | sort -V | tail -n 1)
+          if [ "$latest" != "$TAG" ]; then
+            echo "::notice::$TAG isn't the newest $major release ($latest); $major stays where it is."
+            exit 0
+          fi
           sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major" > /dev/null 2>&1; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" \

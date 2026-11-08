@@ -66,6 +66,12 @@ Run the **release** workflow by hand (Actions → release → Run workflow):
 
 - with the **tag** left empty, it builds and packages the three binaries and
   publishes nothing;
-- with the tag of an existing release (e.g. `v0.1.0`), it builds the
-  binaries of that tag and attaches them to the release, and moves the
-  major tag. Use this when a release's build failed.
+- to rebuild an existing release whose build failed, choose its tag under
+  **Use workflow from** (e.g. `v0.2.0`) and enter the same tag as input. It
+  builds that tag's binaries and attaches them to the release, so the build
+  and its provenance come from the tagged commit. A rebuild run from any
+  other ref is refused. The major tag only moves if this is the newest
+  release of that major version.
+
+  This works for releases tagged after the rebuild input was added. For an
+  older release, cut a new patch release instead.
