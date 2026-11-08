@@ -41,6 +41,7 @@ impl Examiner for FakeExaminer {
                 prompt: format!("Which is true of {}?", concept.title),
                 options: vec!["a".into(), "b".into(), "c".into(), "d".into()],
                 correct: RIGHT,
+                reasons: Vec::new(),
             },
             QuestionFormat::Open => QuestionBody::Open {
                 prompt: format!("Explain {}.", concept.title),

@@ -12,7 +12,8 @@ use soqrates_core::{
 use crate::examiner::{CHOICE_FOR_OPEN_FEEDBACK, NO_ANSWER_FEEDBACK};
 use crate::examiner::{Core, Llm, LlmRequest};
 use crate::output::{
-    self, ConceptsOutput, GradeOutput, MultipleChoice, MultipleChoiceOutput, OpenOutput, RawConcept,
+    self, ConceptsOutput, GradeOutput, MultipleChoice, MultipleChoiceOutput, OpenOutput,
+    RawConcept, RawOption,
 };
 use crate::prompts;
 use crate::{DEFAULT_MODEL, ModelSpec, Provider};
@@ -75,6 +76,9 @@ fn mc_question(options: usize, correct: usize) -> Question {
             prompt: "Why?".into(),
             options: (0..options).map(|i| format!("option {i}")).collect(),
             correct,
+            reasons: (0..options)
+                .map(|i| format!("Secret reason {i}."))
+                .collect(),
         },
         explanation: SECRET_EXPLANATION.into(),
     }
@@ -313,10 +317,33 @@ fn the_diff_is_delimited_and_cannot_close_its_block() {
 fn mc_output(options: &[&str], correct: u32) -> MultipleChoiceOutput {
     MultipleChoiceOutput {
         prompt: "Why does the change drop the guard before awaiting?".into(),
-        options: options.iter().map(|o| o.to_string()).collect(),
+        options: options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| RawOption {
+                text: o.to_string(),
+                why: if i == correct as usize {
+                    "Holding the guard across an await blocks other tasks.".into()
+                } else {
+                    format!("{o} does not release the lock.")
+                },
+            })
+            .collect(),
         correct,
-        explanation: "Holding the guard across an await blocks other tasks.".into(),
     }
+}
+
+/// A multiple-choice reply: `options` are `(text, why)`.
+fn mc_reply(options: &[(&str, &str)], correct: usize) -> String {
+    serde_json::json!({
+        "prompt": "Q?",
+        "options": options
+            .iter()
+            .map(|(text, why)| serde_json::json!({"text": text, "why": why}))
+            .collect::<Vec<_>>(),
+        "correct": correct,
+    })
+    .to_string()
 }
 
 #[test]
@@ -345,7 +372,12 @@ fn shuffle_is_deterministic_and_keeps_the_correct_answer() {
         prompt: "p".into(),
         options: vec!["right".into(), "w1".into(), "w2".into(), "w3".into()],
         correct: 0,
-        explanation: "Because \"right\" is right.".into(),
+        reasons: vec![
+            "Because \"right\" is right.".into(),
+            "w1 is wrong.".into(),
+            "w2 is wrong.".into(),
+            "w3 is wrong.".into(),
+        ],
     };
     let mut positions = HashSet::new();
     for i in 0..20 {
@@ -354,7 +386,13 @@ fn shuffle_is_deterministic_and_keeps_the_correct_answer() {
         let b = output::shuffle(question.clone(), &seed);
         assert_eq!(a, b, "same seed, same order");
         assert_eq!(a.options[a.correct], "right");
-        assert_eq!(a.explanation, question.explanation);
+        assert_eq!(a.explanation(), question.explanation());
+        // Every reason moves with its option.
+        for (option, why) in a.options.iter().zip(&a.reasons) {
+            if option != "right" {
+                assert_eq!(why, &format!("{option} is wrong."));
+            }
+        }
         let mut sorted = a.options.clone();
         sorted.sort();
         assert_eq!(sorted, ["right", "w1", "w2", "w3"]);
@@ -369,8 +407,15 @@ fn shuffle_is_deterministic_and_keeps_the_correct_answer() {
 #[tokio::test]
 async fn write_multiple_choice_question() {
     let core = Canned::new(&[
-        r#"{"prompt":"Q?","options":["only","two"],"correct":0,"explanation":"E."}"#,
-        r#"{"prompt":"Q?","options":["right","wrong 1","wrong 2"],"correct":0,"explanation":"It is right."}"#,
+        &mc_reply(&[("only", "E."), ("two", "F.")], 0),
+        &mc_reply(
+            &[
+                ("right", "It is right."),
+                ("wrong 1", "It blocks."),
+                ("wrong 2", "It leaks."),
+            ],
+            0,
+        ),
     ]);
     let c = concept("rust.async.cancellation", ConceptScope::General);
     let q = core
@@ -383,12 +428,18 @@ async fn write_multiple_choice_question() {
     assert_eq!(q.scope, ConceptScope::General);
     match q.body {
         QuestionBody::MultipleChoice {
-            options, correct, ..
+            ref options,
+            correct,
+            ref reasons,
+            ..
         } => {
             assert_eq!(options.len(), 3);
             assert_eq!(options[correct], "right");
+            let wrong1 = options.iter().position(|o| o == "wrong 1").unwrap();
+            assert_eq!(q.body.reason(wrong1), Some("It blocks."));
+            assert_eq!(reasons[correct], "It is right.");
         }
-        other => panic!("not multiple choice: {other:?}"),
+        ref other => panic!("not multiple choice: {other:?}"),
     }
     assert_eq!(q.explanation, "It is right.");
     let requests = core.llm.requests.lock().unwrap();
@@ -598,17 +649,21 @@ fn long_feedback_is_truncated() {
 // @adr-0004-d1
 #[test]
 fn the_question_prompts_ask_for_a_plain_explanation() {
+    assert!(prompts::WRITE_OPEN_SYSTEM.contains("explanation: 1 to 3 sentences"));
+    assert!(prompts::WRITE_OPEN_SYSTEM.contains("only after"));
     for system in [
         prompts::WRITE_MULTIPLE_CHOICE_SYSTEM,
         prompts::WRITE_OPEN_SYSTEM,
     ] {
-        assert!(system.contains("explanation: 1 to 3 sentences"));
-        assert!(system.contains("only after"));
         assert!(system.contains("no markdown headings"));
         assert!(system.contains("HTML"));
     }
-    // Options are shuffled, so the explanation must not name them by position.
+    // Every option gets a reason; the correct one's is the explanation.
     let mc = prompts::WRITE_MULTIPLE_CHOICE_SYSTEM;
+    assert!(mc.contains("for the correct option, 1 to 3 sentences"));
+    assert!(mc.contains("question's explanation"));
+    assert!(mc.contains("shown only to an author who picked it"));
+    // Options are shuffled, so a reason must not name them by position.
     assert!(mc.contains("shuffled"));
     assert!(mc.contains("never by letter, number or"));
     assert!(mc.contains("'option A'"));
@@ -619,9 +674,14 @@ fn the_question_prompts_ask_for_a_plain_explanation() {
 #[test]
 fn the_explanation_is_required() {
     let mut out = mc_output(&["a", "b", "c"], 0);
-    out.explanation = " \n ".into();
+    out.options[0].why = " \n ".into();
     let err = output::validate_multiple_choice(out).unwrap_err();
     assert!(err.contains("explanation"));
+    // So is a reason for every wrong option.
+    let mut out = mc_output(&["a", "b", "c"], 0);
+    out.options[2].why = "".into();
+    let err = output::validate_multiple_choice(out).unwrap_err();
+    assert!(err.contains(r#"option "c""#), "{err}");
 
     let open = |explanation: &str| OpenOutput {
         prompt: "Explain.".into(),
@@ -633,7 +693,7 @@ fn the_explanation_is_required() {
     // A reply without the field at all does not parse.
     assert!(
         output::parse_json::<MultipleChoiceOutput>(
-            r#"{"prompt":"Q","options":["a","b","c"],"correct":0}"#
+            r#"{"prompt":"Q","options":[{"text":"a"},{"text":"b"},{"text":"c"}],"correct":0}"#
         )
         .is_err()
     );
@@ -673,10 +733,14 @@ fn long_explanations_are_truncated_at_a_boundary() {
     assert_eq!(cut, format!("{}…", "é".repeat(10)));
     // A full reply is capped.
     let mut out = mc_output(&["a", "b", "c"], 0);
-    out.explanation = "This is one sentence about the concept. ".repeat(40);
+    out.options[0].why = "This is one sentence about the concept. ".repeat(40);
+    out.options[1].why = "This is one sentence about the option. ".repeat(40);
     let mc = output::validate_multiple_choice(out).unwrap();
-    assert!(mc.explanation.chars().count() <= output::MAX_EXPLANATION_CHARS);
-    assert!(mc.explanation.ends_with("concept."));
+    assert!(mc.explanation().chars().count() <= output::MAX_EXPLANATION_CHARS);
+    assert!(mc.explanation().ends_with("concept."));
+    // A wrong option's reason comes before the explanation, so it is shorter.
+    assert!(mc.reasons[1].chars().count() <= output::MAX_REASON_CHARS);
+    assert!(mc.reasons[1].ends_with("option."));
 }
 
 // @adr-0004-d1
@@ -720,8 +784,22 @@ fn option_letters_in_the_explanation_are_replaced_by_the_option_text() {
 async fn a_multiple_choice_explanation_survives_the_shuffle() {
     // The first reply names an option by position and is rejected...
     let core = Canned::new(&[
-        r#"{"prompt":"Q?","options":["right","wrong 1","wrong 2"],"correct":0,"explanation":"The first option is right."}"#,
-        r#"{"prompt":"Q?","options":["right","wrong 1","wrong 2"],"correct":0,"explanation":"Option A is right because the guard is dropped."}"#,
+        &mc_reply(
+            &[
+                ("right", "The first option is right."),
+                ("wrong 1", "It blocks."),
+                ("wrong 2", "It leaks."),
+            ],
+            0,
+        ),
+        &mc_reply(
+            &[
+                ("right", "Option A is right because the guard is dropped."),
+                ("wrong 1", "Unlike option A, it blocks."),
+                ("wrong 2", "It leaks."),
+            ],
+            0,
+        ),
     ]);
     // ...a seed whose shuffle moves the correct option away from A.
     let id = (0..100)
@@ -732,7 +810,7 @@ async fn a_multiple_choice_explanation_survives_the_shuffle() {
                     prompt: "Q?".into(),
                     options: vec!["right".into(), "wrong 1".into(), "wrong 2".into()],
                     correct: 0,
-                    explanation: String::new(),
+                    reasons: vec![String::new(); 3],
                 },
                 id,
             );
@@ -752,7 +830,12 @@ async fn a_multiple_choice_explanation_survives_the_shuffle() {
             .user
             .contains("position")
     );
-    let QuestionBody::MultipleChoice { correct, .. } = q.body else {
+    let QuestionBody::MultipleChoice {
+        correct,
+        ref options,
+        ..
+    } = q.body
+    else {
         panic!("not multiple choice");
     };
     assert_ne!(correct, 0, "the option moved");
@@ -760,4 +843,61 @@ async fn a_multiple_choice_explanation_survives_the_shuffle() {
         q.explanation,
         r#"Option "right" is right because the guard is dropped."#
     );
+    let wrong1 = options.iter().position(|o| o == "wrong 1").unwrap();
+    assert_eq!(
+        q.body.reason(wrong1),
+        Some(r#"Unlike option "right", it blocks."#)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// reasons that refer to options the question doesn't offer (issue #5)
+
+/// A question about `?`, written in one reply: every option with its reason.
+fn question_mark() -> String {
+    mc_reply(
+        &[
+            (
+                "the error type has no From impl",
+                "`?` converts errors with From, and the error type has none.",
+            ),
+            ("the function returns ()", "It returns a Result."),
+            ("the trait is not in scope", "From is in the prelude."),
+        ],
+        0,
+    )
+}
+
+#[tokio::test]
+async fn options_and_their_reasons_are_written_in_one_call() {
+    let core = Canned::new(&[&question_mark()]);
+    let q = core
+        .write_question(
+            &concept("rust.errors.question-mark", ConceptScope::General),
+            QuestionFormat::MultipleChoice,
+        )
+        .await
+        .unwrap();
+    assert_eq!(calls(&core), 1, "no separate check");
+    assert_eq!(
+        q.explanation,
+        "`?` converts errors with From, and the error type has none."
+    );
+    let QuestionBody::MultipleChoice { ref options, .. } = q.body else {
+        panic!("not multiple choice");
+    };
+    for (option, why) in [
+        ("the function returns ()", "It returns a Result."),
+        ("the trait is not in scope", "From is in the prelude."),
+    ] {
+        let i = options.iter().position(|o| o == option).unwrap();
+        assert_eq!(q.body.reason(i), Some(why), "{option}");
+    }
+}
+
+#[test]
+fn the_question_prompt_asks_to_discuss_only_the_options_offered() {
+    let mc = prompts::WRITE_MULTIPLE_CHOICE_SYSTEM;
+    assert!(mc.contains("Each `why` is about its own option"));
+    assert!(mc.contains("does not offer"));
 }

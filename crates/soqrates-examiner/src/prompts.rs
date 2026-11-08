@@ -68,14 +68,19 @@ Rules:
 - prompt: the question, self-contained, answerable without seeing the code.
 - options: 3 to 5 distinct, plausible options. Exactly one is correct. Distractors should \
 reflect real misconceptions, not jokes. Do not use 'all of the above' or 'none of the above'. \
-Do not prefix options with letters or numbers.
+Each option has:
+  - text: the option as shown. Do not prefix it with a letter or number.
+  - why: for the correct option, 1 to 3 sentences on why it is correct; this is the \
+question's explanation, shown to every author after grading. For a wrong option, 1 or 2 \
+sentences on why it is wrong: the misconception behind it and what would go wrong. It is \
+shown only to an author who picked it, right before the explanation, so do not repeat the \
+explanation. Plain text only: no markdown headings, lists or HTML.
 - correct: the 0-based index of the correct option in `options`.
-- explanation: 1 to 3 sentences on why the correct option is correct, and, where it helps, \
-the misconception behind the most tempting wrong option. It is shown to the author only after \
-their answer is graded. Plain text only: no markdown headings, lists or HTML.
+- Each `why` is about its own option, and may contrast it with the other options listed. Do \
+not argue for or against an answer the question does not offer: the author never saw it.
 - The options are shuffled before they are shown, so letters, numbers and positions change. \
-In the explanation, refer to an option only by its content, never by letter, number or \
-position: do not write 'option A', '(b)', 'answer 2' or 'the first option'.";
+In a `why`, refer to an option only by its content, never by letter, number or position: do \
+not write 'option A', '(b)', 'answer 2' or 'the first option'.";
 
 pub const WRITE_OPEN_SYSTEM: &str = "\
 You are the examiner of Soqrates, a tool that checks whether the author of a code change \

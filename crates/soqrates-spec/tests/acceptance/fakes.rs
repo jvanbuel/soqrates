@@ -64,6 +64,9 @@ pub const WRONG_TEXT: &str = "I don't know";
 pub struct FakeExaminer {
     correct_grade: Arc<Mutex<Grade>>,
     scopes: Arc<Mutex<HashMap<ConceptId, ConceptScope>>>,
+    /// Whether multiple-choice questions come without option reasons, as
+    /// questions stored before reasons existed do.
+    without_reasons: Arc<Mutex<bool>>,
 }
 
 impl Default for FakeExaminer {
@@ -71,6 +74,7 @@ impl Default for FakeExaminer {
         Self {
             correct_grade: Arc::new(Mutex::new(Grade::Good)),
             scopes: Arc::new(Mutex::new(HashMap::new())),
+            without_reasons: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -83,6 +87,11 @@ impl FakeExaminer {
     /// The grade the answer key gives a correct answer.
     pub fn correct_grade(&self) -> Grade {
         *self.correct_grade.lock().unwrap()
+    }
+
+    /// Write multiple-choice questions without option reasons from now on.
+    pub fn write_without_reasons(&self) {
+        *self.without_reasons.lock().unwrap() = true;
     }
 
     /// Classify `concept` as `scope` from now on (ADR-0003 D5).
@@ -154,16 +163,30 @@ impl Examiner for FakeExaminer {
     async fn write_question(&self, concept: &Concept, format: QuestionFormat) -> Result<Question> {
         let id = Self::question_id(&concept.id, format);
         let body = match format {
-            QuestionFormat::MultipleChoice => QuestionBody::MultipleChoice {
-                prompt: format!("Which statement about {} is true?", concept.title),
-                options: vec![
+            QuestionFormat::MultipleChoice => {
+                let options: Vec<String> = vec![
                     "the right one".into(),
                     "a plausible wrong one".into(),
                     "another wrong one".into(),
                     "an obviously wrong one".into(),
-                ],
-                correct: 0,
-            },
+                ];
+                let without_reasons = *self.without_reasons.lock().unwrap();
+                let reasons = options
+                    .iter()
+                    .filter(|_| !without_reasons)
+                    .enumerate()
+                    .map(|(i, option)| match i {
+                        0 => Self::explanation(&concept.id),
+                        _ => Self::reason(&concept.id, option),
+                    })
+                    .collect();
+                QuestionBody::MultipleChoice {
+                    prompt: format!("Which statement about {} is true?", concept.title),
+                    options,
+                    correct: 0,
+                    reasons,
+                }
+            }
             QuestionFormat::Open => QuestionBody::Open {
                 prompt: format!("Explain {} in this change.", concept.title),
                 rubric: format!("Covers {}", concept.title),
@@ -209,6 +232,11 @@ impl FakeExaminer {
     /// The explanation the fake writes for `concept`.
     pub fn explanation(concept: &ConceptId) -> String {
         format!("Because {} works that way.", concept.0)
+    }
+
+    /// The reason the fake gives for the wrong `option` about `concept`.
+    pub fn reason(concept: &ConceptId, option: &str) -> String {
+        format!("\"{option}\" is not how {} works.", concept.0)
     }
 
     /// The feedback the fake gives on an open answer about `concept`.

@@ -93,6 +93,9 @@ impl<L: Llm> Core<L> {
     ) -> Result<Question> {
         let (body, explanation) = match format {
             QuestionFormat::MultipleChoice => {
+                // One reason per option, written with the options (issue #5):
+                // each reason is about an option that is shown, so there is
+                // no free-form explanation to discuss options not offered.
                 let mc = self
                     .structured(
                         "a multiple-choice question",
@@ -101,15 +104,17 @@ impl<L: Llm> Core<L> {
                         |out: MultipleChoiceOutput| output::validate_multiple_choice(out),
                     )
                     .await?;
-                // The explanation names options by content, so it survives
-                // the shuffle unchanged.
+                // The reasons name options by content, so they survive the
+                // shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
+                let explanation = mc.explanation().to_owned();
                 let body = QuestionBody::MultipleChoice {
                     prompt: mc.prompt,
                     options: mc.options,
                     correct: mc.correct,
+                    reasons: mc.reasons,
                 };
-                (body, mc.explanation)
+                (body, explanation)
             }
             QuestionFormat::Open => {
                 let open = self
@@ -137,8 +142,9 @@ impl<L: Llm> Core<L> {
     }
 
     /// Grade `answer`. Multiple choice is graded without the model and with
-    /// empty feedback, so that the engine shows the question's explanation
-    /// (the presenters show the correct option). An open answer is graded by
+    /// empty feedback, so that the engine shows the picked option's reason
+    /// and the question's explanation (the presenters show the correct
+    /// option). An open answer is graded by
     /// the model, whose rationale becomes the feedback. The question's
     /// explanation is never sent to the model.
     pub async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
