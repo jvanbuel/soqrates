@@ -98,8 +98,9 @@ After a local hook session, the terminal shows:
 ### D7: A newer push freezes earlier question comments
 **Enforcement:** automated
 
-Each push starts a new session with its own question comment (ADR-0001
-D8), and only the newest one counts. When the check runs for a head, every
+Each push that brings something new to ask starts a new session with its
+own question comment (ADR-0001 D8, ADR-0002 D9), and only the newest one
+counts. When the check runs for a head, every
 earlier question comment on the PR that was never graded is edited to say
 a newer commit superseded it. It links the new question comment and shows
 its own questions collapsed, without boxes, as a graded comment does (D5). The
@@ -111,10 +112,13 @@ and only sessions of the same PR, are touched, so copying a marker into
 another comment can't make Soqrates rewrite it. A failed edit is retried by
 the next run.
 
-A push that asks no questions still gets a short comment, with no boxes,
-saying there is nothing to answer, and the earlier comments link to it.
-Otherwise an earlier comment would stay live, and answers to it would be
-silently ignored.
+A push that brings nothing new to ask posts no comment: the latest round's
+session carries forward to the new head, and its question comment stays
+live and counts (ADR-0002 D9). Only a round that asks nothing and has no
+earlier session to carry forward, such as the first round of a PR with an
+empty diff, gets a short comment, with no boxes, saying there is nothing to
+answer. Earlier comments still taking answers link to it, so none stays
+live with answers that would be silently ignored.
 
 ## Consequences
 

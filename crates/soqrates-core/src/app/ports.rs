@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use crate::Result;
 use crate::app::engine::SessionOutcome;
 use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionFormat};
-use crate::delivery::{CheckStatus, GradedSession, PrRef, PullRequest, Session};
+use crate::delivery::{CheckStatus, GradedSession, PrRef, PrRounds, PullRequest, Session};
 use crate::ids::{Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 
@@ -62,6 +62,11 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<GradedSession>>> + Send;
     /// Undo [`StateStore::save_graded`] when grading is rolled back.
     fn delete_graded(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
+
+    /// The rounds asked on `pr` so far (ADR-0002 D9).
+    fn load_rounds(&self, pr: &PrRef) -> impl Future<Output = Result<Option<PrRounds>>> + Send;
+    /// Create or replace the rounds of `rounds.pr()`.
+    fn save_rounds(&self, rounds: &PrRounds) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// The store holding the profiles of linked learners, reachable from several
@@ -89,6 +94,15 @@ pub trait Examiner: Send + Sync {
 /// A forge/CI provider (D4). Implemented by `soqrates-scm-github` and friends.
 pub trait ScmProvider: Send + Sync {
     fn pull_request(&self, pr: &PrRef) -> impl Future<Output = Result<PullRequest>> + Send;
+    /// The change on `pr` from commit `from` to commit `to`, or `None` when
+    /// `from` is not an ancestor of `to`, e.g. after a force-push
+    /// (ADR-0002 D9).
+    fn diff_between(
+        &self,
+        pr: &PrRef,
+        from: &str,
+        to: &str,
+    ) -> impl Future<Output = Result<Option<Diff>>> + Send;
     /// Post the session's questions on the PR, e.g. as a comment. A session
     /// without questions is posted too, saying there is nothing to answer
     /// (ADR-0004 D7).

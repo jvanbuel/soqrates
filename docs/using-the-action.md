@@ -92,7 +92,7 @@ commit SHA if you prefer.
 | `mode` | `advisory` | `advisory`: a failed session reports success with a note, so it never blocks a merge. `blocking`: a failed session fails the check. |
 | `database-url` | | Keep learner state in a database instead of the state branch, e.g. `postgres://…`. From a secret. It must persist between jobs, so `sqlite:` URLs are refused on GitHub-hosted runners. |
 | `state-branch` | `soqrates-state` | The branch holding learner state when no `database-url` is given. |
-| `github-token` | `${{ github.token }}` | Reads the pull request, posts comments and the status, and pushes the state branch. |
+| `github-token` | `${{ github.token }}` | Reads the pull request and compares its pushes, posts comments and the status, and pushes the state branch. |
 | `app-id`, `app-private-key` | | Post as your own GitHub App instead of github-actions[bot]; see [Posting as your own app](#posting-as-your-own-app). |
 
 Without the key of the chosen provider, for example on pull requests from

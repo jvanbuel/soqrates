@@ -13,8 +13,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    Error, GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, Result,
-    Session, SessionKey,
+    Error, GradedSession, Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef,
+    PrRounds, Result, Session, SessionKey,
 };
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
 use sqlx::{AnyConnection, AnyPool, Connection, Row};
@@ -47,6 +47,12 @@ const SCHEMA: &[&str] = &[
     )",
     "CREATE TABLE IF NOT EXISTS soqrates_graded (
         session_key TEXT PRIMARY KEY,
+        doc TEXT NOT NULL
+    )",
+    // Added within version 1: a new table is invisible to older builds, so
+    // they can't misread it (ADR-0002 D9).
+    "CREATE TABLE IF NOT EXISTS soqrates_rounds (
+        pr TEXT PRIMARY KEY,
         doc TEXT NOT NULL
     )",
 ];
@@ -221,6 +227,7 @@ impl SqlStore {
             "soqrates_link_codes",
             "soqrates_sessions",
             "soqrates_graded",
+            "soqrates_rounds",
         ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
                 .execute(&self.pool)
@@ -405,6 +412,23 @@ impl StateStore for SqlStore {
         self.exec(
             "DELETE FROM soqrates_graded WHERE session_key = $1",
             &[&key.0],
+        )
+        .await
+    }
+
+    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
+        self.fetch_doc(
+            "SELECT doc FROM soqrates_rounds WHERE pr = $1",
+            "rounds",
+            &pr.id(),
+        )
+        .await
+    }
+    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
+        self.exec(
+            "INSERT INTO soqrates_rounds (pr, doc) VALUES ($1, $2)
+             ON CONFLICT (pr) DO UPDATE SET doc = excluded.doc",
+            &[&rounds.pr().id(), &to_json(rounds)?],
         )
         .await
     }

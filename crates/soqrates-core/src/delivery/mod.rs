@@ -221,6 +221,83 @@ pub struct PullRequest {
     pub diff: Diff,
 }
 
+impl PrRef {
+    /// The text form of the reference, e.g. `jvanbuel/soqrates#7`: the key
+    /// of its [`PrRounds`] in a store.
+    pub fn id(&self) -> String {
+        format!("{}#{}", self.repo, self.number)
+    }
+}
+
+/// What Soqrates asked about one head of a pull request (ADR-0002 D9).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Round {
+    /// The head commit the round is for.
+    pub head: String,
+    /// The session that answers for this head: the round's own, or, when
+    /// the head brought nothing new to ask, the latest earlier round's
+    /// session, carried forward.
+    pub session: SessionKey,
+    /// The concepts asked in this round. Empty when carried forward.
+    pub concepts: Vec<ConceptId>,
+    pub at: DateTime<Utc>,
+}
+
+/// The rounds of one pull request, oldest first (ADR-0002 D9). Holds
+/// concept IDs and commits only, no question or answer text (ADR-0003 D5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrRounds {
+    pr: PrRef,
+    rounds: Vec<Round>,
+}
+
+impl PrRounds {
+    pub fn new(pr: PrRef) -> Self {
+        Self {
+            pr,
+            rounds: Vec::new(),
+        }
+    }
+
+    pub fn pr(&self) -> &PrRef {
+        &self.pr
+    }
+
+    pub fn rounds(&self) -> &[Round] {
+        &self.rounds
+    }
+
+    /// The most recent round.
+    pub fn latest(&self) -> Option<&Round> {
+        self.rounds.last()
+    }
+
+    /// The round for `head`, if there was one.
+    pub fn for_head(&self, head: &str) -> Option<&Round> {
+        self.rounds.iter().find(|r| r.head == head)
+    }
+
+    /// Every concept asked on the pull request so far, graded or not.
+    pub fn asked(&self) -> BTreeSet<ConceptId> {
+        self.rounds
+            .iter()
+            .flat_map(|r| r.concepts.iter().cloned())
+            .collect()
+    }
+
+    /// Add `round`. A head has at most one round: recording a head again
+    /// replaces its round and makes it the latest.
+    pub fn record(&mut self, round: Round) {
+        self.forget(&round.head);
+        self.rounds.push(round);
+    }
+
+    /// Remove the round for `head`, if any.
+    pub fn forget(&mut self, head: &str) {
+        self.rounds.retain(|r| r.head != head);
+    }
+}
+
 /// The status Soqrates reports on a pull request (ADR-0001 D8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CheckStatus {

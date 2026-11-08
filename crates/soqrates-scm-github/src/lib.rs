@@ -26,10 +26,10 @@ use soqrates_core::{
 };
 
 use crate::format::{
-    EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, commit_status, editor_database_id,
-    graphql_base, host_of, marker_key, merge_answers, parse_answers, parse_checkboxes,
-    render_graded_questions, render_questions, render_results, render_superseded_questions,
-    select_answer_comment, session_marker, split_repo, takes_answers,
+    EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, commit_status, diff_of_files,
+    editor_database_id, graphql_base, host_of, marker_key, merge_answers, parse_answers,
+    parse_checkboxes, render_graded_questions, render_questions, render_results,
+    render_superseded_questions, select_answer_comment, session_marker, split_repo, takes_answers,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -225,6 +225,41 @@ impl ScmProvider for GitHubProvider {
             head_sha,
             diff: Diff(diff),
         })
+    }
+
+    async fn diff_between(&self, pr: &PrRef, from: &str, to: &str) -> Result<Option<Diff>> {
+        let (owner, name) = repo(pr)?;
+        let comparison = match self
+            .client()?
+            .commits(owner, name)
+            .compare(from, to)
+            .send()
+            .await
+        {
+            Ok(c) => c,
+            // A force-push can leave `from` unreachable, or gone.
+            Err(octocrab::Error::GitHub { source, .. })
+                if matches!(source.status_code.as_u16(), 404 | 422) =>
+            {
+                return Ok(None);
+            }
+            Err(e) => return Err(port("compare commits")(e)),
+        };
+        use octocrab::models::commits::GithubCommitStatus;
+        if !matches!(
+            comparison.status,
+            GithubCommitStatus::Ahead | GithubCommitStatus::Identical
+        ) {
+            // Behind or diverged: `from` is not an ancestor of `to`.
+            return Ok(None);
+        }
+        let files: Vec<(String, Option<String>, Option<String>)> = comparison
+            .files
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| (f.filename, f.previous_filename, f.patch))
+            .collect();
+        Ok(Some(Diff(diff_of_files(&files))))
     }
 
     async fn post_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
