@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#12@14f2550cc0723fb5384f12c71bc14553b824d18d",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.composite-action.design/mc",
+      "concept": "github-actions.composite-action.design",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A team converts an inline workflow job into a composite action. One step runs a shell script that uses a user-supplied input such as a branch name or PR title. Why is it better to map the input to an environment variable (e.g. `env: TITLE: ${{ inputs.title }}`) and reference `\"$TITLE\"` in the script, rather than writing `${{ inputs.title }}` directly in the script body?",
+          "options": [
+            "Env vars are required, because composite actions cannot read `inputs` context values inside `run` steps at all.",
+            "Interpolating `${{ inputs.* }}` directly into the script text embeds the raw value in the shell source, so special characters can break the script or inject commands; an env var keeps it as plain data.",
+            "Env vars let the runner cache the input value between workflow runs, which makes the action faster.",
+            "Env vars make the input automatically available to the calling workflow's later steps as an output."
+          ],
+          "correct": 1
+        }
+      },
+      "explanation": "Expanding `${{ inputs.* }}` directly inside a `run` script pastes the raw value into the shell source before it runs, so a crafted or unusual value can break quoting or inject commands. Mapping the input to an env var makes the shell read it as data. Other claims are misconceptions: it does not affect caching, and inputs are available without env mapping."
+    },
+    {
+      "id": "github-actions.supply-chain.provenance-checksums/mc",
+      "concept": "github-actions.supply-chain.provenance-checksums",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A release workflow builds binaries per target in a matrix, publishes them with SHA-256 checksum files, and also generates signed build provenance attestations (using id-token and attestations write permissions). Why is it worth having the attestation and having consumers run `gh attestation verify` in addition to checking the checksum?",
+          "options": [
+            "The attestation encrypts the binary so that only authorized consumers can run it, while the checksum merely speeds up the download.",
+            "The attestation is redundant because a SHA-256 checksum already proves both integrity and who built the artifact.",
+            "Checksums only show the file matches what was published, so a tampered release with a matching checksum would pass; the attestation proves the artifact was built by the expected workflow in the expected repository.",
+            "The checksum is needed only because attestations cannot be verified for binaries built in a matrix."
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "A checksum published alongside the binary only shows the file matches what was published, so an attacker who replaces both the artifact and its checksum file goes undetected. A signed provenance attestation, checked with `gh attestation verify`, ties the artifact to the specific repository and workflow run that built it, which proves origin. The checksum is still useful for detecting corruption, but it cannot prove who built the file."
+    },
+    {
+      "id": "github-actions.security.permissions-and-tokens/mc",
+      "concept": "github-actions.security.permissions-and-tokens",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A release workflow uses the default GITHUB_TOKEN to open a release pull request, but the CI workflow that is configured to run on pull_request never runs for that PR. What is the most likely cause, and what is the appropriate fix?",
+          "options": [
+            "GitHub only runs workflows for pull requests opened by human users, and the bot account is filtered out by branch protection rules",
+            "The release PR's branch name starts with a reserved prefix, which GitHub treats as a signal to skip pull_request workflows",
+            "The default GITHUB_TOKEN lacks the pull-requests: write permission by default, so the PR is created but its checks are blocked until the permission is added at the workflow level",
+            "Events created with the default GITHUB_TOKEN do not trigger other workflow runs, so the CI checks never start on the PR unless it is created with a PAT or GitHub App token"
+          ],
+          "correct": 3
+        }
+      },
+      "explanation": "Events created using the default GITHUB_TOKEN deliberately do not trigger new workflow runs, to prevent recursive loops. To have the release PR trigger CI checks, it must be created with a PAT or GitHub App token; granting more permissions to GITHUB_TOKEN does not change this behavior."
+    }
+  ],
+  "created_at": "2026-11-08T06:53:21.637647585Z"
+}
