@@ -1,0 +1,71 @@
+{
+  "key": "jvanbuel/soqrates#26@73ac7bae6d603573b742fad30fe2622022547db8",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "rust.string.fuzzy-matching/mc",
+      "concept": "rust.string.fuzzy-matching",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A command parser must distinguish three cases: a valid command (for example \"help\", typed in any letter case), a likely typo of a command (for example \"hlep\") that should produce a \"did you mean ...?\" hint, and unrelated text that should be left alone. Which approach correctly separates these cases using Levenshtein edit distance with a small threshold?",
+          "options": [
+            "Treat any input whose edit distance to a command is greater than zero as a typo, since an exact match is the only other valid outcome.",
+            "Use a large threshold, such as 10, so that nearly every mistyped input produces a hint and nothing is treated as unrelated.",
+            "Compare the input to the command words exactly, and use edit distance only on the lowercase form of the command list, leaving the input untouched.",
+            "Normalize case, accept a command only on an exact match, offer a hint when the smallest distance to some command is within the small threshold, and otherwise treat the input as unrelated.",
+            "Accept any input whose edit distance to a command is within the threshold as that command, so typos are silently corrected and executed."
+          ],
+          "correct": 3,
+          "reasons": [
+            "This ignores that unrelated text also has a nonzero distance. Every non-command input, such as a sentence or random word, would trigger a misleading hint instead of being treated as ordinary text.",
+            "A large threshold makes short command words within reach of almost any short input, so ordinary text would produce false hints. The small threshold keeps hints for plausible typos and preserves the unrelated category.",
+            "Normalizing only one side defeats case-insensitivity: an input like \"HELP\" would never match \"help\" exactly, and would be counted as a distance-4 difference rather than an accepted command. Both sides must be normalized.",
+            "This yields three distinct outcomes. Exact match after case-folding is accepted, a small nonzero distance (such as 1 or 2) suggests a typo worth a hint, and a larger distance means the input is not meant as a command, so no hint is shown.",
+            "Auto-executing near misses is risky: a typo could run a different or destructive command than intended. The design instead shows a hint and lets the user confirm, keeping accepted commands exact."
+          ]
+        }
+      },
+      "explanation": "This yields three distinct outcomes. Exact match after case-folding is accepted, a small nonzero distance (such as 1 or 2) suggests a typo worth a hint, and a larger distance means the input is not meant as a command, so no hint is shown."
+    },
+    {
+      "id": "delivery.answer-command.forgiving-parsing/open",
+      "concept": "delivery.answer-command.forgiving-parsing",
+      "scope": "Project",
+      "body": {
+        "Open": {
+          "prompt": "A code-change review tool accepts answers via comments. It tolerates both `/soqrates` and `/socrates`, any letter case, and `@<app slug> answer`, but it deliberately does not treat a bare `@soqrates` as a command. It classifies each comment as Answer, NearMiss (looks like an attempt but is not valid), or NotACommand. The workflow-level filter and the parser both use the same classification module. Explain why the design is built this way: what goes wrong if the filter and the parser each define their own matching rules, why a NearMiss category is useful, and why a bare `@soqrates` mention is excluded.",
+          "rubric": "A good answer covers these key points:\n1. Single source of truth: if the workflow filter and the parser have separate rules, they can drift. The filter might trigger a run for a comment the parser rejects (wasted run, no feedback) or skip a comment the parser would accept (a valid answer silently ignored). Sharing one definition keeps them consistent.\n2. NearMiss: users will mistype or use slightly wrong syntax. Distinguishing NearMiss from NotACommand lets the tool reply with a helpful hint instead of staying silent, without reacting to every ordinary comment. Being forgiving (case, spelling variants) reduces friction.\n3. Bare `@soqrates` exclusion: on the hosting platform an @-mention of that name would notify an actual user or account with that handle, so treating it as a command would be ambiguous and could spam or confuse a real person. Requiring `@<app slug> answer` or a slash command avoids that.\nCommon misconceptions that make an answer wrong: saying the shared module is only for code reuse or style with no mention of drift or silent failures; claiming NearMiss means the answer is accepted anyway; saying the bare mention is excluded purely for parsing difficulty or because it is case sensitive."
+        }
+      },
+      "explanation": "A good answer says that one shared module defines the command grammar, so the workflow filter and the parser cannot disagree and silently drop or misroute answers. It also explains that near-miss hints help authors who mistype, while a bare `@soqrates` is rejected because it would ping a real user with that name."
+    },
+    {
+      "id": "project.scm.hint-and-acknowledge-ports/mc",
+      "concept": "project.scm.hint-and-acknowledge-ports",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "The author adds `hint_commands` and `acknowledge_answers` to the `ScmProvider` trait, and only the GitHub provider does real work (posting hint comments, swapping a 👀 reaction for 👍). What design for these hooks best fits the goal that other providers keep working and a flaky GitHub API call never breaks grading?",
+          "options": [
+            "Give the trait methods default no-op bodies, and have the CI flow call them and merely log a warning if they fail, so providers without such features keep working and grading is not disrupted.",
+            "Make the new methods required with no default body, so every provider is forced to decide explicitly how to hint and acknowledge, and the compiler catches any provider that forgets.",
+            "Add the hint and acknowledge logic to the GitHub provider only as inherent methods, and have the CI flow downcast to the GitHub type to call them when present.",
+            "Give the trait methods default bodies that return an error such as 'unsupported', and have the CI flow propagate that error so unsupported providers are surfaced immediately.",
+            "Make the methods default no-ops, but have the CI flow abort grading when they return an error, so the user never sees results without the matching hint or acknowledgement."
+          ],
+          "correct": 0,
+          "reasons": [
+            "Default no-ops let existing and future providers compile and behave unchanged, and only the GitHub provider overrides them. Treating errors as warnings keeps hints and reactions as cosmetic extras that cannot fail or block the grading result.",
+            "Forcing every provider to implement them would break providers that have no concept of hints or reactions, and it adds boilerplate stubs. The goal here is optional capability, which a default body expresses better.",
+            "Downcasting couples the CI flow to a concrete provider and defeats the port abstraction. The trait with default methods already lets the flow call them uniformly without knowing the provider type.",
+            "Defaulting to an error and propagating it would make CI fail on every provider that lacks hints or reactions. That turns an optional nicety into a hard failure, the opposite of best effort.",
+            "Aborting grading on a failed reaction or hint comment would let a transient API problem block the actual results, which are the important output. The extras must never take precedence over the core flow."
+          ]
+        }
+      },
+      "explanation": "Default no-ops let existing and future providers compile and behave unchanged, and only the GitHub provider overrides them. Treating errors as warnings keeps hints and reactions as cosmetic extras that cannot fail or block the grading result."
+    }
+  ],
+  "created_at": "2026-11-08T17:02:57.327279917Z"
+}

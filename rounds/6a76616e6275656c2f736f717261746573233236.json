@@ -1,0 +1,18 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 26
+  },
+  "rounds": [
+    {
+      "head": "73ac7bae6d603573b742fad30fe2622022547db8",
+      "session": "jvanbuel/soqrates#26@73ac7bae6d603573b742fad30fe2622022547db8",
+      "concepts": [
+        "rust.string.fuzzy-matching",
+        "delivery.answer-command.forgiving-parsing",
+        "project.scm.hint-and-acknowledge-ports"
+      ],
+      "at": "2026-11-08T17:02:57.327279917Z"
+    }
+  ]
+}
