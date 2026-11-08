@@ -1,0 +1,62 @@
+# Releases with release-plz (ADR-0006 D5). On every push to main it keeps a
+# release PR open that bumps the workspace version and updates CHANGELOG.md.
+# Merging that PR tags vX.Y.Z and creates the GitHub release; the release-plz
+# workflow then builds and attaches the binaries (release.yml).
+
+[workspace]
+# Soqrates isn't published to crates.io: the previous version comes from the
+# git tags, and nothing is published.
+git_only = true
+publish = false
+semver_check = false
+# Every crate inherits the one workspace version, and every crate finds its
+# previous release by the same vX.Y.Z tag. Only soqrates-cli, the binary
+# users run, creates the tag and the GitHub release and keeps the changelog.
+git_tag_name = "v{{ version }}"
+git_tag_enable = false
+git_release_enable = false
+changelog_update = false
+pr_labels = ["release"]
+
+# One version group: a change to any crate releases them all, so a change to
+# a library crate still releases the binary.
+[[package]]
+name = "soqrates-cli"
+version_group = "soqrates"
+git_tag_enable = true
+git_release_enable = true
+git_release_name = "v{{ version }}"
+changelog_update = true
+changelog_path = "CHANGELOG.md"
+changelog_include = [
+  "soqrates-core",
+  "soqrates-store",
+  "soqrates-examiner",
+  "soqrates-scm-github",
+  "soqrates-mcp",
+  "soqrates-spec",
+]
+
+[[package]]
+name = "soqrates-core"
+version_group = "soqrates"
+
+[[package]]
+name = "soqrates-store"
+version_group = "soqrates"
+
+[[package]]
+name = "soqrates-examiner"
+version_group = "soqrates"
+
+[[package]]
+name = "soqrates-scm-github"
+version_group = "soqrates"
+
+[[package]]
+name = "soqrates-mcp"
+version_group = "soqrates"
+
+[[package]]
+name = "soqrates-spec"
+version_group = "soqrates"

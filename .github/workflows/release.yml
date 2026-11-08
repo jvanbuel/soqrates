@@ -1,20 +1,28 @@
-# Releases (ADR-0006 D2, D5). Pushing a tag vX.Y.Z that matches the crate
-# version builds `soqrates` for each supported runner, attests where each
-# archive was built, publishes them with SHA-256 checksums on the GitHub
-# release vX.Y.Z, and moves the major tag vX there. The action downloads
-# these archives; it never compiles.
+# Release binaries (ADR-0006 D2, D5). The release-plz workflow calls this
+# with the tag it just created (vX.Y.Z): it builds `soqrates` for each
+# supported runner, attests where each archive was built, attaches the
+# archives with SHA-256 checksums to the GitHub release, and moves the major
+# tag vX there. The action downloads these archives; it never compiles.
 #
 # Run it by hand (workflow_dispatch) for a dry run: it builds and packages,
 # and publishes nothing.
 name: release
 
 on:
-  push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag, vX.Y.Z, matching the crate version.
+        required: true
+        type: string
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  # Empty on a dry run.
+  TAG: ${{ inputs.tag }}
 
 jobs:
   build:
@@ -36,15 +44,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
 
       - name: Check the tag matches the crate version
-        if: github.event_name == 'push'
+        if: env.TAG != ''
         shell: bash
         run: |
           version=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml | head -n 1)
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME doesn't match the crate version $version"
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG doesn't match the crate version $version"
             exit 1
           fi
 
@@ -61,7 +70,7 @@ jobs:
           cat "$asset.sha256"
 
       - name: Attest build provenance
-        if: github.event_name == 'push'
+        if: env.TAG != ''
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: soqrates-${{ matrix.target }}.tar.gz
@@ -74,7 +83,7 @@ jobs:
 
   publish:
     needs: build
-    if: github.event_name == 'push'
+    if: inputs.tag != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the release and move the major tag
@@ -86,28 +95,32 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Publish the release
+      # release-plz created the release, with the changelog as its notes;
+      # attach the archives to it.
+      - name: Attach the archives to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -l dist
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            --verify-tag
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --generate-notes --verify-tag
+          fi
 
       # Users pin the major version (`@v0`, `@v1`); point it at this release.
       - name: Move the major tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          major="${GITHUB_REF_NAME%%.*}"
+          major="${TAG%%.*}"
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$major" > /dev/null 2>&1; then
             gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$major" \
-              -f sha="$GITHUB_SHA" -F force=true > /dev/null
+              -f sha="$sha" -F force=true > /dev/null
           else
             gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref="refs/tags/$major" -f sha="$GITHUB_SHA" > /dev/null
+              -f ref="refs/tags/$major" -f sha="$sha" > /dev/null
           fi
-          echo "$major -> $GITHUB_SHA"
+          echo "$major -> $sha"

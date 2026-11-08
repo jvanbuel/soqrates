@@ -113,9 +113,15 @@ across organisations needs the hosted app (D6).
 ### D5: Versions follow semver, with a moving major tag
 **Enforcement:** automated
 
-Releases are tagged `vX.Y.Z`, matching the crate version, and the release
-workflow moves `vX` to the latest release of that major version. Until
-1.0.0 that tag is `v0`. Breaking changes to inputs, to the comment format, or to the
+Releases are made with [release-plz](https://release-plz.dev). On every
+push to `main` it keeps a release PR open that bumps the workspace version
+and updates `CHANGELOG.md` from the commits. Merging that PR tags `vX.Y.Z`,
+matching the crate version, and creates the GitHub release; the release
+workflow then builds and attaches the binaries and moves `vX` to the latest
+release of that major version. Until 1.0.0 that tag is `v0`. Soqrates isn't
+published to crates.io: release-plz reads the previous version from the git
+tags, and only `soqrates-cli`, the binary users run, gets a tag and a
+changelog. Breaking changes to inputs, to the comment format, or to the
 state's layout (the file store's documents, the database schema) need a new
 major version. This repository's own workflow uses the action from its
 checkout (`uses: ./`), with a binary built from the same source, so every
@@ -134,7 +140,10 @@ per-installation tokens.
 ## Consequences
 
 - A release workflow and binary builds join CI; their cost is paid once per
-  release, not on every pull request.
+  release, not on every pull request. release-plz derives the next version
+  from the commit messages, so a `feat:` or `fix:` prefix (Conventional
+  Commits) gives better version bumps and changelog entries than a plain
+  sentence, which counts as a patch.
 - The CLI's `ci` command, its flags and environment variables become a
   public interface, covered by D5.
 - `docs/github-app.md` becomes a guide for users' own apps, not only for

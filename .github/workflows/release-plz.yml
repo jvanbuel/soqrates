@@ -1,0 +1,86 @@
+# Releases with release-plz (ADR-0006 D5), configured in release-plz.toml.
+#
+# - release-pr: on every push to main, opens or updates the release PR, which
+#   bumps the workspace version and updates CHANGELOG.md from the commits.
+# - release: when a push to main carries a new version (the release PR was
+#   merged), tags vX.Y.Z and creates the GitHub release, then calls
+#   release.yml to build and attach the binaries.
+#
+# Repository setting needed: Settings -> Actions -> General -> "Allow GitHub
+# Actions to create and approve pull requests". A release PR opened with the
+# workflow token doesn't trigger other workflows, so CI doesn't run on it;
+# set the RELEASE_PLZ_TOKEN secret (a fine-grained token with contents and
+# pull-requests write) to have CI run there. See docs/releasing.md.
+name: release-plz
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the tag and create the GitHub release
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run release-plz release
+        id: release-plz
+        uses: release-plz/action@v0.5
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Find the new tag
+        id: tag
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: |
+          tag=$(jq -r '[.[] | select(.package_name == "soqrates-cli")][0].tag // empty' <<< "${RELEASES:-[]}")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "new release: ${tag:-none}"
+
+  binaries:
+    name: binaries
+    needs: release
+    if: needs.release.outputs.tag != ''
+    permissions:
+      contents: write       # attach the archives, move the major tag
+      id-token: write       # sign the build provenance attestations
+      attestations: write   # store them
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+
+  release-pr:
+    name: release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push the release branch
+      pull-requests: write  # open or update the release PR
+    concurrency:
+      group: release-plz-pr
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run release-plz release-pr
+        uses: release-plz/action@v0.5
+        with:
+          command: release-pr
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || github.token }}

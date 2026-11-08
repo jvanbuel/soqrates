@@ -35,11 +35,12 @@ permissions:
 
 jobs:
   soqrates:
-    # Run on pull requests, on `/soqrates ...` comments, and when Soqrates'
-    # own question comment is edited with "Grade my answers" ticked, so
-    # ticking an option doesn't start a run.
+    # Run on pull requests by people (not Dependabot and other bots), on
+    # `/soqrates ...` comments, and when Soqrates' own question comment is
+    # edited with "Grade my answers" ticked, so ticking an option doesn't
+    # start a run.
     if: >-
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot') ||
       (github.event.issue.pull_request && (
         (github.event.action == 'created' && startsWith(github.event.comment.body, '/soqrates')) ||
         (github.event.action == 'edited' &&

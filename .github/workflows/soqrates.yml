@@ -36,8 +36,9 @@ jobs:
   check:
     # Comment edits count only on Soqrates' own question comment, and only
     # once "Grade my answers" is ticked, so ticking options starts no runs.
+    # Pull requests by bots (release-plz, Dependabot) have nobody to ask.
     if: >-
-      github.event_name == 'pull_request' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot') ||
       (github.event.issue.pull_request && (
         (github.event.action == 'created' && startsWith(github.event.comment.body, '/soqrates')) ||
         (github.event.action == 'edited' &&

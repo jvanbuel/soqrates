@@ -519,9 +519,34 @@ fn comments_post_as_the_workflow_token_or_the_users_own_app() {
 // @adr-0006-d5
 #[test]
 fn releases_are_semver_tags_and_this_repository_runs_the_action_from_source() {
+    let config = read(workspace_root().join("release-plz.toml"));
+    for (needle, why) in [
+        ("git_only = true", "reads previous versions from git tags"),
+        ("publish = false", "publishes nothing to crates.io"),
+        (r#"git_tag_name = "v{{ version }}""#, "tags releases vX.Y.Z"),
+    ] {
+        assert!(
+            config.contains(needle),
+            "ADR-0006 D5: release-plz.toml {why} (`{needle}`)"
+        );
+    }
+    let release_plz = read(workspace_root().join(".github/workflows/release-plz.yml"));
+    for (needle, why) in [
+        ("command: release-pr", "keeps a release PR open"),
+        ("command: release", "tags merged releases"),
+        (
+            "uses: ./.github/workflows/release.yml",
+            "builds the binaries of a new release",
+        ),
+    ] {
+        assert!(
+            release_plz.contains(needle),
+            "ADR-0006 D5: the release-plz workflow {why}"
+        );
+    }
     let release = read(workspace_root().join(".github/workflows/release.yml"));
     for (needle, why) in [
-        ("v[0-9]+.[0-9]+.[0-9]+", "runs on vX.Y.Z tags"),
+        ("workflow_call:", "is called with the new tag"),
         (
             "doesn't match the crate version",
             "checks the tag matches the crate version",
