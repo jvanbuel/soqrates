@@ -1,0 +1,335 @@
+//! The answer command: how an author answers a session in a comment
+//! (ADR-0004 D3, D8).
+//!
+//! A comment answers when it starts with `/soqrates answer`, followed by one
+//! numbered line per question. The command is forgiving: `/socrates` (the
+//! philosopher's spelling) and any letter case are accepted, and so is a
+//! mention of the posting app, `@<app slug> answer`. A bare `@soqrates` is
+//! never accepted: a person of that name would be notified of every answer,
+//! while an app is not notified when mentioned. A comment that starts like a
+//! command but isn't one is a near miss, which the forge answers with a hint.
+//!
+//! This is the one place that decides what a command looks like, so the
+//! workflow filters (which list [`COMMAND_PREFIXES`]) and the parser cannot
+//! drift apart.
+
+use crate::assessment::{Answer, AnswerBody, Question, QuestionBody};
+
+/// The canonical answer command, as shown to authors.
+pub const ANSWER_COMMAND: &str = "/soqrates answer";
+
+/// The words a command may start with, besides a mention of the posting
+/// app. Compared case-insensitively.
+pub const COMMAND_PREFIXES: [&str; 2] = ["/soqrates", "/socrates"];
+
+/// The name that is never accepted as a mention (see the module docs).
+const BARE_NAME: &str = "soqrates";
+
+/// The verb that follows the prefix.
+const VERB: &str = "answer";
+
+/// How far a first word may be from `/soqrates` (or from the app's mention)
+/// and still count as a near miss.
+const NEAR_MISS_DISTANCE: usize = 2;
+
+/// What a comment says to Soqrates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command<'a> {
+    /// An answer command, with the text after it.
+    Answer(&'a str),
+    /// Starts like a command but isn't a valid one, e.g. `/socrates answr`
+    /// or `/soqrate answer`. Gets a hint.
+    NearMiss,
+    /// Not addressed to Soqrates.
+    NotACommand,
+}
+
+/// Read the command a comment `body` starts with, after leading whitespace.
+/// `app_slug` is the slug of the app that posts Soqrates' comments, if any:
+/// `@<app_slug> answer` then counts as the command too.
+pub fn read_command<'a>(body: &'a str, app_slug: Option<&str>) -> Command<'a> {
+    let body = body.trim_start();
+    let (first, rest) = split_word(body);
+    if first.is_empty() {
+        return Command::NotACommand;
+    }
+    // Even an app whose slug is `soqrates` is never mentioned as `@soqrates`:
+    // that would notify a person of that name, should one exist.
+    let mention = app_slug
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case(BARE_NAME))
+        .map(|s| format!("@{s}"));
+    let addressed = COMMAND_PREFIXES
+        .iter()
+        .any(|p| first.eq_ignore_ascii_case(p))
+        || mention.as_deref().is_some_and(|m| is_mention_of(first, m));
+    let (verb, after) = split_word(rest.trim_start_matches([' ', '\t']));
+    if addressed {
+        return if verb.eq_ignore_ascii_case(VERB) {
+            Command::Answer(after)
+        } else {
+            Command::NearMiss
+        };
+    }
+    let lower = first.to_lowercase();
+    let near_prefix = lower.starts_with('/')
+        && COMMAND_PREFIXES
+            .iter()
+            .any(|p| distance(&lower, p) <= NEAR_MISS_DISTANCE);
+    // A mention close to the app's is only a near miss when it goes on with
+    // the verb: `@someone` is usually a person being addressed.
+    let near_mention = lower.starts_with('@')
+        && verb.eq_ignore_ascii_case(VERB)
+        && mention
+            .as_deref()
+            .is_some_and(|m| distance(&lower, &m.to_lowercase()) <= NEAR_MISS_DISTANCE);
+    if near_prefix || near_mention {
+        Command::NearMiss
+    } else {
+        Command::NotACommand
+    }
+}
+
+/// `@slug` or `@slug[bot]`, in any case.
+fn is_mention_of(word: &str, mention: &str) -> bool {
+    let word = word.to_lowercase();
+    let mention = mention.to_lowercase();
+    word == mention || word.strip_suffix("[bot]") == Some(mention.as_str())
+}
+
+/// The first word of `text` (up to whitespace) and the rest, which starts at
+/// that whitespace.
+fn split_word(text: &str) -> (&str, &str) {
+    let end = text.find(char::is_whitespace).unwrap_or(text.len());
+    text.split_at(end)
+}
+
+/// Levenshtein distance, by characters.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = if ca == *cb {
+                prev
+            } else {
+                1 + prev.min(cur).min(row[j])
+            };
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
+
+/// The comments that get a hint (ADR-0004 D8): near misses that have none
+/// yet and don't repeat one that already has, so each mistake is pointed out
+/// once. `comments` are `(id, body)`, oldest first; `hinted` are the ids
+/// that already got a hint.
+pub fn hints_due<I: Copy + PartialEq>(
+    comments: &[(I, &str)],
+    hinted: &[I],
+    app_slug: Option<&str>,
+) -> Vec<I> {
+    let near_misses: Vec<(I, &str)> = comments
+        .iter()
+        .copied()
+        .filter(|(_, body)| read_command(body, app_slug) == Command::NearMiss)
+        .collect();
+    let mut seen: Vec<&str> = near_misses
+        .iter()
+        .filter(|(id, _)| hinted.contains(id))
+        .map(|(_, body)| body.trim())
+        .collect();
+    let mut due = Vec::new();
+    for (id, body) in near_misses {
+        if hinted.contains(&id) || seen.contains(&body.trim()) {
+            continue;
+        }
+        seen.push(body.trim());
+        due.push(id);
+    }
+    due
+}
+
+/// `N. text`, `N: text` or `N) text` → `(N, text)`.
+fn numbered_line(line: &str) -> Option<(usize, &str)> {
+    let line = line.trim_start();
+    let digits = line.find(|c: char| !c.is_ascii_digit())?;
+    if digits == 0 {
+        return None;
+    }
+    let rest = &line[digits..];
+    let rest = rest
+        .strip_prefix('.')
+        .or_else(|| rest.strip_prefix(':'))
+        .or_else(|| rest.strip_prefix(')'))?;
+    let n = line[..digits].parse().ok()?;
+    Some((n, rest.trim()))
+}
+
+/// A single option letter, optionally followed by `.` or `)`, within range.
+fn choice_index(text: &str, options: usize) -> Option<usize> {
+    let text = text.trim();
+    let text = text
+        .strip_suffix('.')
+        .or_else(|| text.strip_suffix(')'))
+        .unwrap_or(text);
+    let mut chars = text.chars();
+    let c = chars.next()?.to_ascii_lowercase();
+    if chars.next().is_some() || !c.is_ascii_lowercase() {
+        return None;
+    }
+    let index = (c as u8 - b'a') as usize;
+    (index < options).then_some(index)
+}
+
+/// Parse an answer comment against the session's questions. Returns `None`
+/// unless `body` starts with the answer command (see [`read_command`]).
+///
+/// Numbers are 1-based in question order; out-of-range numbers are ignored
+/// and for a duplicate number the last one wins. Lines without a number
+/// continue the previous answer. Answers come back in question order.
+pub fn parse_answers(
+    body: &str,
+    questions: &[Question],
+    app_slug: Option<&str>,
+) -> Option<Vec<Answer>> {
+    let Command::Answer(rest) = read_command(body, app_slug) else {
+        return None;
+    };
+    let mut texts: Vec<Option<String>> = vec![None; questions.len()];
+    // The answer that unnumbered lines continue; `None` before the first
+    // number and after an out-of-range one.
+    let mut current: Option<usize> = None;
+    for line in rest.lines() {
+        if let Some((n, text)) = numbered_line(line) {
+            current = (1..=questions.len()).contains(&n).then(|| n - 1);
+            if let Some(i) = current {
+                texts[i] = Some(text.to_string());
+            }
+        } else if let Some(i) = current {
+            let t = texts[i].get_or_insert_with(String::new);
+            t.push('\n');
+            t.push_str(line.trim_end());
+        }
+    }
+    let answers = questions
+        .iter()
+        .zip(texts)
+        .filter_map(|(q, text)| {
+            let text = text?.trim().to_string();
+            let body = match &q.body {
+                QuestionBody::MultipleChoice { options, .. } => choice_index(&text, options.len())
+                    .map_or(AnswerBody::Text(text), AnswerBody::Choice),
+                QuestionBody::Open { .. } => AnswerBody::Text(text),
+            };
+            Some(Answer {
+                question: q.id.clone(),
+                body,
+            })
+        })
+        .collect();
+    Some(answers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SLUG: Option<&str> = Some("soqrates-review");
+
+    // @adr-0004-d8
+    #[test]
+    fn forgiving_prefixes_and_case() {
+        for body in [
+            "/soqrates answer",
+            "/socrates answer\n1. a",
+            "/SOQRATES Answer 1. a",
+            "  \n/Socrates ANSWER",
+            "@soqrates-review answer\n1. a",
+            "@Soqrates-Review answer",
+            "@soqrates-review[bot] answer",
+        ] {
+            assert!(
+                matches!(read_command(body, SLUG), Command::Answer(_)),
+                "{body:?}"
+            );
+        }
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn a_bare_soqrates_mention_or_another_app_is_never_a_command() {
+        assert_eq!(read_command("@soqrates answer", SLUG), Command::NotACommand);
+        assert_eq!(read_command("@soqrates answer", None), Command::NotACommand);
+        assert_eq!(
+            read_command("@soqrates-review answer", None),
+            Command::NotACommand
+        );
+        assert_eq!(read_command("@alice answer", SLUG), Command::NotACommand);
+        assert_eq!(
+            read_command("@soqrates answer", Some("Soqrates")),
+            Command::NotACommand
+        );
+        assert_eq!(
+            read_command("@soqrates-review answer", Some(" ")),
+            Command::NotACommand
+        );
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn near_misses() {
+        for body in [
+            "/soqrates",
+            "/soqrates answers",
+            "/socrates anwser\n1. a",
+            "/soqrate answer",
+            "/sokrates answer",
+            "/Soqartes answer",
+            "@soqrates-reveiw answer",
+            "@soqrates-review please",
+        ] {
+            assert_eq!(read_command(body, SLUG), Command::NearMiss, "{body:?}");
+        }
+        for body in [
+            "",
+            "LGTM",
+            "/approve",
+            "/label bug",
+            "hi /soqrates answer",
+            "@soqrates-reveiw can you look",
+            "soqrates answer",
+        ] {
+            assert_eq!(read_command(body, SLUG), Command::NotACommand, "{body:?}");
+        }
+    }
+
+    // @adr-0004-d8
+    #[test]
+    fn each_near_miss_is_hinted_once() {
+        let comments = [
+            (1, "/socrates answr\n1. a"),
+            (2, "/soqrates answer\n1. a"),
+            (3, "/socrates answr\n1. a"),
+            (4, "/soqrates answers"),
+            (5, "thanks"),
+        ];
+        assert_eq!(hints_due(&comments, &[], None), vec![1, 4]);
+        assert_eq!(hints_due(&comments, &[1], None), vec![4]);
+        assert_eq!(hints_due(&comments, &[1, 4], None), Vec::<i32>::new());
+        // A repeat of an earlier, already hinted comment gets none.
+        assert_eq!(hints_due(&comments[2..], &[], None), vec![3, 4]);
+    }
+
+    #[test]
+    fn distances() {
+        assert_eq!(distance("/soqrates", "/soqrates"), 0);
+        assert_eq!(distance("/socrates", "/soqrates"), 1);
+        assert_eq!(distance("/soqartes", "/soqrates"), 2);
+        assert_eq!(distance("", "abc"), 3);
+    }
+}

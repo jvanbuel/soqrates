@@ -86,6 +86,10 @@ on every PR, and posts the questions as a PR comment (ADR-0004):
   2. Your answer in your own words
   ```
 
+  `/socrates answer`, any letter case and, when posting as an app,
+  `@<app slug> answer` work too. A mistyped command gets a hint; fix it by
+  editing the comment. While grading, the submitting comment shows 👀.
+
 After grading, Soqrates posts a results comment: ✅/❌ per question, the
 correct option and an explanation. It shows this session only; your level
 and review schedule stay private, shown only in the terminal and the MCP
