@@ -23,6 +23,18 @@
         "soqrates.testing.fake-scm-port"
       ],
       "at": "2026-11-08T17:38:34.355467427Z"
+    },
+    {
+      "head": "da00bfb7daf32a117f7aaeb27d190dd1d71f41a1",
+      "session": "jvanbuel/soqrates#27@da00bfb7daf32a117f7aaeb27d190dd1d71f41a1",
+      "concepts": [
+        "rust.traits.default-methods-async",
+        "soqrates.delivery.answer-feedback-lifecycle",
+        "soqrates.testing.fake-scm-port",
+        "soqrates.ci.answer-validity",
+        "soqrates.ci.round-carry-and-idempotency"
+      ],
+      "at": "2026-11-08T17:41:30.450203507Z"
     }
   ]
 }
