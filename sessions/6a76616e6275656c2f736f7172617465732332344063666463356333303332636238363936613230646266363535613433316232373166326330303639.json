@@ -1,0 +1,109 @@
+{
+  "key": "jvanbuel/soqrates#24@cfdc5c3032cb8696a20dbf655a431b271f2c0069",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "rust.traits.default_methods_async/mc",
+      "concept": "rust.traits.default_methods_async",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A provider trait gains new hook methods that return `impl Future<Output = Result<(), E>> + Send`, each with a default body of `async { Ok(()) }`. What does this design achieve for the adapters that already implement the trait?",
+          "options": [
+            "Existing implementors would silently inherit a no-op, but only if the method is declared with `async fn` in the trait, since a return type of `impl Future` cannot have a default body.",
+            "The default body is evaluated once when the trait is defined, so all implementors share one already-completed future and no allocation occurs per call.",
+            "The `Send` bound on the returned future is dropped for implementors that rely on the default, so callers can no longer spawn the call on a multithreaded executor.",
+            "Existing implementors would fail to compile until each one adds the method, but the compiler error then guides them to add a stub.",
+            "Existing implementors keep compiling without edits, because the default body supplies a ready-to-use future that resolves immediately, and implementors that care can override it."
+          ],
+          "correct": 4,
+          "reasons": [
+            "Default bodies are allowed for methods returning `impl Future`, so this restriction does not exist. Declaring it as `async fn` is not required for a default to be possible.",
+            "The default body is code that runs on each call and produces a fresh future for that call. Nothing is evaluated at trait definition time, and futures are not shared across implementors.",
+            "The `Send` bound is part of the trait signature and applies to every implementor, default or overridden. The default body must satisfy it, and `async { Ok(()) }` does, so callers can still spawn the future.",
+            "This describes a trait method with no default body. With a default, no change to existing implementors is needed, which is the whole point of adding the hooks this way.",
+            "A default body like `async { Ok(()) }` gives every implementor a working method, so adding the hook is not a breaking change. Adapters that need the behavior override it, and the rest do nothing."
+          ]
+        }
+      },
+      "explanation": "A default body like `async { Ok(()) }` gives every implementor a working method, so adding the hook is not a breaking change. Adapters that need the behavior override it, and the rest do nothing."
+    },
+    {
+      "id": "soqrates.scm.answer_acknowledgement_flow/open",
+      "concept": "soqrates.scm.answer_acknowledgement_flow",
+      "scope": "Project",
+      "body": {
+        "Open": {
+          "prompt": "In a tool that grades a code author's answers posted as PR comments, the flow is: fetch the answers, react with 👀 on the submitting comment and set the check to Pending with a grading summary, then grade, then post results and replace the 👀 with a done reaction. Why is the acknowledgement placed after fetching answers but before grading, and why, when the answers belong to a superseded round, should the tool still acknowledge the comment but leave the check status alone?",
+          "rubric": "A good answer must cover these key points:\n1. Acknowledging before grading: grading is slow (e.g. LLM calls), so the 👀 and Pending status give immediate feedback that the answer was received and is being processed. This avoids the author wondering if it was missed, resubmitting, or racing with a duplicate run.\n2. Acknowledging after fetch_answers: the tool should only acknowledge once it has actually found and picked up answers. Reacting earlier could acknowledge a comment that has no valid answers or where the fetch fails, giving a false signal. The fetch also tells it which comment to react to and what the grading summary is.\n3. Superseded round: the comment still gets the acknowledgement so the author sees that it was read and is not ignored. The check status must not be changed, because the check reflects the current (newer) round. Setting it to Pending from an old round could overwrite or confuse the current state, for example leaving it stuck Pending or clobbering a result.\n4. Optionally: replacing 👀 with a done reaction at the end signals completion.\n\nCommon misconceptions that make an answer wrong:\n- Saying the acknowledgement is only cosmetic and ordering does not matter.\n- Saying the check should be set to Pending for superseded rounds too.\n- Saying superseded answers should be silently ignored with no reaction.\n- Claiming the acknowledgement speeds up grading."
+        }
+      },
+      "explanation": "A good answer says the 👀 reaction and Pending check give immediate feedback during slow grading, are placed after fetch_answers so only real answers are acknowledged, and are placed before grading so the author is not left waiting without a signal. On the superseded-round path the acknowledgement must not touch the check status, because that check now belongs to the newer round."
+    },
+    {
+      "id": "soqrates.scm.forgiving_answer_command/mc",
+      "concept": "soqrates.scm.forgiving_answer_command",
+      "scope": "Project",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A PR author replies to Soqrates with a comment like \"/Socrates B\" in one place, and in another writes a near-miss such as only \"@soqrates B\" (a bare mention). Which design for deciding what counts as an answer command best matches the intended behavior and why?",
+          "options": [
+            "Require the exact lowercase /soqrates command and ignore everything else silently, so the grading input is unambiguous.",
+            "Treat any comment containing the text soqrates, including a bare @soqrates, as an answer so the author is never penalized for typos.",
+            "Post a hint every time a near-miss comment is processed, including when the same comment is seen again on a later run, so the author always sees the latest guidance.",
+            "Accept the spelling variants and the app-slug mention in any case as answers, treat a bare @soqrates as not an answer, and post a hint once per distinct near-miss comment from the PR author.",
+            "Ignore edits to an answer comment once it has been seen, since the first version is the one that was graded."
+          ],
+          "correct": 3,
+          "reasons": [
+            "Strict matching would drop answers with a different case or the /socrates spelling, and a silent ignore leaves the author without feedback. The design is deliberately forgiving and gives hints.",
+            "A bare @soqrates is explicitly not an answer command, since it could be an ordinary mention in a discussion. Accepting it would grade comments that were never meant as answers.",
+            "Reposting on every run would flood the thread with duplicates as the same comment is reprocessed. The hint should appear once per distinct comment.",
+            "This keeps the forgiving parsing in one core function so every caller agrees on what an answer is. A hint is useful to someone who tried to answer and missed, and posting it once per distinct comment avoids spamming while still helping after a new attempt.",
+            "Edits made before grading are meant to be graded, so the author can fix a mistaken answer. Ignoring them would grade stale text instead of the author's final intent."
+          ]
+        }
+      },
+      "explanation": "This keeps the forgiving parsing in one core function so every caller agrees on what an answer is. A hint is useful to someone who tried to answer and missed, and posting it once per distinct comment avoids spamming while still helping after a new attempt."
+    },
+    {
+      "id": "rust.testing.stateful_fake_adapter/open",
+      "concept": "rust.testing.stateful_fake_adapter",
+      "scope": "General",
+      "body": {
+        "Open": {
+          "prompt": "In a Rust test suite, a fake adapter for an outbound port (for example, one that posts comments and reactions to a code-review platform) keeps its state in an Arc<Mutex<..>> and appends every call to a single ordered timeline of events. Why is this stateful design needed to test behaviour such as \"add a 👀 reaction first, then post results, then add ✅, and do not duplicate reactions on retry\"? What problems can arise from how the lock is held when the test or the code under test reads that state, and how do you avoid them?",
+          "rubric": "A good answer covers these key points:\n1. Ordering: a single shared timeline of events lets tests assert the relative sequence across different kinds of calls (reactions vs comments). Separate per-method records or canned-return stubs cannot show cross-call ordering.\n2. Idempotence/state: the fake remembers what was already done (reactions already added, comments posted), so tests can assert that repeated or retried calls do not create duplicates and can inspect final state.\n3. Shared ownership: Arc lets the test keep a handle to the same state that the code under test mutates through the port; Mutex provides interior mutability and thread safety (Send + Sync) even when the port takes &self.\n4. Lock scoping: hold the guard only briefly, in a small scope. Clone or copy the needed data out of the guard (e.g. clone the Vec of events) and return owned values instead of references tied to the guard. This avoids borrow-checker errors from returning references into the guard and avoids deadlocks from re-locking in the same thread (std Mutex is not reentrant). It also avoids holding a std MutexGuard across an .await, which makes the future non-Send and can block other tasks.\n5. Possible extras: mutex poisoning when an assertion panics while the lock is held.\n\nCommon misconceptions that make an answer wrong:\n- Saying the Mutex is only there to make the fake faster or that the state is not shared.\n- Claiming that ordering can be verified just by counting calls.\n- Suggesting that holding the guard for the whole test is fine.\n- Treating Arc as providing mutability by itself."
+        }
+      },
+      "explanation": "A good answer says the fake must record every call into one shared timeline so tests can check sequence (👀, then results, then ✅) and repeated calls, which a stub returning canned values cannot do. It also notes that the Arc<Mutex<..>> state has to be shared between the test and the code under test, and that locks should be held briefly with data cloned out, so the guard is not held across awaits or reentrant calls that could deadlock or cause borrow conflicts."
+    },
+    {
+      "id": "testing.bdd.gherkin_scenario_outlines/mc",
+      "concept": "testing.bdd.gherkin_scenario_outlines",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A team's Gherkin feature must verify that a CLI accepts several different spellings of the same command (for example a long flag, a short flag, and an alias) with identical behavior. Why is a Scenario Outline with an Examples table a better fit than writing one plain Scenario?",
+          "options": [
+            "It runs the same steps once per Examples row, substituting each row's values into the placeholders, so many command spellings are covered without duplicating the scenario.",
+            "It merges all rows into one pass/fail result, so a failure in one spelling is reported only as a generic scenario failure.",
+            "It lets the steps run in parallel against a single shared application state, so every spelling is verified within one combined execution.",
+            "It makes the test runner execute the scenario once, using only the first row of the Examples table, so the suite runs faster.",
+            "It replaces the need for step definitions, because the Examples table is itself executable and asserts the outcomes automatically."
+          ],
+          "correct": 0,
+          "reasons": [
+            "A Scenario Outline is a template whose placeholders are replaced by each Examples row, and each row runs as its own scenario. This removes copy-pasted scenarios and shows exactly which spelling fails.",
+            "Each row is reported individually, so a failing spelling can be identified directly. Merging results would remove the diagnostic benefit of the outline.",
+            "Each Examples row is a separate scenario execution with its own setup, not one combined run. Sharing state would let spellings interfere with each other and hide failures.",
+            "Scenario Outline runs once per row of Examples, not just once. Using only the first row would leave the other command spellings untested.",
+            "The table only supplies data. Step definitions are still needed to turn the substituted step text into actions and assertions."
+          ]
+        }
+      },
+      "explanation": "A Scenario Outline is a template whose placeholders are replaced by each Examples row, and each row runs as its own scenario. This removes copy-pasted scenarios and shows exactly which spelling fails."
+    }
+  ],
+  "created_at": "2026-11-08T17:35:27.067730602Z"
+}
