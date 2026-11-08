@@ -1,6 +1,6 @@
 //! Steps for features/feedback.feature (ADR-0004 D1).
 
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 use soqrates_core::{AnswerBody, ConceptId, QuestionResult};
 
 use super::{author, correctness};
@@ -15,6 +15,11 @@ fn result<'a>(w: &'a SpecWorld, concept: &str) -> &'a QuestionResult {
         .iter()
         .find(|r| r.concept.0 == concept)
         .unwrap_or_else(|| panic!("no result for {concept}"))
+}
+
+#[given("the examiner writes multiple-choice questions without option reasons")]
+fn without_reasons(w: &mut SpecWorld) {
+    w.examiner.write_without_reasons();
 }
 
 #[when(regex = r#"^"([^"]+)" answers only the question about "([^"]+)" (correctly|wrongly)$"#)]
@@ -94,6 +99,26 @@ fn explains_with_explanation(w: &mut SpecWorld, concept: String) {
     assert_eq!(
         result(w, &concept).feedback,
         FakeExaminer::explanation(&ConceptId(concept.clone()))
+    );
+}
+
+#[then(
+    regex = r#"^the result for "([^"]+)" says why the picked option is wrong, then gives the explanation$"#
+)]
+fn explains_the_wrong_pick(w: &mut SpecWorld, concept: String) {
+    let r = result(w, &concept);
+    let Some(AnswerBody::Choice(picked)) = r.answer else {
+        panic!("not a choice: {:?}", r.answer);
+    };
+    assert_ne!(Some(picked), r.correct_option);
+    let concept = ConceptId(concept);
+    assert_eq!(
+        r.feedback,
+        format!(
+            "{} {}",
+            FakeExaminer::reason(&concept, &r.options[picked]),
+            FakeExaminer::explanation(&concept)
+        )
     );
 }
 

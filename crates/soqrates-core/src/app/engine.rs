@@ -718,6 +718,7 @@ fn question_results(
                     prompt,
                     options,
                     correct,
+                    ..
                 } => (prompt.clone(), options.clone(), Some(*correct)),
                 QuestionBody::Open { prompt, .. } => (prompt.clone(), Vec::new(), None),
             };
@@ -730,12 +731,18 @@ fn question_results(
                 .find(|(id, _)| *id == q.id)
                 .map(|(_, f)| f.clone())
                 .filter(|f| !f.trim().is_empty())
-                .unwrap_or_else(|| {
-                    if answer.is_none() {
-                        format!("Not answered. {}", q.explanation)
-                    } else {
-                        q.explanation.clone()
+                .unwrap_or_else(|| match (&answer, correct_option) {
+                    (None, _) => format!("Not answered. {}", q.explanation),
+                    // A wrong option first gets its own reason, so the author
+                    // learns why their pick was wrong, then why the correct
+                    // one is right.
+                    (Some(AnswerBody::Choice(picked)), Some(correct)) if *picked != correct => {
+                        match q.body.reason(*picked) {
+                            Some(why) => format!("{why} {}", q.explanation),
+                            None => q.explanation.clone(),
+                        }
                     }
+                    _ => q.explanation.clone(),
                 });
             let next_review = events.iter().rev().find_map(|e| match e {
                 DomainEvent::Learner(crate::learner::LearnerEvent::ReviewScheduled {

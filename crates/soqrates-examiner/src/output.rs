@@ -17,6 +17,10 @@ use crate::prompts::MAX_CONCEPTS;
 /// sentence or word boundary.
 pub const MAX_EXPLANATION_CHARS: usize = 600;
 
+/// The longest reason kept for a wrong option, in characters. It is shown
+/// before the explanation, so it is kept shorter.
+pub const MAX_REASON_CHARS: usize = 400;
+
 /// The longest grading feedback kept, in characters.
 pub const MAX_FEEDBACK_CHARS: usize = 400;
 
@@ -44,13 +48,28 @@ pub struct RawConcept {
 #[schemars(title = "multiple_choice_question")]
 pub struct MultipleChoiceOutput {
     pub prompt: String,
-    /// 3 to 5 distinct options, exactly one correct.
-    pub options: Vec<String>,
+    /// 3 to 5 distinct options, exactly one correct, each with the reason
+    /// it is right or wrong.
+    pub options: Vec<RawOption>,
     /// 0-based index of the correct option.
     pub correct: u32,
-    /// 1 to 3 plain-text sentences on why the correct option is correct,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RawOption {
+    /// The option as shown to the author.
+    pub text: String,
+    /// Plain text on why this option is right (the correct one) or wrong,
     /// referring to options by content only, never by letter or position.
-    pub explanation: String,
+    pub why: String,
+}
+
+/// Reply to [`crate::prompts::REPAIR_REASONS_SYSTEM`].
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(title = "option_reasons")]
+pub struct ReasonsOutput {
+    /// One reason per option, in the order the options were given.
+    pub reasons: Vec<String>,
 }
 
 /// Reply to [`crate::prompts::WRITE_OPEN_SYSTEM`].
@@ -64,18 +83,18 @@ pub struct OpenOutput {
     pub explanation: String,
 }
 
-/// Reply to [`crate::prompts::CHECK_EXPLANATION_SYSTEM`].
+/// Reply to [`crate::prompts::CHECK_REASONS_SYSTEM`].
 #[derive(Debug, Deserialize, JsonSchema)]
-#[schemars(title = "explanation_check")]
-pub struct ExplanationCheckOutput {
-    /// Each thing the explanation treats as an answer option that the
-    /// question does not offer; empty if there is none.
+#[schemars(title = "reasons_check")]
+pub struct ReasonsCheckOutput {
+    /// Each thing a reason treats as an answer option that the question
+    /// does not offer; empty if there is none.
     pub stray_options: Vec<String>,
 }
 
-/// The problem to report back to the question writer, or `None` if the
-/// explanation discusses only the options offered.
-pub fn stray_options_problem(output: ExplanationCheckOutput) -> Option<String> {
+/// The problem to report to the repair prompt, or `None` if the reasons
+/// discuss only the options offered.
+pub fn stray_options_problem(output: ReasonsCheckOutput) -> Option<String> {
     let stray: Vec<String> = output
         .stray_options
         .iter()
@@ -87,8 +106,8 @@ pub fn stray_options_problem(output: ExplanationCheckOutput) -> Option<String> {
         return None;
     }
     Some(format!(
-        "the explanation discusses answers the question does not offer ({}); \
-         discuss only the correct option and the options listed",
+        "the reasons discuss answers the question does not offer ({}); \
+         discuss only the options listed",
         stray.join(", ")
     ))
 }
@@ -190,18 +209,30 @@ pub struct MultipleChoice {
     pub prompt: String,
     pub options: Vec<String>,
     pub correct: usize,
-    pub explanation: String,
+    /// Why each option is right or wrong, in option order.
+    pub reasons: Vec<String>,
+}
+
+impl MultipleChoice {
+    /// The question's explanation: why the correct option is correct.
+    pub fn explanation(&self) -> &str {
+        &self.reasons[self.correct]
+    }
 }
 
 /// Check a multiple-choice reply: a prompt, 3 to 5 non-empty distinct
-/// options, a correct index in range, and an explanation that does not
-/// depend on the order of the options (see [`normalise_option_refs`]).
+/// options, a correct index in range, and for every option a reason that
+/// does not depend on the order of the options (see [`validate_reasons`]).
 pub fn validate_multiple_choice(output: MultipleChoiceOutput) -> Result<MultipleChoice, String> {
     let prompt = output.prompt.trim().to_owned();
     if prompt.is_empty() {
         return Err("the prompt is empty".to_owned());
     }
-    let options: Vec<String> = output.options.iter().map(|o| o.trim().to_owned()).collect();
+    let options: Vec<String> = output
+        .options
+        .iter()
+        .map(|o| o.text.trim().to_owned())
+        .collect();
     if !(3..=5).contains(&options.len()) {
         return Err(format!(
             "there must be 3 to 5 options, not {}",
@@ -222,15 +253,57 @@ pub fn validate_multiple_choice(output: MultipleChoiceOutput) -> Result<Multiple
             options.len()
         ));
     }
-    let explanation = clean_text(&output.explanation, MAX_EXPLANATION_CHARS)
-        .ok_or_else(|| "the explanation is empty".to_owned())?;
-    let explanation = normalise_option_refs(&explanation, &options)?;
+    let reasons = validate_reasons(
+        ReasonsOutput {
+            reasons: output.options.into_iter().map(|o| o.why).collect(),
+        },
+        &options,
+        correct,
+    )?;
     Ok(MultipleChoice {
         prompt,
         options,
         correct,
-        explanation,
+        reasons,
     })
+}
+
+/// Check the reasons for `options`: one per option, each non-empty, cleaned
+/// to plain text (see [`clean_text`]) and independent of the order of the
+/// options (see [`normalise_option_refs`]). The correct option's reason is
+/// the explanation and may be longer than the others.
+pub fn validate_reasons(
+    output: ReasonsOutput,
+    options: &[String],
+    correct: usize,
+) -> Result<Vec<String>, String> {
+    if output.reasons.len() != options.len() {
+        return Err(format!(
+            "there must be one reason per option: {} reasons for {} options",
+            output.reasons.len(),
+            options.len()
+        ));
+    }
+    output
+        .reasons
+        .iter()
+        .enumerate()
+        .map(|(i, why)| {
+            let max = if i == correct {
+                MAX_EXPLANATION_CHARS
+            } else {
+                MAX_REASON_CHARS
+            };
+            let why = clean_text(why, max).ok_or_else(|| {
+                if i == correct {
+                    "the reason for the correct option (the explanation) is empty".to_owned()
+                } else {
+                    format!("the reason for option {:?} is empty", options[i])
+                }
+            })?;
+            normalise_option_refs(&why, options)
+        })
+        .collect()
 }
 
 /// Shuffle the options deterministically, seeded by `seed` (the concept
@@ -247,15 +320,17 @@ pub fn shuffle(question: MultipleChoice, seed: &str) -> MultipleChoice {
         .iter()
         .position(|&original| original == question.correct)
         .unwrap_or(0);
-    let options = order
-        .iter()
-        .map(|&original| question.options[original].clone())
-        .collect();
+    let permute = |items: &[String]| -> Vec<String> {
+        order
+            .iter()
+            .map(|&original| items[original].clone())
+            .collect()
+    };
     MultipleChoice {
+        options: permute(&question.options),
+        reasons: permute(&question.reasons),
         prompt: question.prompt,
-        options,
         correct,
-        explanation: question.explanation,
     }
 }
 
@@ -384,7 +459,7 @@ const ORDINALS: [&str; 7] = [
 /// Punctuation that may follow a word.
 const TRAILING: &[char] = &[',', '.', ';', ':', '!', '?'];
 
-/// Make a multiple-choice explanation independent of the option order,
+/// Make a multiple-choice reason independent of the option order,
 /// which is shuffled after validation.
 ///
 /// - `option C`, `choice (b)` or `answer 2` (an option word followed by an
@@ -396,7 +471,7 @@ const TRAILING: &[char] = &[',', '.', ';', ':', '!', '?'];
 pub fn normalise_option_refs(text: &str, options: &[String]) -> Result<String, String> {
     let rejected = |what: String| {
         Err(format!(
-            "the explanation refers to an option by letter, number or position ({what:?}); \
+            "a reason refers to an option by letter, number or position ({what:?}); \
              options are shuffled, so refer to them by their content only"
         ))
     };

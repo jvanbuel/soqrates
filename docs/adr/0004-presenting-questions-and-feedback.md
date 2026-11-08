@@ -37,10 +37,18 @@ After a session is graded, each question gets a result:
 - for multiple choice, the correct option;
 - a short explanation.
 
-For a multiple-choice question, the examiner writes the explanation together
-with the question. It is never shown before grading (ADR-0001 D10). The
-explanation discusses only the options the question offers: a second, short
-model call checks this, and a flagged question is written again once. For an
+For a multiple-choice question, the examiner writes a reason for every
+option together with the question: why the correct option is correct (the
+explanation) and why each wrong option is wrong. Reasons are never shown
+before grading (ADR-0001 D10). An author who picked a wrong option gets that
+option's reason, then the explanation; every other author gets the
+explanation alone, as do questions stored before reasons existed.
+
+Each reason belongs to an option that is shown, so it has no reason to
+discuss answers the question doesn't offer. As a backstop, a short model
+call checks the reasons for this, and flagged reasons are rewritten once,
+keeping the question and its options. The check is a judgement, so it never
+fails a question; its outcome is logged on stderr, naming only the question. For an
 open question, the explanation is the grader's rationale. `SessionOutcome`
 carries these results, and the PR, the terminal and MCP all present them.
 
@@ -124,8 +132,9 @@ live with answers that would be silently ignored.
 
 ## Consequences
 
-- The examiner's output grows: an explanation per multiple-choice
-  question, and feedback per graded open answer.
+- The examiner's output grows: a reason per multiple-choice option, and
+  feedback per graded open answer. Each multiple-choice question costs one
+  more, short model call for the check, and two more when it is flagged.
 - `Examiner::grade` returns a grade with feedback, and `ScmProvider`
   gains `post_results`, `superseded_questions` and `supersede_questions`.
 - The dogfooding workflow also runs on `issue_comment.edited` for comments

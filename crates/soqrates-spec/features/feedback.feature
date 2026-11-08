@@ -12,18 +12,36 @@ Feature: Feedback after grading
     Then there is one result per question, in question order
 
   @adr-0004-d1
-  Scenario Outline: A multiple-choice result shows the answer, the correct option and the explanation
+  Scenario Outline: A multiple-choice result shows the answer and the correct option
     Given "github:1001" starts a session for a change touching "rust.ownership"
     When "github:1001" answers every question <how>
     Then the result for "rust.ownership" is <verdict>
     And the result for "rust.ownership" shows the author's answer
     And the result for "rust.ownership" names the correct option
-    And the result for "rust.ownership" explains the answer with the question's explanation
 
     Examples:
       | how       | verdict |
       | correctly | correct |
       | wrongly   | wrong   |
+
+  @adr-0004-d1
+  Scenario: A correct multiple-choice answer is explained with the question's explanation
+    Given "github:1001" starts a session for a change touching "rust.ownership"
+    When "github:1001" answers every question correctly
+    Then the result for "rust.ownership" explains the answer with the question's explanation
+
+  @adr-0004-d1
+  Scenario: A wrong multiple-choice answer says why the picked option is wrong, then explains
+    Given "github:1001" starts a session for a change touching "rust.ownership"
+    When "github:1001" answers every question wrongly
+    Then the result for "rust.ownership" says why the picked option is wrong, then gives the explanation
+
+  @adr-0004-d1
+  Scenario: A wrong answer to a question written without reasons gets the explanation
+    Given the examiner writes multiple-choice questions without option reasons
+    And "github:1001" starts a session for a change touching "rust.ownership"
+    When "github:1001" answers every question wrongly
+    Then the result for "rust.ownership" explains the answer with the question's explanation
 
   @adr-0004-d1
   Scenario Outline: An open result carries the examiner's feedback

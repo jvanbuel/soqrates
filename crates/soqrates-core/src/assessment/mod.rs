@@ -104,6 +104,12 @@ pub enum QuestionBody {
         options: Vec<String>,
         /// Index into `options`.
         correct: usize,
+        /// Why each option is right or wrong, in option order (ADR-0004
+        /// D1). `reasons[correct]` is the question's explanation. Shown only
+        /// after grading. Empty for questions written before reasons
+        /// existed, and in tests that don't need them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reasons: Vec<String>,
     },
     Open {
         prompt: String,
@@ -113,6 +119,18 @@ pub enum QuestionBody {
 }
 
 impl QuestionBody {
+    /// Why `option` of a multiple-choice question is right or wrong, if the
+    /// examiner gave a reason for it.
+    pub fn reason(&self, option: usize) -> Option<&str> {
+        match self {
+            QuestionBody::MultipleChoice { reasons, .. } => reasons
+                .get(option)
+                .map(|r| r.trim())
+                .filter(|r| !r.is_empty()),
+            QuestionBody::Open { .. } => None,
+        }
+    }
+
     pub fn format(&self) -> QuestionFormat {
         match self {
             QuestionBody::MultipleChoice { .. } => QuestionFormat::MultipleChoice,
@@ -184,7 +202,33 @@ impl Grade {
 
 #[cfg(test)]
 mod tests {
-    use super::Diff;
+
+    #[test]
+    fn questions_stored_before_option_reasons_still_load() {
+        let stored = r#"{"MultipleChoice":{"prompt":"Q?","options":["a","b","c"],"correct":1}}"#;
+        let body: QuestionBody = serde_json::from_str(stored).unwrap();
+        assert_eq!(body.reason(0), None);
+        let QuestionBody::MultipleChoice { reasons, .. } = &body else {
+            panic!("not multiple choice");
+        };
+        assert!(reasons.is_empty());
+        // And without reasons, they are stored as before.
+        assert_eq!(serde_json::to_string(&body).unwrap(), stored);
+    }
+
+    #[test]
+    fn a_reason_is_given_per_option() {
+        let body = QuestionBody::MultipleChoice {
+            prompt: "Q?".into(),
+            options: vec!["a".into(), "b".into(), "c".into()],
+            correct: 1,
+            reasons: vec!["A is wrong.".into(), "B is right.".into(), "  ".into()],
+        };
+        assert_eq!(body.reason(0), Some("A is wrong."));
+        assert_eq!(body.reason(2), None, "a blank reason is no reason");
+        assert_eq!(body.reason(3), None);
+    }
+    use super::{Diff, QuestionBody};
 
     fn file(path: &str, line: &str) -> String {
         format!(

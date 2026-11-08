@@ -785,10 +785,14 @@ async fn learner_store_contains_none(w: &mut SpecWorld, list: String) {
     for q in &w.identity.questions {
         match &q.body {
             soqrates_core::QuestionBody::MultipleChoice {
-                prompt, options, ..
+                prompt,
+                options,
+                reasons,
+                ..
             } => {
                 forbidden.push(prompt.clone());
                 forbidden.extend(options.iter().cloned());
+                forbidden.extend(reasons.iter().cloned());
             }
             soqrates_core::QuestionBody::Open { prompt, rubric } => {
                 forbidden.push(prompt.clone());

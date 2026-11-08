@@ -92,6 +92,7 @@ fn mc_question(concept: &ConceptId) -> Question {
             prompt: format!("Which statement about {} is true?", concept.0),
             options: vec!["right".into(), "wrong".into(), "also wrong".into()],
             correct: 0,
+            reasons: Vec::new(),
         },
         explanation: FakeExaminer::explanation(concept),
     }

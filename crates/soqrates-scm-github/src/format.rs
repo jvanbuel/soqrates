@@ -837,6 +837,7 @@ mod tests {
                 prompt: format!("Prompt {id}?"),
                 options: options.iter().map(|o| o.to_string()).collect(),
                 correct,
+                reasons: options.iter().map(|_| "SECRET-REASON".into()).collect(),
             },
             explanation: "SECRET-EXPLANATION".into(),
         }
@@ -926,6 +927,7 @@ mod tests {
         let rendered = render_questions(&s);
         assert!(!rendered.contains("SECRET-RUBRIC"));
         assert!(!rendered.contains("SECRET-EXPLANATION"));
+        assert!(!rendered.contains("SECRET-REASON"));
         assert!(!rendered.to_lowercase().contains("correct"));
         assert!(!rendered.contains("rubric"));
         // The default session's correct option is shown only as an option.
@@ -1283,6 +1285,7 @@ mod tests {
                 prompt,
                 options,
                 correct,
+                ..
             } => (prompt.clone(), options.clone(), Some(*correct)),
             QuestionBody::Open { prompt, .. } => (prompt.clone(), vec![], None),
         };
@@ -1525,6 +1528,7 @@ mod tests {
                 prompt: NASTY.into(),
                 options: vec![NASTY.into(), "<b>ok</b>".into(), "- [x] fake".into()],
                 correct,
+                reasons: vec![NASTY.into(); 3],
             },
             explanation: NASTY.into(),
         };
