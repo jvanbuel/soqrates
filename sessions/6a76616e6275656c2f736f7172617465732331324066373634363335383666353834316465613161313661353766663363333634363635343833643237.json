@@ -1,0 +1,61 @@
+{
+  "key": "jvanbuel/soqrates#12@f76463586f5841dea1a16a57ff3c364665483d27",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.composite-action.design/mc",
+      "concept": "github-actions.composite-action.design",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A team moves a PR-commenting script into a composite action. The script calls the GitHub API and needs write access to pull requests. Where must that permission be configured for the action to work, and why?",
+          "options": [
+            "The composite action's action.yml can declare a permissions block, which will grant the token those scopes only while its steps run",
+            "The composite action runs in its own isolated job, so it gets a fresh GITHUB_TOKEN with default permissions regardless of the caller's settings",
+            "The caller's workflow or job must grant the permissions, because the composite action's steps run inside the caller's job and use its token",
+            "The composite action can declare an on: trigger so that it runs automatically when the repository receives matching events"
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "A composite action runs inside the caller's job, so it has no triggers, concurrency or permissions of its own; those belong to the caller's workflow. Adding a permissions block to action.yml is not supported, and the action cannot widen what the job's token is allowed to do."
+    },
+    {
+      "id": "github-actions.reusable-workflows.release-pipeline/mc",
+      "concept": "github-actions.reusable-workflows.release-pipeline",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A release pipeline has a caller workflow that invokes a reusable workflow (`on: workflow_call`) whose job creates a GitHub Release and uploads assets. The repository's default GITHUB_TOKEN permissions are read-only, and the upload step fails with a 403 'Resource not accessible by integration'. What is the correct fix?",
+          "options": [
+            "Grant contents: write in the caller's job that uses the reusable workflow, since the called workflow's token can only be equal to or narrower than the caller's",
+            "Declare contents: write only in the reusable workflow's jobs, since a called workflow can always raise its own token permissions above the caller's",
+            "Add a boolean input named permissions to the reusable workflow and have the caller pass true so the called jobs gain write access",
+            "Nothing is needed, because workflow_call workflows always run with a separate, fully privileged token"
+          ],
+          "correct": 0
+        }
+      },
+      "explanation": "A called workflow's GITHUB_TOKEN permissions can only be equal to or narrower than what the caller grants, so the caller must explicitly grant the needed scope (such as contents: write) at the workflow or job level that calls it. Declaring permissions only inside the reusable workflow cannot elevate beyond the caller's grant, and inputs are not a mechanism for changing token scopes."
+    },
+    {
+      "id": "supply-chain.release-artifacts.checksum-provenance/mc",
+      "concept": "supply-chain.release-artifacts.checksum-provenance",
+      "scope": "General",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A project's install script downloads a release archive and a SHA-256 checksum file from the same GitHub release page, and also verifies a build provenance attestation. Suppose an attacker gains write access to the release assets and replaces both the archive and the checksum file with a malicious pair. What happens if the script only verified the checksum and skipped the attestation check?",
+          "options": [
+            "The install script would fail to run, because checksums are required for the shell to execute downloaded binaries",
+            "The checksum would not match, because SHA-256 changes whenever the download is served over a different CDN",
+            "The tampered archive and its matching checksum would both pass verification, since a checksum hosted alongside the archive proves integrity but not who built it",
+            "Nothing, because the checksum already guarantees the archive came from the legitimate release workflow"
+          ],
+          "correct": 2
+        }
+      },
+      "explanation": "A checksum published next to the archive only shows the file matches that checksum, so an attacker who can replace both files defeats it. A signed provenance attestation ties the artifact to the specific workflow and repository that built it, which the attacker cannot forge without compromising that build identity."
+    }
+  ],
+  "created_at": "2026-11-08T06:59:46.120680461Z"
+}
