@@ -799,19 +799,24 @@ pub fn commit_status(status: CheckStatus, summary: &str) -> (StatusState, String
 
 /// A unified diff from the files of a compare response: `(path, previous
 /// path, patch)`. GitHub gives each file's hunks without headers, and no
-/// patch for binary or very large files, which are left out.
+/// patch for binary or very large files. Those keep their header, as in the
+/// pull request's own diff, so the change still counts and stays within the
+/// pull request's files (ADR-0002 D9).
 pub fn diff_of_files(files: &[(String, Option<String>, Option<String>)]) -> String {
     let mut out = String::new();
     for (path, previous, patch) in files {
-        let Some(patch) = patch.as_deref().filter(|p| !p.trim().is_empty()) else {
-            continue;
-        };
         let old = previous.as_deref().unwrap_or(path);
-        out.push_str(&format!(
-            "diff --git a/{old} b/{path}\n--- a/{old}\n+++ b/{path}\n{patch}"
-        ));
-        if !patch.ends_with('\n') {
-            out.push('\n');
+        out.push_str(&format!("diff --git a/{old} b/{path}\n"));
+        match patch.as_deref().filter(|p| !p.trim().is_empty()) {
+            Some(patch) => {
+                out.push_str(&format!("--- a/{old}\n+++ b/{path}\n{patch}"));
+                if !patch.ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+            None => out.push_str(&format!(
+                "Binary or large files a/{old} and b/{path} differ\n"
+            )),
         }
     }
     out
@@ -1663,9 +1668,13 @@ mod tests {
         assert_eq!(
             diff.0,
             "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n\
+             diff --git a/logo.png b/logo.png\nBinary or large files a/logo.png and b/logo.png differ\n\
              diff --git a/src/old.rs b/src/new.rs\n--- a/src/old.rs\n+++ b/src/new.rs\n@@ -1 +1 @@\n-x\n+y\n"
         );
-        assert_eq!(diff.files(), ["src/lib.rs", "src/new.rs"]);
+        assert_eq!(diff.files(), ["src/lib.rs", "logo.png", "src/new.rs"]);
         assert_eq!(diff_of_files(&[]), "");
+        // A change to patchless files only still counts as a change.
+        let only_binary = vec![("logo.png".to_string(), None, None)];
+        assert!(!soqrates_core::Diff(diff_of_files(&only_binary)).is_empty());
     }
 }

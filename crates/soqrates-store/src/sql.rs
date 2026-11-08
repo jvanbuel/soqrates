@@ -227,6 +227,7 @@ impl SqlStore {
             "soqrates_link_codes",
             "soqrates_sessions",
             "soqrates_graded",
+            "soqrates_rounds",
         ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
                 .execute(&self.pool)
