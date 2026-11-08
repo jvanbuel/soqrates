@@ -80,7 +80,10 @@ pub struct MultipleChoiceOutput {
     #[serde(default)]
     pub kind: String,
     /// For `explain_your_change`: the 1-based number of the hunk shown.
+    // Schema'd as a signed integer: Option<u32> would emit `minimum: 0` on
+    // a nullable integer, which rig doesn't strip and Anthropic rejects.
     #[serde(default)]
+    #[schemars(with = "Option<i64>")]
     pub hunk: Option<u32>,
     /// For the other kinds that show code: the snippet.
     #[serde(default)]
@@ -123,7 +126,10 @@ pub struct OpenOutput {
     #[serde(default)]
     pub kind: String,
     /// For `explain_your_change`: the 1-based number of the hunk shown.
+    // Schema'd as a signed integer: Option<u32> would emit `minimum: 0` on
+    // a nullable integer, which rig doesn't strip and Anthropic rejects.
     #[serde(default)]
+    #[schemars(with = "Option<i64>")]
     pub hunk: Option<u32>,
     /// For the other kinds that show code: the snippet.
     #[serde(default)]

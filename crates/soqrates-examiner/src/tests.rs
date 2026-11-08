@@ -1679,3 +1679,60 @@ fn concepts_keep_their_locations_in_the_diff() {
     let prompt = prompts::grade_open("Q?", Some(&code), "R", "A");
     assert_eq!(prompt.matches(prompts::CODE_CLOSE).count(), 1, "{prompt}");
 }
+
+/// Every node of `schema` that carries a numeric constraint, other than
+/// a plain `"type": "integer"` or `"type": "number"` node (the only ones
+/// rig strips them from for Anthropic).
+fn unstripped_numeric_constraints(schema: &serde_json::Value, path: &str, out: &mut Vec<String>) {
+    match schema {
+        serde_json::Value::Object(obj) => {
+            let plain_numeric = matches!(
+                obj.get("type").and_then(|t| t.as_str()),
+                Some("integer" | "number")
+            );
+            for key in [
+                "minimum",
+                "maximum",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "multipleOf",
+            ] {
+                if obj.contains_key(key) && !plain_numeric {
+                    out.push(format!("{path}: {key}"));
+                }
+            }
+            for (k, v) in obj {
+                unstripped_numeric_constraints(v, &format!("{path}/{k}"), out);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (i, v) in items.iter().enumerate() {
+                unstripped_numeric_constraints(v, &format!("{path}/{i}"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Anthropic rejects numeric constraints on integers in structured output,
+/// and rig only strips them from plain integer nodes, not nullable ones
+/// such as `Option<u32>` (`"type": ["integer", "null"]`).
+#[test]
+fn output_schemas_have_no_numeric_constraints_anthropic_would_reject() {
+    use crate::output::OptionCheckOutput;
+    let schemas = [
+        ("concepts", schemars::schema_for!(ConceptsOutput)),
+        (
+            "multiple_choice",
+            schemars::schema_for!(MultipleChoiceOutput),
+        ),
+        ("option_check", schemars::schema_for!(OptionCheckOutput)),
+        ("open", schemars::schema_for!(OpenOutput)),
+        ("grade", schemars::schema_for!(GradeOutput)),
+    ];
+    let mut found = Vec::new();
+    for (name, schema) in &schemas {
+        unstripped_numeric_constraints(schema.as_value(), name, &mut found);
+    }
+    assert!(found.is_empty(), "constraints rig won't strip: {found:?}");
+}
