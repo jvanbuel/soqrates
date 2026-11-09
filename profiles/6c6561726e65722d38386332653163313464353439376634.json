@@ -81,6 +81,19 @@
         "last_review": "2026-11-08T17:28:17.414240934Z"
       }
     },
+    "git.object-database.reading-revisions": {
+      "card": {
+        "due": "2026-11-10T00:18:51.467874551Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T00:18:51.467874551Z"
+      }
+    },
     "git.unified-diff.format": {
       "card": {
         "due": "2026-11-09T12:41:36.866343819Z",
@@ -198,6 +211,19 @@
         "last_review": "2026-11-08T17:28:17.414240934Z"
       }
     },
+    "project.codebase.path-and-argument-sandboxing": {
+      "card": {
+        "due": "2026-11-12T00:18:51.467874551Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T00:18:51.467874551Z"
+      }
+    },
     "project.grading.session-state-machine": {
       "card": {
         "due": "2026-11-11T17:37:59.141682093Z",
@@ -248,6 +274,32 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T16:24:56.473686819Z"
+      }
+    },
+    "rig.agent.hooks-tool-limiting": {
+      "card": {
+        "due": "2026-11-10T00:18:51.467874551Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T00:18:51.467874551Z"
+      }
+    },
+    "rust.async.channel-bridge-static-tools": {
+      "card": {
+        "due": "2026-11-10T00:18:51.467874551Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T00:18:51.467874551Z"
       }
     },
     "rust.async.closures-futures-generics": {
@@ -352,6 +404,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T17:18:45.049315465Z"
+      }
+    },
+    "rust.traits.async-ports-generic-dispatch": {
+      "card": {
+        "due": "2026-11-10T00:18:51.467874551Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T00:18:51.467874551Z"
       }
     },
     "rust.traits.default-methods-async": {
@@ -884,6 +949,41 @@
       "format": "Open",
       "grade": "Hard",
       "at": "2026-11-08T19:05:13.474387986Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "git.object-database.reading-revisions",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-09T00:18:51.467874551Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.traits.async-ports-generic-dispatch",
+      "format": "Open",
+      "grade": "Again",
+      "at": "2026-11-09T00:18:51.467874551Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.codebase.path-and-argument-sandboxing",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-09T00:18:51.467874551Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.async.channel-bridge-static-tools",
+      "format": "Open",
+      "grade": "Again",
+      "at": "2026-11-09T00:18:51.467874551Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rig.agent.hooks-tool-limiting",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-09T00:18:51.467874551Z",
       "via": "github.com:16427728"
     }
   ],
