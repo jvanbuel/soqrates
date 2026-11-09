@@ -56,6 +56,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Grading journal | `GradingJournal` | delivery | The graded record and learner profiles that grading one session writes, stored before any of them. While it is stored, the session is being graded. | |
 | Round | `Round` | delivery | What Soqrates asked about one head of a pull request: the session that answers for that head, and the concepts it asked. | |
 | Rounds | `PrRounds` | delivery | The rounds of one pull request, oldest first. | |
+| Follow-up | `FollowUp` | delivery | A round of new questions on the same commit about the concepts a graded session got wrong (ADR-0010). Its session is keyed `…#2`, `#3`. | retry, retake |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
 | Hook | `HookKind` | delivery | A local git `pre-commit` or jj `pre-push` invocation. | |
 | Mode | `Mode` | delivery | Advisory (never blocks) or Blocking. | |
@@ -172,6 +173,10 @@ The kind of each question is chosen by the examiner, steered by the level
   already-graded session fails with `NotFound` (gap G7).
 - A session passes if the fraction of correct grades is at least
   `pass_threshold`. An empty session passes.
+- *Amended by [ADR-0010](0010-follow-up-rounds.md):* a session is graded
+  once, but a commit is not final: its wrong answers get a follow-up round,
+  a new session keyed `…#2`. A follow-up passes on the first round's
+  concepts, each counted with its latest answer, and records no reviews.
 
 How "at most once" is achieved: grading is written ahead, in a grading
 journal kept with the session.
