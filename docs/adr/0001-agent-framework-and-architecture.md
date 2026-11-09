@@ -232,6 +232,8 @@ push. An empty diff never asks any questions.
 SDK, with exactly these tools: `start_session`, `submit_answers`,
 `get_learner_profile` and `due_reviews`. Other harnesses get the same learner
 model and scheduling as the Soqrates agent. The agent is just one client.
+[ADR-0011](0011-question-feedback.md) D2 adds a fifth tool, `give_feedback`,
+for the author's feedback on graded questions.
 
 ### D11: Skills are portable `SKILL.md` files
 **Enforcement:** automated
