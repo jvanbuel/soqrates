@@ -1,5 +1,7 @@
 {
   "learner": "learner-88c2e1c14d5497f4",
-  "rounds": 1,
-  "last_seen": {}
+  "rounds": 2,
+  "last_seen": {
+    "bank-a14b4c2105b7c2d6": 2
+  }
 }

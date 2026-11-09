@@ -1,0 +1,34 @@
+{
+  "id": "bank-a14b4c2105b7c2d6",
+  "version": 1,
+  "level": "Expert",
+  "question": {
+    "id": "rust.types.string-newtype-parsing/mc",
+    "concept": "rust.types.string-newtype-parsing",
+    "scope": "General",
+    "kind": "Scenario",
+    "body": {
+      "MultipleChoice": {
+        "prompt": "A session key is stored as a plain string, and `parts()` classifies it as a PR key of the form `{repo}#{number}@{head}` only if the number part is canonical. An MCP client chooses the key `org/repo#01@abc123`. The parser turns the number text into an integer and, before accepting the key as a PR key, formats that integer back and compares it with the original digits. Why is that comparison there, and what happens to this key?",
+        "options": [
+          "Borrowing `&str` slices from the key means the number would be a dangling reference unless it is re-formatted to an owned `String` first.",
+          "`u64::parse` fails on any input with a leading zero, so the extra check is only there to produce a clearer error message.",
+          "The check guards against integer overflow when the number text is longer than 20 digits, which would otherwise wrap around to a small value.",
+          "The number text `01` parses as the integer 1, but formatting 1 gives `1`. Without the round-trip check the key would be classified as a PR key that the PR constructor can never reproduce. Rejecting it keeps each PR key to a single canonical spelling and leaves the odd string as an unchanged `Other` key."
+        ],
+        "correct": 3,
+        "reasons": [
+          "The number is a `u64`, which is copied out, and the lifetime `'a` ties the borrowed slices to the key, so nothing dangles. The `to_string()` call is a comparison only and is not about ownership.",
+          "Rust's integer parsing accepts leading zeros, so `01` parses to 1 without error. The check is needed because the parse succeeds. It also produces no error message, since the key falls through to `Other`.",
+          "Parsing into `u64` returns an error on overflow and never wraps, so the `Ok` pattern already excludes that case. The round-trip check addresses digits that parse fine but format differently, such as leading zeros.",
+          "Parsing to `u64` discards leading zeros, so the parsed value would no longer match the stored text. Comparing `number.to_string()` with the original digits makes parsing and then formatting lossless. Non-canonical keys fall through to `Other` and are stored exactly as given."
+        ]
+      }
+    },
+    "explanation": "Parsing to `u64` discards leading zeros, so the parsed value would no longer match the stored text. Comparing `number.to_string()` with the original digits makes parsing and then formatting lossless. Non-canonical keys fall through to `Other` and are stored exactly as given.",
+    "checked": true
+  },
+  "added_at": "2026-11-09T21:33:20.129289653Z",
+  "asked": 1,
+  "retired": false
+}

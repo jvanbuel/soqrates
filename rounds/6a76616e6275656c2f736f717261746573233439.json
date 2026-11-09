@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 49
+  },
+  "rounds": [
+    {
+      "head": "775fe9376860af209e26996d4c38ff85dee2853b",
+      "session": "jvanbuel/soqrates#49@775fe9376860af209e26996d4c38ff85dee2853b",
+      "concepts": [
+        "git.unified-diff.format",
+        "rust.control-flow.option-match-filter",
+        "rust.serde.backward-compatible-deserialization",
+        "rust.types.string-newtype-parsing",
+        "project.engine.session-state-lookup-order"
+      ],
+      "carried": false,
+      "at": "2026-11-09T21:33:32.800674723Z"
+    }
+  ]
+}
