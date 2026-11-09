@@ -80,10 +80,11 @@ checkbox, plus a final checkbox, "Grade my answers". The rules:
   unanswered. More than one means wrong.
 - Checkbox answers count only when the comment's last editor is the PR
   author, so nobody else can answer for them.
-- Open questions are answered in a `/soqrates answer` comment, which also
-  remains the fallback for authors who cannot tick boxes (no write access).
-  Posting that comment submits all answers, ticked boxes included. An
-  answer in the comment overrides the checkboxes of that question.
+- Open questions are answered in their answer field in the same comment
+  (D11). A `/soqrates answer` comment remains the fallback for authors who
+  cannot edit the comment (no write access). Posting that comment submits
+  all answers, ticked boxes and answer fields included. An answer in the
+  comment overrides the checkboxes or the answer field of that question.
 
 ### D4: GitHub output uses only GitHub's markdown and HTML subset
 **Enforcement:** automated
@@ -102,7 +103,7 @@ still becomes inline `<code>`.
 When a session is graded, the results are posted as a new comment, which
 notifies the author. The question comment is then edited to say it was
 graded, with the questions collapsed, so that its checkboxes can no longer
-be ticked.
+be ticked and its answer fields no longer filled in (D11).
 
 ### D6: The terminal shows results and the next review
 **Enforcement:** automated
@@ -168,7 +169,8 @@ fix by editing counted only by luck. So:
   workflow also runs when the PR author edits a command comment, and the
   edited text is graded. After grading, an edit changes nothing (D5).
 - The results comment says what it graded: the answer comment, with when it
-  was posted or last edited, and the questions whose ticked boxes were read.
+  was posted or last edited, and the questions whose ticked boxes, or
+  answer fields (D11), were read.
 
 ### D9: Answers are acknowledged before grading
 **Enforcement:** automated
@@ -202,6 +204,47 @@ model answer the question independently, is not added: that run's content
 was right, and a second model's answer can be wrong too. It stays an option
 if evals show the examiner marking wrong answers.
 
+### D11: Open questions are answered inside the question comment
+**Enforcement:** automated
+
+Issue #17 showed that answering in two places is easy to get wrong: multiple
+choice in the question comment, open questions in a reply, and either could
+submit. So each open question gets an answer field in the question comment,
+and the author answers everything there, then ticks "Grade my answers":
+
+- A field is the lines between two hidden markers under the question,
+  `<!-- soqrates:answer=N -->` and `<!-- soqrates:answer-end=N -->`, where
+  N is the question's number. The author edits the comment and types the
+  answer between them; the rendered comment shows it under the question.
+  A short line above the field says how.
+- A field counts only when both markers are there, outside code, and
+  belong to an open question; the first field of a question counts. A blank
+  field is unanswered.
+- Like boxes (D3), fields count only when the comment's last editor, as
+  GraphQL reports it, is the PR author, and only once the answers are
+  submitted: by ticking "Grade my answers", or by posting a `/soqrates
+  answer` comment.
+- Everything inside a field is the author's text, whatever it says. Boxes,
+  headings, markers, `<details>` and fences typed there are not read as
+  structure, so a field cannot tick a box, hide the rest of the comment or
+  forge a question.
+- `/soqrates answer` stays for authors who can't edit the comment. When a
+  question has both, the answer comment wins, as it does over boxes: it is
+  the newer, explicit answer, and it is the only one that can also be edited
+  by an author without write access. The results comment says which source
+  it graded (D8): the answer comment, the boxes and the fields it read, and
+  the questions whose boxes or field the answer comment replaced.
+- When the comment is re-rendered, the author's text is never copied back as
+  markdown. Once graded (D5), each open answer is shown escaped like any
+  other text (D4). Once superseded (D7), the fields are gone, and the text
+  left in each is shown escaped, so the author can reuse it when the
+  question is asked again.
+
+Typing into a field edits the question comment, like ticking a box, so the
+workflow filter (D8) needs no change: the comment's edits start a run only
+once "Grade my answers" is ticked. A field without that box ticked starts no
+run, and its text is only read once the author submits.
+
 ## Consequences
 
 - The examiner's output grows: a reason per multiple-choice option, and
@@ -215,6 +258,10 @@ if evals show the examiner marking wrong answers.
   that carry a Soqrates marker, and for the PR author's own command
   comments (D8).
 - Authors without write access answer every question by comment.
-- A collaborator could tick boxes after the author's last edit. Those
-  ticks only count if the author edits the comment again afterwards. This
-  is acceptable for an advisory learning check.
+- A collaborator could tick boxes or type into an answer field after the
+  author's last edit. Those edits only count if the author edits the comment
+  again afterwards, and so sees them. This is acceptable for an advisory
+  learning check.
+- An answer typed into a field but not submitted before a push is not
+  graded; the superseded comment keeps it, as text, for the next round
+  (D7, D11).
