@@ -458,11 +458,20 @@ pub fn render_questions(session: &Session) -> String {
         );
         return out;
     }
-    out.push_str(
-        "> **Soqrates learning check.** A few questions about the concepts in \
-         this change, to help you learn and remember them. It is advisory, not a \
-         code review.\n\n",
-    );
+    if session.follow_up().is_some() {
+        // A follow-up round (ADR-0010 D6).
+        out.push_str(
+            "> **Soqrates follow-up.** A new question about each concept answered \
+             wrongly above, now that you have read why. It is advisory, not a code \
+             review.\n\n",
+        );
+    } else {
+        out.push_str(
+            "> **Soqrates learning check.** A few questions about the concepts in \
+             this change, to help you learn and remember them. It is advisory, not a \
+             code review.\n\n",
+        );
+    }
     for (i, q) in questions.iter().enumerate() {
         out.push_str(&question_heading(i + 1, total));
         out.push_str("\n\n");
@@ -729,7 +738,27 @@ pub fn render_results(
     let mut out = String::new();
     out.push_str(&results_marker(session.key()));
     out.push('\n');
-    if passed {
+    if let Some(f) = session.follow_up() {
+        // The result after this round, the first attempt kept visible
+        // (ADR-0010 D4).
+        let overall = f.settled + correct;
+        let verdict = if passed {
+            "passed after a follow-up"
+        } else {
+            "not passed"
+        };
+        out.push_str(if passed {
+            "> [!TIP]\n"
+        } else {
+            "> [!WARNING]\n"
+        });
+        out.push_str(&format!(
+            "> **Soqrates follow-up: {correct} of {total} correct.** {overall} of {} \
+             concepts answered correctly in all: {verdict}. Each question below says \
+             why its answer is right.\n\n",
+            f.total
+        ));
+    } else if passed {
         out.push_str("> [!TIP]\n");
         out.push_str(&format!(
             "> **Soqrates: {correct} of {total} correct.** Nice work. Each \
@@ -795,7 +824,7 @@ pub fn render_graded_questions(session: &Session, results: &[QuestionResult]) ->
     out.push_str("\n> [!NOTE]\n");
     out.push_str(
         "> **Soqrates learning check: graded.** The results are in a comment \
-         below. The answers for this commit are final; a new push asks new \
+         below. The answers to these questions are final; a new push asks new \
          questions.\n\n",
     );
     push_collapsed_questions(session.questions(), Some(results), &[], &mut out);
@@ -2095,6 +2124,55 @@ mod tests {
         }
         let s = render_results(&session(), &results()[..1], true, None);
         assert!(s.contains("> [!TIP]\n> **Soqrates: 1 of 1 correct.**"));
+    }
+
+    /// A follow-up round after a first round of 3 with 1 correct, asking
+    /// about the 2 missed concepts (ADR-0010 D2).
+    fn follow_up() -> Session {
+        Session::open_follow_up(
+            SessionKey("o/r#1@abc#2".into()),
+            AuthorId("github.com:42".into()),
+            vec![
+                mc("f1", &["first", "SECRET-CORRECT", "third"], 1),
+                mc("f2", &["x", "y"], 0),
+            ],
+            soqrates_core::FollowUp {
+                round: 2,
+                settled: 1,
+                total: 3,
+            },
+            Utc.timestamp_opt(0, 0).unwrap(),
+        )
+        .unwrap()
+    }
+
+    // @adr-0010-d4 @adr-0010-d6
+    #[test]
+    fn a_follow_up_says_so_and_its_results_say_it_passed_after_a_follow_up() {
+        let s = render_questions(&follow_up());
+        assert!(s.starts_with("<!-- soqrates:session=o/r#1@abc#2 -->\n> [!NOTE]\n"));
+        assert!(s.contains("**Soqrates follow-up.**"), "{s}");
+        assert!(s.contains("- [ ] **Grade my answers**"));
+        // The first round's marker doesn't match the follow-up's comment.
+        assert!(!s.contains(&session_marker(&SessionKey("o/r#1@abc".into()))));
+
+        let q = follow_up().questions().to_vec();
+        let r = vec![
+            result(&q[0], Some(AnswerBody::Choice(1)), Grade::Good, "Yes."),
+            result(&q[1], Some(AnswerBody::Choice(1)), Grade::Again, "No."),
+        ];
+        let s = render_results(&follow_up(), &r, true, None);
+        assert!(s.starts_with("<!-- soqrates:results=o/r#1@abc#2 -->\n> [!TIP]\n"));
+        assert!(
+            s.contains(
+                "**Soqrates follow-up: 1 of 2 correct.** 2 of 3 concepts answered correctly in \
+             all: passed after a follow-up."
+            ),
+            "{s}"
+        );
+        let s = render_results(&follow_up(), &r, false, None);
+        assert!(s.contains("> [!WARNING]\n> **Soqrates follow-up: 1 of 2 correct.**"));
+        assert!(s.contains("in all: not passed."));
     }
 
     // @adr-0004-d5
