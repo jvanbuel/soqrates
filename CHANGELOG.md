@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2](https://github.com/jvanbuel/soqrates/compare/v0.1.1...v0.1.2) - 2026-11-09
+
+### Other
+
+- Ask multiple choice only by default; never alternate formats
+- Report git grep errors; stream its output up to the cap
+- Give the examiner agent a full toolset over git: grep, glob, ranges, log, blame
+- Let the examiner read the codebase through bounded tools (ADR-0008)
+- Mark the correct multiple-choice option on the option, not by index
+- Run the examiner's reading on Rig's agent runtime (ADR-0008 D2)
+
 ## [0.1.1](https://github.com/jvanbuel/soqrates/compare/v0.1.0...v0.1.1) - 2026-11-08
 
 ### Added
