@@ -30,6 +30,42 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace --exclude soqrates-spec
 
+  postgres:
+    name: SQL store against PostgreSQL (ADR-0005 D6)
+    runs-on: ubuntu-latest
+    # The same database as compose.yaml, which runs these tests locally.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: soqrates
+          POSTGRES_PASSWORD: soqrates
+          POSTGRES_DB: soqrates_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U soqrates -d soqrates_test"
+          --health-interval 1s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      SOQRATES_TEST_POSTGRES_URL: postgres://soqrates:soqrates@localhost:5432/soqrates_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
+      # Without the URL these tests pass without doing anything, so check
+      # that the PostgreSQL test really ran.
+      - name: PostgreSQL conformance suite
+        run: |
+          set -o pipefail
+          cargo test -p soqrates-store --features postgres -- --nocapture postgres 2>&1 | tee pg.log
+          if grep -q "SOQRATES_TEST_POSTGRES_URL is not set" pg.log; then
+            echo "::error::the PostgreSQL tests were skipped"; exit 1
+          fi
+          grep -q "postgres_conforms_and_claims_are_exclusive ... ok" pg.log
+
   backlog:
     name: acceptance backlog (all scenarios, incl. @wip; informational)
     runs-on: ubuntu-latest
