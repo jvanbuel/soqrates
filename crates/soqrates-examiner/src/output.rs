@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::{
     CodeLocation, CodeSnippet, Concept, ConceptId, ConceptScope, Grade, Grading, MAX_SNIPPET_LINES,
-    QuestionBrief, QuestionKind, SnippetOrigin, Weight,
+    Question, QuestionBody, QuestionBrief, QuestionKind, SnippetOrigin, Weight,
 };
 
 use crate::prompts::MAX_CONCEPTS;
@@ -271,6 +271,37 @@ impl MultipleChoice {
     pub fn explanation(&self) -> &str {
         &self.reasons[self.correct]
     }
+}
+
+/// Check that the follow-up `mc` doesn't repeat `previous`, the question
+/// it follows (ADR-0010 D1): neither its prompt nor, with the same options,
+/// its correct answer. The problem otherwise.
+pub fn new_follow_up(mc: MultipleChoice, previous: &Question) -> Result<MultipleChoice, String> {
+    let words = |s: &str| {
+        s.split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+    };
+    if words(&mc.prompt) == words(previous.body.prompt()) {
+        return Err(
+            "the follow-up repeats the previous question: write a new question about the \
+             concept, from another angle"
+                .to_owned(),
+        );
+    }
+    if let QuestionBody::MultipleChoice { options, .. } = &previous.body {
+        let mut old: Vec<Vec<String>> = options.iter().map(|o| words(o)).collect();
+        let mut new: Vec<Vec<String>> = mc.options.iter().map(|o| words(o)).collect();
+        old.sort();
+        new.sort();
+        if old == new {
+            return Err(
+                "the follow-up repeats the options of the previous question: write new ones"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(mc)
 }
 
 /// Check a multiple-choice reply: a prompt, 3 to 5 non-empty distinct

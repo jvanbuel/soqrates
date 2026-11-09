@@ -155,7 +155,12 @@ impl SpecWorld {
             AnyStore::Memory(soqrates_store::InMemoryStore::new()),
             examiner.clone(),
             clock.clone(),
-            Config::default(),
+            // Scenarios ask no follow-up rounds unless they say so
+            // (ADR-0010 D2).
+            Config {
+                max_follow_ups: 0,
+                ..Config::default()
+            },
         );
         Self {
             app,

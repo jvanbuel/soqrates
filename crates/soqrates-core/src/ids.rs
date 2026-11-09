@@ -19,6 +19,27 @@ pub struct QuestionId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SessionKey(pub String);
 
+impl SessionKey {
+    /// The key of follow-up round `round` (2 or more) of this key's session
+    /// (ADR-0010 D2): the first round's key with `#<round>` appended, e.g.
+    /// `jvanbuel/soqrates#7@abc123#2`.
+    pub fn follow_up(&self, round: u32) -> SessionKey {
+        let (first, _) = self.round();
+        SessionKey(format!("{}#{round}", first.0))
+    }
+
+    /// The key of this session's first round, and which round this key is:
+    /// 1 for a first round, 2 or more for a follow-up (ADR-0010 D2).
+    pub fn round(&self) -> (SessionKey, u32) {
+        let follow_up = self.0.rsplit_once('#').and_then(|(first, n)| {
+            let digits = !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit());
+            let round: u32 = n.parse().ok().filter(|_| digits)?;
+            (round >= 2 && !first.is_empty()).then(|| (SessionKey(first.to_string()), round))
+        });
+        follow_up.unwrap_or_else(|| (self.clone(), 1))
+    }
+}
+
 /// The person behind one or more identities. Opaque and generated; owns
 /// exactly one learner profile (ADR-0003 D1).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -127,6 +148,25 @@ mod tests {
         ] {
             let identity: Identity = text.parse().unwrap();
             assert_eq!(identity.to_string(), text);
+        }
+    }
+
+    // @adr-0010-d2
+    #[test]
+    fn follow_up_keys_append_the_round_to_the_first_round() {
+        let first = SessionKey("jvanbuel/soqrates#7@abc123".into());
+        assert_eq!(first.round(), (first.clone(), 1));
+        let second = first.follow_up(2);
+        assert_eq!(second.0, "jvanbuel/soqrates#7@abc123#2");
+        assert_eq!(second.round(), (first.clone(), 2));
+        assert_eq!(second.follow_up(3).0, "jvanbuel/soqrates#7@abc123#3");
+        for key in [
+            "hook:PreCommit:github.com:1001:2026-01-05T09:00:00+00:00",
+            "x#1",
+            "#2",
+        ] {
+            let key = SessionKey(key.into());
+            assert_eq!(key.round(), (key.clone(), 1), "{key:?}");
         }
     }
 
