@@ -60,10 +60,12 @@ jobs:
           contains(github.event.comment.body, 'soqrates:session=') &&
           contains(github.event.comment.body, '- [x] **Grade my answers**'))
       ))
-    # One run at a time, so updates to the learner state never race.
+    # One run at a time, so updates to the learner state never race;
+    # `queue: max` makes later runs wait instead of cancelling each other.
     concurrency:
       group: soqrates-state
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     steps:
       - uses: jvanbuel/soqrates@v0
@@ -73,7 +75,9 @@ jobs:
 
 Keep the `concurrency` group: the state branch expects one writer at a time,
 and a push that loses a race fails rather than overwrite the other run's
-state.
+state. Keep `queue: max` too: without it, GitHub keeps only one waiting run
+per group and cancels it when another arrives, so with several open pull
+requests some checks never run.
 
 That's all. The action needs no `actions/checkout`: it reads the diff through
 the GitHub API, so no code from a pull request runs with your secrets.
