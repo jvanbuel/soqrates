@@ -1,7 +1,7 @@
 {
   "learner": "learner-88c2e1c14d5497f4",
   "starting_level": "Novice",
-  "level": "Intermediate",
+  "level": "Novice",
   "cards": {
     "concurrency.atomic-claim.mutual-exclusion": {
       "card": {
@@ -224,6 +224,19 @@
         "last_review": "2026-11-09T00:18:51.467874551Z"
       }
     },
+    "project.config.layered-settings": {
+      "card": {
+        "due": "2026-11-10T05:54:08.679385522Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T05:54:08.679385522Z"
+      }
+    },
     "project.grading.session-state-machine": {
       "card": {
         "due": "2026-11-11T17:37:59.141682093Z",
@@ -235,6 +248,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T17:37:59.141682093Z"
+      }
+    },
+    "project.learner.question-format-policy": {
+      "card": {
+        "due": "2026-11-10T05:54:08.679385522Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T05:54:08.679385522Z"
       }
     },
     "project.release.rebuild-from-tag-guard": {
@@ -274,6 +300,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T16:24:56.473686819Z"
+      }
+    },
+    "project.testing.bdd-acceptance-steps": {
+      "card": {
+        "due": "2026-11-12T05:54:08.679385522Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T05:54:08.679385522Z"
       }
     },
     "rig.agent.hooks-tool-limiting": {
@@ -365,6 +404,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-07T12:25:42.551353684Z"
+      }
+    },
+    "rust.iterators.match-guards": {
+      "card": {
+        "due": "2026-11-12T05:54:08.679385522Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T05:54:08.679385522Z"
       }
     },
     "rust.serde.backward-compat-defaults": {
@@ -985,7 +1037,35 @@
       "grade": "Again",
       "at": "2026-11-09T00:18:51.467874551Z",
       "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.learner.question-format-policy",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-09T05:54:08.679385522Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.config.layered-settings",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-09T05:54:08.679385522Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.iterators.match-guards",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-09T05:54:08.679385522Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.testing.bdd-acceptance-steps",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-09T05:54:08.679385522Z",
+      "via": "github.com:16427728"
     }
   ],
-  "level_since": 15
+  "level_since": 52
 }
