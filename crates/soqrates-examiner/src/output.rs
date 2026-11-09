@@ -93,17 +93,19 @@ pub struct MultipleChoiceOutput {
     #[serde(default)]
     pub flawed_line: String,
     pub prompt: String,
-    /// 3 to 5 distinct options, exactly one correct, each with the reason
-    /// it is right or wrong.
+    /// 3 to 5 distinct options, exactly one marked correct, each with the
+    /// reason it is right or wrong. The correct option is marked on the
+    /// option itself, never by an index (ADR-0004 D10).
     pub options: Vec<RawOption>,
-    /// 0-based index of the correct option.
-    pub correct: u32,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RawOption {
     /// The option as shown to the author.
     pub text: String,
+    /// Whether this is the correct option. Exactly one is. Before `why`, so
+    /// the reason is written knowing whether it explains or refutes.
+    pub correct: bool,
     /// Plain text on why this option is right (the correct one) or wrong,
     /// referring to options by content only, never by letter or position.
     pub why: String,
@@ -272,7 +274,7 @@ impl MultipleChoice {
 }
 
 /// Check a multiple-choice reply: a prompt, 3 to 5 non-empty distinct
-/// options, a correct index in range, and for every option a reason that
+/// options, exactly one of them marked correct, and for every option a reason that
 /// does not depend on the order of the options (see [`validate_reasons`]).
 /// Its kind and code must be what `brief` asks for (see [`validate_code`]);
 /// the options of `choose_the_fix` are code, at most [`MAX_SNIPPET_LINES`]
@@ -328,13 +330,24 @@ pub fn validate_multiple_choice(
     if !options.iter().all(|o| seen.insert(o.to_lowercase())) {
         return Err("the options are not distinct".to_owned());
     }
-    let correct = output.correct as usize;
-    if correct >= options.len() {
-        return Err(format!(
-            "correct index {correct} is out of range for {} options",
-            options.len()
-        ));
-    }
+    // Marked on the options themselves (ADR-0004 D10).
+    let marked: Vec<usize> = output
+        .options
+        .iter()
+        .enumerate()
+        .filter(|(_, o)| o.correct)
+        .map(|(i, _)| i)
+        .collect();
+    let correct = match marked.as_slice() {
+        [one] => *one,
+        [] => return Err("no option is marked correct; mark exactly one".to_owned()),
+        many => {
+            return Err(format!(
+                "{} options are marked correct; mark exactly one",
+                many.len()
+            ));
+        }
+    };
     if kind == QuestionKind::ChooseTheFix
         && let Some(flawed) = &flawed
         && options[correct].trim() == flawed.trim()

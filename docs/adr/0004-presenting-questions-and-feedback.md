@@ -180,6 +180,28 @@ answers…". Once the results are posted, the 👀 is replaced by 👍 (GitHub h
 no ✅ reaction). Reactions only show progress: a failed one never stops
 grading.
 
+### D10: The examiner marks the correct option on the option itself
+**Enforcement:** automated
+
+In the examiner's reply, each multiple-choice option says whether it is
+correct (`correct: true` or `false`), next to its text and before its
+reason, and exactly one option is marked; a reply that marks none, or more
+than one, is invalid output and is asked for again. The reply has no index
+of the correct option.
+
+An index beside the options was easy to get wrong: in a live run (PR #32)
+the reasons said one option was correct and another wrong, but the index
+pointed at the wrong one, so an author who answered correctly was graded
+wrong. A mark on the option keeps the verdict next to the text and the
+reason it must agree with, and there is nothing to count. The stored
+question still records the correct option by position, after the shuffle;
+that position is derived from the mark.
+
+A separate check that the marked option really is correct, by having a
+model answer the question independently, is not added: that run's content
+was right, and a second model's answer can be wrong too. It stays an option
+if evals show the examiner marking wrong answers.
+
 ## Consequences
 
 - The examiner's output grows: a reason per multiple-choice option, and

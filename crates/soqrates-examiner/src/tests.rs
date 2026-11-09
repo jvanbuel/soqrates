@@ -396,6 +396,7 @@ fn mc_output(options: &[&str], correct: u32) -> MultipleChoiceOutput {
             .enumerate()
             .map(|(i, o)| RawOption {
                 text: o.to_string(),
+                correct: i == correct as usize,
                 why: if i == correct as usize {
                     "Holding the guard across an await blocks other tasks.".into()
                 } else {
@@ -403,7 +404,6 @@ fn mc_output(options: &[&str], correct: u32) -> MultipleChoiceOutput {
                 },
             })
             .collect(),
-        correct,
     }
 }
 
@@ -413,9 +413,11 @@ fn mc_reply(options: &[(&str, &str)], correct: usize) -> String {
         "prompt": "Q?",
         "options": options
             .iter()
-            .map(|(text, why)| serde_json::json!({"text": text, "why": why}))
+            .enumerate()
+            .map(|(i, (text, why))| {
+                serde_json::json!({"text": text, "correct": i == correct, "why": why})
+            })
             .collect::<Vec<_>>(),
-        "correct": correct,
     })
     .to_string()
 }
@@ -842,7 +844,7 @@ fn the_explanation_is_required() {
     // A reply without the field at all does not parse.
     assert!(
         output::parse_json::<MultipleChoiceOutput>(
-            r#"{"prompt":"Q","options":[{"text":"a"},{"text":"b"},{"text":"c"}],"correct":0}"#
+            r#"{"prompt":"Q","options":[{"text":"a","correct":true},{"text":"b","correct":false},{"text":"c","correct":false}]}"#
         )
         .is_err()
     );
@@ -2534,4 +2536,99 @@ async fn with_native_structured_output_the_schema_goes_with_every_turn() {
 #[test]
 fn code_read_from_other_files_is_not_a_hunk() {
     assert!(prompts::TOOLS_SYSTEM.contains("not a hunk of the change"));
+}
+
+// ---------------------------------------------------------------------------
+// the correct option is marked on the option (ADR-0004 D10)
+
+/// `mc_output` with the options marked correct where `marked` says.
+fn marked(marked: &[bool]) -> MultipleChoiceOutput {
+    let mut out = mc_output(&["a", "b", "c", "d"], 0);
+    for (option, correct) in out.options.iter_mut().zip(marked) {
+        option.correct = *correct;
+    }
+    out
+}
+
+// @adr-0004-d10
+#[test]
+fn exactly_one_option_is_marked_correct() {
+    let mc = |m: &[bool]| {
+        output::validate_multiple_choice(marked(m), &brief(QuestionFormat::MultipleChoice))
+    };
+    let one = mc(&[false, false, false, true]).unwrap();
+    assert_eq!(one.correct, 3);
+    assert_eq!(one.options[one.correct], "d");
+    let none = mc(&[false, false, false, false]).unwrap_err();
+    assert!(none.contains("no option is marked correct"), "{none}");
+    let two = mc(&[false, true, false, true]).unwrap_err();
+    assert!(two.contains("2 options are marked correct"), "{two}");
+}
+
+// @adr-0004-d10
+#[test]
+fn a_reply_with_a_correct_index_instead_of_marks_is_rejected() {
+    // The old form: an index beside the options. Each option must say
+    // whether it is correct, so this doesn't parse, and is asked again.
+    let old = r#"{"prompt":"Q?","options":[
+        {"text":"a","why":"x"},{"text":"b","why":"y"},{"text":"c","why":"z"}],"correct":1}"#;
+    assert!(output::parse_json::<MultipleChoiceOutput>(old).is_err());
+    // The schema asks for the mark on every option, and for no index.
+    let schema = serde_json::to_value(schemars::schema_for!(MultipleChoiceOutput)).unwrap();
+    assert!(schema["properties"].get("correct").is_none(), "{schema}");
+    let option = &schema["$defs"]["RawOption"];
+    assert_eq!(option["properties"]["correct"]["type"], "boolean");
+    assert!(
+        option["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("correct")),
+        "{option}"
+    );
+}
+
+// @adr-0004-d10
+#[tokio::test]
+async fn the_marked_option_stays_correct_with_its_own_reason() {
+    // As in PR #32: the fourth option is right, and its reason says so.
+    let reply = serde_json::json!({
+        "prompt": "Which line is the bug?",
+        "options": [
+            {"text": "The wildcard arm should return Open.", "correct": false,
+             "why": "Only experts get open questions."},
+            {"text": "The match is not exhaustive.", "correct": false,
+             "why": "The wildcard covers every other level."},
+            {"text": "The session alternates formats.", "correct": false,
+             "why": "The level and the flag don't change within a session."},
+            {"text": "The Expert arm ignores the flag.", "correct": true,
+             "why": "Open questions are opt-in, so the Expert arm needs a guard on the flag."},
+        ],
+    })
+    .to_string();
+    let core = Canned::new(&[&reply, CONSISTENT]);
+    let q = core
+        .write_question(
+            &question_mark_concept(),
+            &brief(QuestionFormat::MultipleChoice),
+            &NoCodebase,
+        )
+        .await
+        .unwrap();
+    let QuestionBody::MultipleChoice {
+        options,
+        correct,
+        reasons,
+        ..
+    } = &q.body
+    else {
+        panic!("not multiple choice: {q:?}");
+    };
+    // Whatever the shuffle did, the correct option is the marked one, and
+    // the explanation is its own reason.
+    assert_eq!(options[*correct], "The Expert arm ignores the flag.");
+    assert_eq!(
+        reasons[*correct],
+        "Open questions are opt-in, so the Expert arm needs a guard on the flag."
+    );
+    assert_eq!(q.explanation, reasons[*correct]);
 }
