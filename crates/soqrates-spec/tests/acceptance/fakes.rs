@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -940,6 +941,29 @@ pub struct Faults {
     pub allowed: usize,
     /// Writes that fail after those; `usize::MAX` for all of them.
     pub failing: usize,
+    /// Makes the first two conditional profile saves collide (ADR-0002 D6).
+    pub meet: Option<Arc<Meeting>>,
+}
+
+/// Holds back the first of two conditional profile saves until the second
+/// arrives, so that both were loaded before either is saved: two sessions
+/// of one learner graded at the same moment.
+#[derive(Debug, Default)]
+pub struct Meeting {
+    arrived: AtomicUsize,
+    /// How many saves the store refused because the profile had changed.
+    pub refused: AtomicUsize,
+}
+
+impl Meeting {
+    async fn arrive(&self) {
+        if self.arrived.fetch_add(1, Ordering::SeqCst) >= 2 {
+            return;
+        }
+        while self.arrived.load(Ordering::SeqCst) < 2 {
+            tokio::task::yield_now().await;
+        }
+    }
 }
 
 impl AnyStore {
@@ -1050,6 +1074,22 @@ impl StateStore for AnyStore {
     }
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
         write!(self, save_profile(profile))
+    }
+    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
+        // The same write to the learner as `save_profile`, for faults.
+        self.fault("save_profile")?;
+        let meet = match self {
+            AnyStore::Faulty(_, faults) => faults.lock().unwrap().meet.clone(),
+            _ => None,
+        };
+        if let Some(meet) = &meet {
+            meet.arrive().await;
+        }
+        let saved = delegate!(self, save_profile_if_current(profile))?;
+        if let (false, Some(meet)) = (saved, &meet) {
+            meet.refused.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(saved)
     }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
         write!(self, delete_learner(learner))

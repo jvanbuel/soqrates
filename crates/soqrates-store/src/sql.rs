@@ -303,6 +303,50 @@ impl StateStore for SqlStore {
         )
         .await
     }
+    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
+        // Compare and swap, as one statement: insert only if there is no
+        // row, or replace the document only if it is still the one whose
+        // version was checked. No schema change: the version is in the
+        // document.
+        let key = profile.learner().0.clone();
+        let stored: Option<String> =
+            sqlx::query("SELECT doc FROM soqrates_profiles WHERE learner = $1")
+                .bind(key.clone())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(db)?
+                .map(|row| row.try_get(0).map_err(db))
+                .transpose()?;
+        let next = to_json(&profile.clone().with_version(profile.version() + 1))?;
+        let changed = match stored {
+            None if profile.version() != 0 => return Ok(false),
+            None => {
+                sqlx::query(
+                    "INSERT INTO soqrates_profiles (learner, doc) VALUES ($1, $2)
+                     ON CONFLICT (learner) DO NOTHING",
+                )
+                .bind(key)
+                .bind(next)
+                .execute(&self.pool)
+                .await
+            }
+            Some(doc) => {
+                let current: LearnerProfile = from_json("profile", &key, &doc)?;
+                if current.version() != profile.version() {
+                    return Ok(false);
+                }
+                sqlx::query("UPDATE soqrates_profiles SET doc = $1 WHERE learner = $2 AND doc = $3")
+                    .bind(next)
+                    .bind(key)
+                    .bind(doc)
+                    .execute(&self.pool)
+                    .await
+            }
+        }
+        .map_err(db)?
+        .rows_affected();
+        Ok(changed == 1)
+    }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
         // All or nothing (ADR-0003 D6, ADR-0009 D5).
         let mut tx = self.pool.begin().await.map_err(db)?;
