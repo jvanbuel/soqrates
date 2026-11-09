@@ -493,6 +493,9 @@ pub struct ScmState {
     /// What the author saw happen on the pull request, in order: check
     /// summaries, reactions and results (ADR-0004 D9).
     pub timeline: Vec<String>,
+    /// The question comment of each session as last edited: the answers in
+    /// its boxes and answer fields (ADR-0004 D3, D11).
+    pub question_comments: HashMap<SessionKey, FakeQuestionComment>,
 }
 
 /// A comment on a pull request, posted after the question comment of
@@ -506,11 +509,23 @@ pub struct FakeComment {
     pub body: String,
 }
 
+/// A question comment as someone edited it: the options ticked and the
+/// open answers typed into its answer fields, whether "Grade my answers" is
+/// ticked, and who edited it last (ADR-0004 D3, D11).
+#[derive(Debug, Clone)]
+pub struct FakeQuestionComment {
+    pub answers: Vec<Answer>,
+    pub done: bool,
+    pub editor: AuthorId,
+}
+
 /// What submitted a session's answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Submitter {
-    /// Answers given with [`FakeScm::reply`], e.g. by ticking boxes.
+    /// Answers given with [`FakeScm::reply`].
     Reply,
+    /// The question comment, by ticking "Grade my answers" (ADR-0004 D11).
+    QuestionComment,
     /// The comment with this id.
     Comment(u64),
 }
@@ -639,6 +654,27 @@ impl FakeScm {
             body: body.to_string(),
         });
         id
+    }
+
+    /// Edit the question comment of `session` as `by`: tick options and
+    /// type open answers into the answer fields (`answers`), and tick
+    /// "Grade my answers" if `done` (ADR-0004 D11). `by` becomes its last
+    /// editor.
+    pub fn edit_question_comment(
+        &self,
+        session: &SessionKey,
+        by: &AuthorId,
+        answers: Vec<Answer>,
+        done: bool,
+    ) {
+        self.state.lock().unwrap().question_comments.insert(
+            session.clone(),
+            FakeQuestionComment {
+                answers,
+                done,
+                editor: by.clone(),
+            },
+        );
     }
 
     /// Replace the body of the comment `id`, as an edit does.
@@ -799,10 +835,12 @@ impl ScmProvider for FakeScm {
         Ok(done)
     }
 
-    /// The structured answers given with [`FakeScm::reply`], else the
-    /// latest answer comment of the author, read as the GitHub adapter
-    /// reads it (ADR-0004 D8). Also hints at the author's near-miss
-    /// commands, once each.
+    /// The structured answers given with [`FakeScm::reply`], else those of
+    /// the latest answer comment of the author, read as the GitHub adapter
+    /// reads it (ADR-0004 D8), and of the question comment, if the author
+    /// edited it last (D3, D11). Per question, the answer comment wins. They
+    /// are submitted by the answer comment or by "Grade my answers". Also
+    /// hints at the author's near-miss commands, once each.
     async fn collect_answers(
         &self,
         pr: &PrRef,
@@ -839,13 +877,29 @@ impl ScmProvider for FakeScm {
                     parse_answers(&c.body, session.questions(), slug.as_deref()),
                 )
             });
-        Ok(match found {
-            Some((id, Some(answers))) => Some(Submission {
-                answers,
-                receipt: Submitter::Comment(id),
-            }),
+        let from_comment = match found {
+            Some((id, Some(answers))) => Some((id, answers)),
             _ => None,
-        })
+        };
+        let in_place = state
+            .question_comments
+            .get(session.key())
+            .filter(|q| q.editor == *session.author())
+            .cloned();
+        let done = in_place.as_ref().is_some_and(|q| q.done);
+        let (receipt, mut answers) = match from_comment {
+            Some((id, answers)) => (Submitter::Comment(id), answers),
+            None if done => (Submitter::QuestionComment, Vec::new()),
+            None => return Ok(None),
+        };
+        for a in in_place.map(|q| q.answers).unwrap_or_default() {
+            if !answers.iter().any(|b| b.question == a.question) {
+                answers.push(a);
+            }
+        }
+        let position = |a: &Answer| session.questions().iter().position(|q| q.id == a.question);
+        answers.sort_by_key(position);
+        Ok(Some(Submission { answers, receipt }))
     }
 
     async fn acknowledge_answers(
