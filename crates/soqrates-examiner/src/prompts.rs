@@ -125,12 +125,13 @@ must be answerable from the prompt and that code alone.
 reflect real misconceptions, not jokes. Do not use 'all of the above' or 'none of the above'. \
 Each option has:
   - text: the option as shown. Do not prefix it with a letter or number.
+  - correct: true for the one correct option, false for every other. Decide it from the \
+option's content: it must agree with its `why`.
   - why: for the correct option, 1 to 3 sentences on why it is correct; this is the \
 question's explanation, shown to every author after grading. For a wrong option, 1 or 2 \
 sentences on why it is wrong: the misconception behind it and what would go wrong. It is \
 shown only to an author who picked it, right before the explanation, so do not repeat the \
 explanation. Plain text only: no markdown headings, lists or HTML.
-- correct: the 0-based index of the correct option in `options`.
 - Each `why` is about its own option, and may contrast it with the other options listed. Do \
 not argue for or against an answer the question does not offer: the author never saw it.
 - The options are shuffled before they are shown, so letters, numbers and positions change. \
