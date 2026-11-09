@@ -1,0 +1,19 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 33
+  },
+  "rounds": [
+    {
+      "head": "0cce57c02ce712df270160116dff092628eb5bc6",
+      "session": "jvanbuel/soqrates#33@0cce57c02ce712df270160116dff092628eb5bc6",
+      "concepts": [
+        "project.examiner.correct-option-marking",
+        "rust.pattern-matching.slice-patterns",
+        "rust.serde.schema-and-required-fields",
+        "project.examiner.llm-output-validation-retry"
+      ],
+      "at": "2026-11-09T06:42:07.091561659Z"
+    }
+  ]
+}

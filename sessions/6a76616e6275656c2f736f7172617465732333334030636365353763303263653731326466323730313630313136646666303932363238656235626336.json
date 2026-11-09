@@ -1,0 +1,123 @@
+{
+  "key": "jvanbuel/soqrates#33@0cce57c02ce712df270160116dff092628eb5bc6",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "project.examiner.correct-option-marking/mc",
+      "concept": "project.examiner.correct-option-marking",
+      "scope": "Project",
+      "kind": "PredictOutcome",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This helper mirrors how a reply's correct option is derived from marks on each option, rather than from a separate index. What does the program print for the given flags, and why?",
+          "code": {
+            "language": "rust",
+            "text": "fn correct_index(flags: &[bool]) -> Result<usize, String> {\n    let marked: Vec<usize> = flags\n        .iter()\n        .enumerate()\n        .filter(|(_, c)| **c)\n        .map(|(i, _)| i)\n        .collect();\n    match marked.as_slice() {\n        [one] => Ok(*one),\n        [] => Err(\"none marked\".to_owned()),\n        many => Err(format!(\"{} marked\", many.len())),\n    }\n}\n\nfn main() { println!(\"{:?}\", correct_index(&[false, true, true, false])); }",
+            "origin": "General"
+          },
+          "options": [
+            "Ok(2), because the last option marked correct overwrites earlier marks",
+            "Ok(1), because the first option marked correct wins",
+            "Err(\"2 marked\"), because two positions are collected and only a single mark is accepted",
+            "Err(\"none marked\"), because the filter only keeps the last true flag"
+          ],
+          "correct": 2,
+          "reasons": [
+            "Nothing is overwritten: all marked positions are collected into a list first. Because the list has two entries, the single-element pattern does not match.",
+            "The match never picks the first of several marks. Silently choosing one would let an ambiguous reply be graded against a possibly wrong option, which is the kind of mismatch this validation prevents.",
+            "The filter collects positions 1 and 2, so the slice has two elements. The single-element pattern and the empty pattern both fail, and the catch-all arm reports the count. A reply with several correct marks is rejected rather than guessed at.",
+            "The filter keeps every true flag, not just the last, so the list is not empty. The empty-list arm only runs when no option is marked."
+          ]
+        }
+      },
+      "explanation": "The filter collects positions 1 and 2, so the slice has two elements. The single-element pattern and the empty pattern both fail, and the catch-all arm reports the count. A reply with several correct marks is rejected rather than guessed at."
+    },
+    {
+      "id": "rust.pattern-matching.slice-patterns/mc",
+      "concept": "rust.pattern-matching.slice-patterns",
+      "scope": "General",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This function should return the index only when exactly one item is marked. It should return an error when none or several are marked. It has a subtle bug in one match arm. Which line is flawed, and why?",
+          "code": {
+            "language": "rust",
+            "text": "fn pick(marked: Vec<usize>) -> Result<usize, String> {\n    match marked.as_slice() {\n        [one, ..] => Ok(*one),\n        [] => Err(\"none marked\".to_owned()),\n        many => Err(format!(\"{} marked\", many.len())),\n    }\n}",
+            "origin": "General"
+          },
+          "options": [
+            "The `many` binding takes ownership of the vector, so `marked` can't be used after the match.",
+            "The `[]` arm is wrong because an empty slice cannot be matched with a slice pattern, so it must be tested with `is_empty()` first.",
+            "The `[one, ..]` pattern matches any slice with at least one element, so several marked items silently succeed with the first one and the arm for many items can never run.",
+            "Binding `one` by reference makes `*one` a move out of the borrowed slice, which fails to compile for `usize`."
+          ],
+          "correct": 2,
+          "reasons": [
+            "The scrutinee is a borrowed slice from `as_slice()`, so `many` is just a `&[usize]` and nothing is moved.",
+            "`[]` is a valid slice pattern that matches exactly the empty slice. The problem is elsewhere, in an arm that is too greedy.",
+            "The `..` rest pattern absorbs any number of extra elements. Exactly-one needs the bare `[one]` pattern, and then the fallback arm handles the several-items case.",
+            "Slice patterns on a `&[usize]` bind by reference through default binding modes, and dereferencing a `usize` copies it. This compiles fine."
+          ]
+        }
+      },
+      "explanation": "The `..` rest pattern absorbs any number of extra elements. Exactly-one needs the bare `[one]` pattern, and then the fallback arm handles the several-items case."
+    },
+    {
+      "id": "rust.serde.schema-and-required-fields/mc",
+      "concept": "rust.serde.schema-and-required-fields",
+      "scope": "General",
+      "kind": "Scenario",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A struct derives both `serde::Deserialize` and `schemars::JsonSchema`, with fields `text: String`, `correct: bool` and `why: String`, and no serde attributes. A model reply from an older prompt format gives each option as `text` and `why`, and names the right answer by an index elsewhere in the reply, so no option has a `correct` key. What happens when this reply is parsed into the struct, and what does the generated schema say?",
+          "options": [
+            "Deserialization succeeds and `correct` is set to `false`, because `bool` implements `Default` and serde falls back to it for missing fields.",
+            "Deserialization succeeds and unknown keys are rejected, but the missing `correct` is silently ignored because the schema marks it optional.",
+            "Deserialization fails with a missing-field error for `correct`, because a plain `bool` field with no `#[serde(default)]` is required, and the derived schema also lists it as required.",
+            "Deserialization fails only if the extra index key is present, because serde rejects unknown fields by default. A reply with only `text` and `why` parses fine."
+          ],
+          "correct": 2,
+          "reasons": [
+            "Serde does not use `Default` for missing fields unless `#[serde(default)]` is present. Only `Option` fields are treated as optional by default, so the parse fails.",
+            "The schema does not mark it optional. Serde and schemars both treat a field with no default as required, and the missing field is an error.",
+            "Without a serde default (and not being an `Option`), serde treats the field as required. schemars mirrors this by putting `correct` in the schema's `required` list, so the schema and the parser agree.",
+            "Serde ignores unknown fields unless `deny_unknown_fields` is set. The failure comes from the missing required `correct` field, not from the extra key."
+          ]
+        }
+      },
+      "explanation": "Without a serde default (and not being an `Option`), serde treats the field as required. schemars mirrors this by putting `correct` in the schema's `required` list, so the schema and the parser agree."
+    },
+    {
+      "id": "project.examiner.llm-output-validation-retry/mc",
+      "concept": "project.examiner.llm-output-validation-retry",
+      "scope": "Project",
+      "kind": "ChooseTheFix",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This validator checks a multiple-choice reply from an LLM. Each option carries a `correct` flag, and the model is told to mark exactly one. Model output is untrusted, and a reply that fails validation is asked for again with the problem explained. The flagged line is flawed. Which replacement makes the validator handle a reply with zero or several options marked correct, in a way that works with that retry?",
+          "code": {
+            "language": "rust",
+            "text": "fn validate(output: Output) -> Result<Question, String> {\n    if !(3..=5).contains(&output.options.len()) {\n        return Err(\"there must be 3 to 5 options\".to_owned());\n    }\n    let correct = output.options.iter().position(|o| o.correct).unwrap_or(0);\n    Ok(Question {\n        options: output.options,\n        correct,\n    })\n}",
+            "origin": "General"
+          },
+          "options": [
+            "let correct = output.options.iter().rposition(|o| o.correct).unwrap_or(0);",
+            "let correct = output.options.iter().position(|o| o.correct).ok_or(\"no option is marked correct\")?;",
+            "let marked: Vec<usize> = output.options.iter().enumerate().filter(|(_, o)| o.correct).map(|(i, _)| i).collect();\nlet [correct] = marked[..] else {\n    return Err(format!(\"{} options are marked correct; mark exactly one\", marked.len()));\n};",
+            "let correct = output.options.iter().position(|o| o.correct).expect(\"one option is marked correct\");"
+          ],
+          "options_language": "rust",
+          "correct": 2,
+          "reasons": [
+            "This only changes which marked option wins. A reply with no mark or several marks is still accepted and guessed at, instead of being rejected and asked for again.",
+            "This turns the missing mark into an Err, which is better. But with two or more options marked it still picks the first one silently, so an ambiguous reply passes as valid and the answer key may be wrong.",
+            "It collects every marked option and returns an Err with a message unless exactly one is marked. Both zero marks and several marks are rejected, and the message can be sent back to the model so it asks again.",
+            "This panics when no option is marked, which crashes the program instead of returning an Err that triggers a retry. It also still accepts several marks silently, because it takes the first."
+          ]
+        }
+      },
+      "explanation": "It collects every marked option and returns an Err with a message unless exactly one is marked. Both zero marks and several marks are rejected, and the message can be sent back to the model so it asks again."
+    }
+  ],
+  "created_at": "2026-11-09T06:42:07.091561659Z"
+}
