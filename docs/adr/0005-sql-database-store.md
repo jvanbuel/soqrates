@@ -82,6 +82,8 @@ in a file. The suite runs against PostgreSQL when
 `SOQRATES_TEST_POSTGRES_URL` points at a database it may empty. Without it,
 those tests pass without doing anything, so the default test run stays
 hermetic (ADR-0001 D12). `soqrates-spec` builds the `sqlite` backend only.
+`compose.yaml` at the repository root starts a throwaway PostgreSQL for
+these tests (`docker compose up -d --wait`); its header gives the URL.
 
 ## Consequences
 
