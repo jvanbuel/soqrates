@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::Result;
 use crate::app::engine::{ProfileLocation, SessionOutcome, Soqrates};
-use crate::app::ports::{Clock, Examiner, ScmProvider, StateStore};
+use crate::app::ports::{Clock, CodeSource, Examiner, NoCodebase, ScmProvider, StateStore};
 use crate::assessment::Question;
 use crate::delivery::{CheckStatus, Mode, PrRef, PrRounds, PullRequest, Round, Session};
 use crate::ids::{ConceptId, SessionKey};
@@ -20,6 +20,18 @@ pub fn session_key(pr: &PullRequest) -> SessionKey {
 /// The start of every session key of `pr`, whatever its head.
 fn key_prefix(pr: &PrRef) -> String {
     format!("{}#{}@", pr.repo, pr.number)
+}
+
+/// The codebase the session `key` of `pr` was asked about: the head commit
+/// in its key, even after a newer push (ADR-0008 D4). `fallback` for a key
+/// of another form.
+fn codebase_of<K: CodeSource>(code: &K, pr: &PrRef, key: &SessionKey, fallback: &str) -> K::Code {
+    let revision = key
+        .0
+        .strip_prefix(&key_prefix(pr))
+        .filter(|head| !head.is_empty())
+        .unwrap_or(fallback);
+    code.at(revision)
 }
 
 /// One run of the CI check. Call it on PR open/push and when the author
@@ -42,10 +54,14 @@ fn key_prefix(pr: &PrRef) -> String {
 /// - Answers present: grade them and set `Success`, or `Failure` (`Neutral`
 ///   in `Advisory` mode).
 ///
+/// The examiner reads the pull request's code from `code`, at the commit
+/// each session was asked about (ADR-0008 D4).
+///
 /// Returns the status that was set.
-pub async fn run_check<S, E, C, P>(
+pub async fn run_check<S, E, C, P, K>(
     app: &Soqrates<S, E, C>,
     scm: &P,
+    code: &K,
     pr: &PrRef,
 ) -> Result<CheckStatus>
 where
@@ -53,6 +69,7 @@ where
     E: Examiner,
     C: Clock,
     P: ScmProvider,
+    K: CodeSource,
 {
     let pull = scm.pull_request(pr).await?;
     let own_key = session_key(&pull);
@@ -69,18 +86,19 @@ where
         // A run posted the questions but failed to record the round.
         record_round(app, &mut rounds, &pull, &session).await?;
     }
-    if let Some(status) = report(app, scm, pr, &pull, &key).await? {
+    if let Some(status) = report(app, scm, code, pr, &pull, &key).await? {
         return Ok(status);
     }
-    start_round(app, scm, pr, &pull, rounds).await
+    start_round(app, scm, code, pr, &pull, rounds).await
 }
 
 /// Report on the session `key` if it exists: its result if it was graded,
 /// otherwise grade the answers or keep waiting for them. `None` when there
 /// is no such session.
-async fn report<S, E, C, P>(
+async fn report<S, E, C, P, K>(
     app: &Soqrates<S, E, C>,
     scm: &P,
+    code: &K,
     pr: &PrRef,
     pull: &PullRequest,
     key: &SessionKey,
@@ -90,6 +108,7 @@ where
     E: Examiner,
     C: Clock,
     P: ScmProvider,
+    K: CodeSource,
 {
     // Already graded: report the result again, ask nothing.
     if let Some(status) = report_graded(app, scm, pr, key).await? {
@@ -111,7 +130,7 @@ where
     // comments, or to grade an empty session, is made good by the next one.
     supersede_earlier(app, scm, pr, &session).await?;
     if session.questions().is_empty() {
-        let outcome = app.submit(key, &[]).await?;
+        let outcome = app.submit(key, &[], &NoCodebase).await?;
         return finish(app, scm, pr, &outcome).await.map(Some);
     }
     scm.hint_commands(pr, &session).await?;
@@ -129,7 +148,8 @@ where
             // (ADR-0004 D9).
             scm.acknowledge_answers(pr, &session).await?;
             scm.set_check(pr, CheckStatus::Pending, GRADING).await?;
-            let outcome = app.submit(key, &answers).await?;
+            let codebase = codebase_of(code, pr, key, &pull.head_sha);
+            let outcome = app.submit(key, &answers, &codebase).await?;
             scm.post_results(pr, &session, &outcome).await?;
             finish(app, scm, pr, &outcome).await.map(Some)
         }
@@ -168,9 +188,10 @@ where
 }
 
 /// Ask a new round for the head of `pull` (ADR-0002 D9).
-async fn start_round<S, E, C, P>(
+async fn start_round<S, E, C, P, K>(
     app: &Soqrates<S, E, C>,
     scm: &P,
+    code: &K,
     pr: &PrRef,
     pull: &PullRequest,
     mut rounds: PrRounds,
@@ -180,6 +201,7 @@ where
     E: Examiner,
     C: Clock,
     P: ScmProvider,
+    K: CodeSource,
 {
     let key = session_key(pull);
     // A round for this head whose session is gone, e.g. because posting it
@@ -187,7 +209,7 @@ where
     rounds.forget(&pull.head_sha);
     // Answers submitted before the push count: grade them first, so the
     // latest round is graded rather than carried (ADR-0002 D9).
-    grade_submitted(app, scm, pr, &rounds).await?;
+    grade_submitted(app, scm, code, pr, &rounds).await?;
     // From the latest round that asked its own questions: a round that
     // carried an earlier session forward asked nothing about its head, e.g.
     // because carried questions filled the budget (ADR-0002 D10).
@@ -218,8 +240,9 @@ where
         None => Vec::new(),
     };
     let skip = already_asked(app, &rounds, &carried).await?;
+    let codebase = codebase_of(code, pr, &key, &pull.head_sha);
     let questions = app
-        .compose_questions(&pull.author, &diff, &skip, &carried)
+        .compose_questions(&pull.author, &diff, &skip, &carried, &codebase)
         .await?;
 
     // Nothing new: the latest round stands, rather than reposting the same
@@ -228,7 +251,7 @@ where
         && let Some(prev) = rounds.latest()
     {
         let standing = prev.session.clone();
-        if let Some(status) = report(app, scm, pr, pull, &standing).await? {
+        if let Some(status) = report(app, scm, code, pr, pull, &standing).await? {
             // Nothing new: the latest round still stands (ADR-0002 D9).
             rounds.record(Round {
                 head: pull.head_sha.clone(),
@@ -255,7 +278,7 @@ where
     if session.questions().is_empty() {
         // Nothing to ask: grade the empty session right away.
         supersede_earlier(app, scm, pr, &session).await?;
-        let outcome = app.submit(&key, &[]).await?;
+        let outcome = app.submit(&key, &[], &NoCodebase).await?;
         return finish(app, scm, pr, &outcome).await;
     }
     let summary = format!(
@@ -273,9 +296,10 @@ where
 /// (ADR-0002 D9, ADR-0004 D7). Its results are posted as for a run on its
 /// own head, but no check is set: the new head's check is about its own
 /// round. A session graded already is left alone (ADR-0002 D6).
-async fn grade_submitted<S, E, C, P>(
+async fn grade_submitted<S, E, C, P, K>(
     app: &Soqrates<S, E, C>,
     scm: &P,
+    code: &K,
     pr: &PrRef,
     rounds: &PrRounds,
 ) -> Result<()>
@@ -284,6 +308,7 @@ where
     E: Examiner,
     C: Clock,
     P: ScmProvider,
+    K: CodeSource,
 {
     let Some(prev) = rounds.latest() else {
         return Ok(());
@@ -300,7 +325,8 @@ where
     // Acknowledged like any pickup (ADR-0004 D9), but the status is left
     // to the new head's round.
     scm.acknowledge_answers(pr, &session).await?;
-    let outcome = app.submit(session.key(), &answers).await?;
+    let codebase = codebase_of(code, pr, session.key(), &prev.head);
+    let outcome = app.submit(session.key(), &answers, &codebase).await?;
     scm.post_results(pr, &session, &outcome).await
 }
 

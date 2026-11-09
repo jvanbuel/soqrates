@@ -32,7 +32,7 @@ on:
     types: [created, edited]
 
 permissions:
-  contents: write       # push the soqrates-state branch (learner state)
+  contents: write       # push the soqrates-state branch; check out the PR's code
   pull-requests: write  # read the pull request and its diff
   issues: write         # post the questions and results as comments
   statuses: write       # set the `soqrates` commit status
@@ -85,6 +85,13 @@ commit SHA if you prefer.
 
 - **The pull request diff** goes to the model provider you choose (Anthropic
   by default), which writes and grades the questions.
+- **Code of the pull request** that the examiner chooses to read goes
+  there too: files, grep results, and git log and blame. The action checks
+  out the pull request's head into `.soqrates/code` for this, keeping no
+  credentials in it, and never builds or runs anything from it. The examiner
+  reads only what git holds at the commit asked about, at most 100 KB per
+  examiner step. Set `read-code: false` to send only the diff
+  ([ADR-0008](adr/0008-examiner-reads-the-codebase.md)).
 - **Learner state** is kept on the `soqrates-state` branch of your
   repository: one JSON document per learner profile, identity link and
   pending session. **Anyone who can read the repository can read that
@@ -104,6 +111,8 @@ commit SHA if you prefer.
 | `mode` | `advisory` | `advisory`: a failed session reports success with a note, so it never blocks a merge. `blocking`: a failed session fails the check. |
 | `database-url` | | Keep learner state in a database instead of the state branch, e.g. `postgres://…`. From a secret. It must persist between jobs, so `sqlite:` URLs are refused on GitHub-hosted runners. |
 | `state-branch` | `soqrates-state` | The branch holding learner state when no `database-url` is given. |
+| `read-code` | `true` | Let the examiner read the pull request's code, from a checkout of its head that is only read. `false` to send only the diff. |
+| `code-history` | `100` | Commits of history the checkout fetches, for git log and blame. `0` for all. |
 | `github-token` | `${{ github.token }}` | Reads the pull request and compares its pushes, posts comments and the status, and pushes the state branch. |
 | `app-id`, `app-private-key` | | Post as your own GitHub App instead of github-actions[bot]; see [Posting as your own app](#posting-as-your-own-app). |
 | `app-slug` | the app's slug | Authors may answer with `@<app-slug> answer`. Taken from the app token when `app-id` is set; set it only to override that. |

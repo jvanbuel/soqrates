@@ -1,6 +1,6 @@
 [package]
 name = "soqrates-examiner"
-description = "Examiner adapter on top of Rig (ADR-0001 D3)."
+description = "Examiner adapter on top of Rig, reading the codebase with a Rig agent (ADR-0001 D3, ADR-0008)."
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -8,9 +8,14 @@ license.workspace = true
 [dependencies]
 soqrates-core.workspace = true
 rig-core = { version = "0.46", features = ["reqwest"] }
+# The agent runtime that reads the codebase (ADR-0008 D2).
+rig-agent = { version = "0.46", default-features = false }
+futures = "0.3"
+globset = "0.4"
 schemars = "1"
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+rig-core = { version = "0.46", features = ["reqwest", "test-utils"] }

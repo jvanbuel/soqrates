@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cucumber::World;
-use soqrates_core::ports::StateStore;
+use soqrates_core::ports::{NoCodebase, StateStore};
 use soqrates_core::{
     AuthorId, CheckStatus, Config, Diff, HookDecision, HookKind, LearnerEvent, LearnerProfile,
     Level, PrRef, Question, Session, SessionKey, SessionOutcome, SessionResult, Soqrates,
@@ -219,7 +219,7 @@ impl SpecWorld {
         let key = self.next_local_key(author);
         let session = self
             .app
-            .start_session(key, author, diff)
+            .start_session(key, author, diff, &NoCodebase)
             .await
             .expect("start_session");
         self.session = Some(session.clone());
@@ -238,7 +238,7 @@ impl SpecWorld {
             .collect();
         let outcome = self
             .app
-            .submit(session.key(), &answers)
+            .submit(session.key(), &answers, &NoCodebase)
             .await
             .expect("submit");
         self.outcome = Some(outcome.clone());

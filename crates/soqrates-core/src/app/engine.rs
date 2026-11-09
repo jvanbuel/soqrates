@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::app::events::DomainEvent;
-use crate::app::ports::{Clock, Examiner, StateStore};
+use crate::app::ports::{Clock, Codebase, Examiner, StateStore};
 use crate::assessment::{
     Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody, QuestionBrief,
     QuestionKind, Weight,
@@ -296,9 +296,10 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         key: SessionKey,
         author: &AuthorId,
         diff: &Diff,
+        code: &impl Codebase,
     ) -> Result<Session> {
         let questions = self
-            .compose_questions(author, diff, &BTreeSet::new(), &[])
+            .compose_questions(author, diff, &BTreeSet::new(), &[], code)
             .await?;
         self.open_session(key, author, questions, 0).await
     }
@@ -308,13 +309,15 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// (D9), as written; then due reviews and new concepts, sharing the
     /// remaining slots. New concepts in `skip`, or that the author knows and
     /// isn't due to review, are left out, as are incidental ones; concepts
-    /// in `skip` whose review is due are still asked. Persists nothing.
+    /// in `skip` whose review is due are still asked. The examiner may read
+    /// `code`, the codebase of the change (ADR-0008 D2). Persists nothing.
     pub async fn compose_questions(
         &self,
         author: &AuthorId,
         diff: &Diff,
         skip: &BTreeSet<ConceptId>,
         carried: &[Question],
+        code: &impl Codebase,
     ) -> Result<Vec<Question>> {
         self.recover().await?;
         let mut questions = carried.to_vec();
@@ -346,7 +349,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             .collect();
         let known = self.known_concepts(&place).await?;
         let mut new: Vec<Concept> = Vec::new();
-        for c in self.examiner.extract_concepts(diff).await? {
+        for c in self.examiner.extract_concepts(diff, code).await? {
             let asked = taken(&c.id)
                 || reviews.iter().any(|k| k.id == c.id)
                 || new.iter().any(|k| k.id == c.id);
@@ -377,7 +380,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 &policy::kinds_for(level, format, &asked),
                 diff.hunks_at(&concept.locations),
             );
-            let mut q = self.examiner.write_question(&concept, &brief).await?;
+            let mut q = self.examiner.write_question(&concept, &brief, code).await?;
             brief
                 .check(&q)
                 .map_err(|why| Error::Port(format!("examiner: {why}")))?;
@@ -537,11 +540,19 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// complete end state are one atomic step, then the journal is applied.
     /// If applying fails, the journal stays and a later operation finishes
     /// it.
-    pub async fn submit(&self, key: &SessionKey, answers: &[Answer]) -> Result<SessionOutcome> {
+    ///
+    /// The grader may read `code`, the codebase the session was asked
+    /// about (ADR-0008 D4).
+    pub async fn submit(
+        &self,
+        key: &SessionKey,
+        answers: &[Answer],
+        code: &impl Codebase,
+    ) -> Result<SessionOutcome> {
         self.recover().await?;
         let not_found = || Error::NotFound(format!("session {:?}", key.0));
         let (session, session_store) = self.find_session(key).await?.ok_or_else(not_found)?;
-        let (journal, outcome) = self.grade(session, answers).await?;
+        let (journal, outcome) = self.grade(session, answers, code).await?;
         // Of several concurrent submissions, exactly one claims the session.
         if !session_store.begin_grading(&journal).await? {
             return Err(not_found());
@@ -556,6 +567,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         &self,
         session: Session,
         answers: &[Answer],
+        code: &impl Codebase,
     ) -> Result<(GradingJournal, SessionOutcome)> {
         let now = self.clock.now();
         session.validate_answers(answers)?;
@@ -564,7 +576,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let mut feedback: Vec<(QuestionId, String)> = Vec::new();
         for q in session.questions() {
             if let Some(a) = answers.iter().find(|a| a.question == q.id) {
-                let grading = self.examiner.grade(q, a).await?;
+                let grading = self.examiner.grade(q, a, code).await?;
                 grades.push((q.id.clone(), grading.grade));
                 feedback.push((q.id.clone(), grading.feedback));
             }

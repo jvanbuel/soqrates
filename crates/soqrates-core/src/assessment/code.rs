@@ -5,6 +5,28 @@ use serde::{Deserialize, Serialize};
 use super::{Diff, Question, QuestionBody, QuestionFormat};
 use crate::assessment::ConceptScope;
 
+/// `raw` as a path in a codebase (ADR-0008 D1): relative to the repository
+/// root and `/`-separated, without `.` segments or trailing slashes. `""`
+/// is the root. `None` for anything that could leave the repository or
+/// isn't a plain path: absolute paths, `..`, backslashes, control
+/// characters, and `:` (a drive, or a revision prefix such as `HEAD:`).
+pub fn code_path(raw: &str) -> Option<String> {
+    let raw = raw.trim();
+    if raw.starts_with('/') || raw.contains('\\') || raw.chars().any(char::is_control) {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for part in raw.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => return None,
+            p if p.contains(':') => return None,
+            p => parts.push(p),
+        }
+    }
+    Some(parts.join("/"))
+}
+
 /// The most lines a code snippet, or a code option, may have (ADR-0007 D3).
 pub const MAX_SNIPPET_LINES: usize = 15;
 
@@ -419,6 +441,26 @@ pub fn language_of(path: &str) -> &'static str {
 mod tests {
     use super::*;
     use crate::ids::{ConceptId, QuestionId};
+
+    // @adr-0008-d1
+    #[test]
+    fn code_paths_stay_inside_the_repository() {
+        for (raw, path) in [
+            ("src/lib.rs", Some("src/lib.rs")),
+            ("./src//lib.rs/", Some("src/lib.rs")),
+            ("", Some("")),
+            (".", Some("")),
+            ("/etc/passwd", None),
+            ("../secrets", None),
+            ("src/../../x", None),
+            ("C:/x", None),
+            ("HEAD:src", None),
+            ("src\\lib.rs", None),
+            ("src/\nlib.rs", None),
+        ] {
+            assert_eq!(code_path(raw).as_deref(), path, "{raw:?}");
+        }
+    }
 
     fn loc(file: &str, start: u32, end: u32) -> CodeLocation {
         CodeLocation {

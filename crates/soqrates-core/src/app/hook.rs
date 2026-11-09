@@ -3,19 +3,22 @@
 
 use crate::Result;
 use crate::app::engine::Soqrates;
-use crate::app::ports::{Clock, Examiner, Prompter, StateStore};
+use crate::app::ports::{Clock, Codebase, Examiner, Prompter, StateStore};
 use crate::assessment::Diff;
 use crate::delivery::{HookDecision, HookKind, Mode};
 use crate::ids::{AuthorId, SessionKey};
 
 /// Quiz `author` about `diff` at the terminal and decide whether the commit
 /// or push may proceed. An empty diff asks nothing and allows.
+/// The examiner may read `code`, what is being committed or pushed
+/// (ADR-0008 D4).
 pub async fn run_hook<S, E, C, T>(
     app: &Soqrates<S, E, C>,
     prompter: &mut T,
     kind: HookKind,
     author: &AuthorId,
     diff: &Diff,
+    code: &impl Codebase,
 ) -> Result<HookDecision>
 where
     S: StateStore,
@@ -31,12 +34,12 @@ where
         author.0,
         app.clock.now().to_rfc3339()
     ));
-    let session = app.start_session(key.clone(), author, diff).await?;
+    let session = app.start_session(key.clone(), author, diff, code).await?;
     let mut answers = Vec::with_capacity(session.questions().len());
     for q in session.questions() {
         answers.push(prompter.ask(q)?);
     }
-    let outcome = app.submit(&key, &answers).await?;
+    let outcome = app.submit(&key, &answers, code).await?;
     prompter.report(&outcome);
     Ok(match (outcome.passed, app.config.mode) {
         (false, Mode::Blocking) => HookDecision::Block,

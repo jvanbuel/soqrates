@@ -85,7 +85,11 @@ async fn answers_as_follows(w: &mut SpecWorld, id: String, step: &Step) {
             FakeExaminer::answer(q, correct)
         })
         .collect();
-    let outcome = w.app.submit(session.key(), &answers).await.expect("submit");
+    let outcome = w
+        .app
+        .submit(session.key(), &answers, &soqrates_core::ports::NoCodebase)
+        .await
+        .expect("submit");
     w.outcome = Some(outcome);
 }
 

@@ -4,7 +4,7 @@
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 use soqrates_core::ci::{run_check, session_key};
-use soqrates_core::ports::StateStore;
+use soqrates_core::ports::{NoCodebase, StateStore};
 use soqrates_core::{ConceptId, PrRef, PullRequest, Session};
 
 use super::{answer_table, author, check_status, concepts, correctness, quoted};
@@ -50,7 +50,9 @@ fn pull_request(
 #[when(regex = r"^the Soqrates check (?:has run|runs)$")]
 async fn check_runs(w: &mut SpecWorld) {
     let pr = w.current_pr().clone();
-    let status = run_check(&w.app, &w.scm, &pr).await.expect("run_check");
+    let status = run_check(&w.app, &w.scm, &crate::fakes::FakeCheckout, &pr)
+        .await
+        .expect("run_check");
     w.status = Some(status);
 }
 
@@ -63,8 +65,8 @@ async fn submitted_twice_concurrently(w: &mut SpecWorld) {
         .map(|q| FakeExaminer::answer(q, true))
         .collect();
     let (a, b) = tokio::join!(
-        w.app.submit(s.key(), &answers),
-        w.app.submit(s.key(), &answers)
+        w.app.submit(s.key(), &answers, &NoCodebase),
+        w.app.submit(s.key(), &answers, &NoCodebase)
     );
     let ok = [a.is_ok(), b.is_ok()].iter().filter(|x| **x).count();
     assert_eq!(ok, 1, "exactly one submission is graded: {a:?} / {b:?}");
@@ -156,7 +158,9 @@ fn check_says(w: &mut SpecWorld, text: String) {
 async fn check_runs_and_fails(w: &mut SpecWorld) {
     let pr = w.current_pr().clone();
     assert!(
-        run_check(&w.app, &w.scm, &pr).await.is_err(),
+        run_check(&w.app, &w.scm, &crate::fakes::FakeCheckout, &pr)
+            .await
+            .is_err(),
         "expected the check run to fail"
     );
 }

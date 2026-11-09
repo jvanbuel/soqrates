@@ -1,27 +1,28 @@
 //! `Examiner` on top of Rig (ADR-0001 D3). This is the only crate that may
-//! depend on `rig-core`.
+//! depend on `rig-core` and `rig-agent`.
 //!
 //! - [`prompts`] holds every prompt the examiner sends.
 //! - `output` holds the structured-output schemas and their validation.
 //! - `examiner` holds the logic, behind a small `Llm` seam so that it can be
-//!   tested without a model.
+//!   tested without a model, and what the tools may read.
+//! - `agent` reads the codebase with Rig's agent runtime (ADR-0008 D2).
 
+mod agent;
 mod examiner;
 mod output;
 pub mod prompts;
 
 use std::fmt;
-use std::future::Future;
 use std::str::FromStr;
 
 use rig_core::DynModel;
-use rig_core::completion::CompletionRequest;
+use rig_core::completion::{CompletionRequest, Message};
 use rig_core::operation::Completion;
 use rig_core::providers::{anthropic::Anthropic, ollama::Ollama, openai::OpenAI};
-use soqrates_core::ports::Examiner;
+use soqrates_core::ports::{Codebase, Examiner};
 use soqrates_core::{Answer, Concept, Diff, Error, Grading, Question, QuestionBrief, Result};
 
-use crate::examiner::{Core, Llm, LlmRequest};
+use crate::examiner::{Core, Llm, LlmAnswer, LlmRequest};
 
 /// The model used when none is configured.
 pub const DEFAULT_MODEL: &str = "anthropic:claude-sonnet-5-5";
@@ -165,37 +166,60 @@ impl RigExaminer {
 }
 
 impl Examiner for RigExaminer {
-    async fn extract_concepts(&self, diff: &Diff) -> Result<Vec<Concept>> {
-        self.core.extract_concepts(diff).await
+    async fn extract_concepts(&self, diff: &Diff, code: &impl Codebase) -> Result<Vec<Concept>> {
+        self.core.extract_concepts(diff, code).await
     }
-    async fn write_question(&self, concept: &Concept, brief: &QuestionBrief) -> Result<Question> {
-        self.core.write_question(concept, brief).await
+    async fn write_question(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        code: &impl Codebase,
+    ) -> Result<Question> {
+        self.core.write_question(concept, brief, code).await
     }
-    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
-        self.core.grade(question, answer).await
+    async fn grade(
+        &self,
+        question: &Question,
+        answer: &Answer,
+        code: &impl Codebase,
+    ) -> Result<Grading> {
+        self.core.grade(question, answer, code).await
     }
 }
 
-/// The Rig side of the seam: one completion request per call, with the
-/// schema as native structured output where the provider supports it.
+/// The Rig side of the seam. Without a codebase, one completion request
+/// per call, with the schema as native structured output where the
+/// provider supports it, as before the examiner could read (ADR-0008 D5).
+/// With one, a Rig agent that may read it first ([`agent`]).
 struct RigLlm {
     model: DynModel<Completion>,
     label: String,
 }
 
 impl Llm for RigLlm {
-    fn complete(&self, request: LlmRequest) -> impl Future<Output = Result<String>> + Send {
+    type Transcript = Vec<Message>;
+
+    async fn complete(
+        &self,
+        request: LlmRequest,
+        transcript: Vec<Message>,
+        code: &impl Codebase,
+    ) -> Result<LlmAnswer<Vec<Message>>> {
+        if code.is_available() {
+            return agent::run(&self.model, &self.label, request, transcript, code).await;
+        }
         let request = CompletionRequest::new(request.user)
             .preamble(request.system)
             .output_schema(request.schema);
-        let call = self.model.call(request);
-        let label = self.label.clone();
-        async move {
-            let response = call
-                .await
-                .map_err(|e| Error::Port(format!("examiner: {label}: {e}")))?;
-            Ok(response.text())
-        }
+        let response = self
+            .model
+            .call(request)
+            .await
+            .map_err(|e| Error::Port(format!("examiner: {}: {e}", self.label)))?;
+        Ok(LlmAnswer {
+            text: response.text(),
+            transcript: Vec::new(),
+        })
     }
 }
 

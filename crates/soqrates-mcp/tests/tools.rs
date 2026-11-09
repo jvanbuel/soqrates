@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::{Value, json};
-use soqrates_core::ports::{Clock, Examiner};
+use soqrates_core::ports::{Clock, Codebase, Examiner};
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, CodeSnippet, Concept, ConceptId, ConceptScope, Config, Diff,
     Error, Grade, Grading, Question, QuestionBody, QuestionBrief, QuestionFormat, QuestionId,
@@ -22,7 +22,9 @@ const RIGHT: usize = 2;
 struct FakeExaminer;
 
 impl Examiner for FakeExaminer {
-    async fn extract_concepts(&self, diff: &Diff) -> Result<Vec<Concept>> {
+    async fn extract_concepts(&self, diff: &Diff, code: &impl Codebase) -> Result<Vec<Concept>> {
+        // The MCP server has no codebase (ADR-0008 D4).
+        assert!(!code.is_available());
         Ok(diff
             .0
             .lines()
@@ -38,7 +40,13 @@ impl Examiner for FakeExaminer {
             .collect())
     }
 
-    async fn write_question(&self, concept: &Concept, brief: &QuestionBrief) -> Result<Question> {
+    async fn write_question(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        codebase: &impl Codebase,
+    ) -> Result<Question> {
+        assert!(!codebase.is_available());
         let format = brief.format;
         // The brief's first kind, with a general snippet when it shows code;
         // a scenario instead of the kinds that need more (ADR-0007 D2).
@@ -76,7 +84,13 @@ impl Examiner for FakeExaminer {
         })
     }
 
-    async fn grade(&self, question: &Question, answer: &Answer) -> Result<Grading> {
+    async fn grade(
+        &self,
+        question: &Question,
+        answer: &Answer,
+        codebase: &impl Codebase,
+    ) -> Result<Grading> {
+        assert!(!codebase.is_available());
         let right = match (&question.body, &answer.body) {
             (QuestionBody::MultipleChoice { correct, .. }, AnswerBody::Choice(c)) => c == correct,
             (QuestionBody::Open { .. }, AnswerBody::Text(t)) => t.starts_with("right"),

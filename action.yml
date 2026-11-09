@@ -78,6 +78,19 @@ inputs:
       only to override that.
     required: false
     default: ""
+  read-code:
+    description: >-
+      Let the examiner read the pull request's code (grep, read files, git
+      log and blame), from a checkout of the pull request's head that is
+      only read, never built or run. false to send it only the diff.
+    required: false
+    default: "true"
+  code-history:
+    description: >-
+      How many commits of history the checkout fetches, for git log and
+      blame. 0 for all of it.
+    required: false
+    default: "100"
   binary:
     description: >-
       Path to a soqrates binary to run instead of the released one, e.g. one
@@ -164,10 +177,27 @@ runs:
         app-id: ${{ inputs.app-id }}
         private-key: ${{ inputs.app-private-key }}
 
+    # The pull request's code, for the examiner to read (ADR-0008 D4). Only
+    # read: nothing in it is built or run, and the checkout keeps no
+    # credentials. Without it, Soqrates still runs on the diff alone.
+    - name: Check out the pull request's code
+      id: code
+      if: steps.inputs.outputs.skip != 'true' && inputs.read-code == 'true'
+      continue-on-error: true
+      uses: actions/checkout@v4
+      with:
+        ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number }}/head
+        path: .soqrates/code
+        fetch-depth: ${{ inputs.code-history }}
+        persist-credentials: false
+        token: ${{ inputs.github-token }}
+        show-progress: false
+
     - name: Run Soqrates
       if: steps.inputs.outputs.skip != 'true'
       shell: bash
       env:
+        CODE_DIR: ${{ steps.code.outcome == 'success' && format('{0}/.soqrates/code', github.workspace) || '' }}
         SOQRATES: ${{ steps.bin.outputs.path }}
         MODE: ${{ inputs.mode }}
         STATE_DIR: ${{ steps.state.outputs.dir }}
@@ -189,6 +219,9 @@ runs:
         args=(ci --mode "$MODE")
         if [ -n "$STATE_DIR" ]; then
           args+=(--state-dir "$STATE_DIR")
+        fi
+        if [ -n "$CODE_DIR" ]; then
+          args+=(--code-dir "$CODE_DIR")
         fi
         "$SOQRATES" "${args[@]}"
 
