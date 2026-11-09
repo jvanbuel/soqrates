@@ -1,0 +1,19 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 32
+  },
+  "rounds": [
+    {
+      "head": "65cc3471c2fc609ad6a5f03c29568c740234b4d7",
+      "session": "jvanbuel/soqrates#32@65cc3471c2fc609ad6a5f03c29568c740234b4d7",
+      "concepts": [
+        "project.learner.question-format-policy",
+        "project.config.layered-settings",
+        "rust.iterators.match-guards",
+        "project.testing.bdd-acceptance-steps"
+      ],
+      "at": "2026-11-09T00:35:42.236882683Z"
+    }
+  ]
+}
