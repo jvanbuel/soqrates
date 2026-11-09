@@ -125,6 +125,8 @@ pub struct SpecWorld {
     pub identity: IdentityState,
     /// The result of the most recent MCP tool call (ADR-0001 D10).
     pub mcp_result: Option<soqrates_core::Result<serde_json::Value>>,
+    /// The question about the concept of each round, in order (ADR-0009).
+    pub bank_rounds: Vec<Question>,
     sessions_started: usize,
 }
 
@@ -177,6 +179,7 @@ impl SpecWorld {
             domain: DomainState::default(),
             identity: IdentityState::default(),
             mcp_result: None,
+            bank_rounds: Vec::new(),
             sessions_started: 0,
         }
     }

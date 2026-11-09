@@ -14,11 +14,11 @@ use soqrates_core::ports::{
     Prompter, ScmProvider, StateStore,
 };
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
-    ConceptScope, Diff, Error, Grade, GradedSession, Grading, GradingJournal, Identity,
+    Answer, AnswerBody, AuthorId, BankedQuestion, CheckStatus, CodeLocation, CodeSnippet, Concept,
+    ConceptId, ConceptScope, Diff, Error, Grade, GradedSession, Grading, GradingJournal, Identity,
     IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question,
-    QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind, Result, Session,
-    SessionKey, SessionOutcome, SnippetOrigin, Weight,
+    QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind, Result, SeenQuestions,
+    Session, SessionKey, SessionOutcome, SnippetOrigin, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -81,6 +81,8 @@ pub struct FakeExaminer {
     without_reasons: Arc<Mutex<bool>>,
     /// What each step read: the step and the text of [`PROBE_FILE`].
     reads: Arc<Mutex<Vec<(ExaminerStep, String)>>>,
+    /// The concept of every `write_question` call, in order.
+    writes: Arc<Mutex<Vec<ConceptId>>>,
 }
 
 /// The file the [`FakeExaminer`] reads from every codebase it is given.
@@ -98,6 +100,7 @@ impl Default for FakeExaminer {
     fn default() -> Self {
         Self {
             reads: Arc::default(),
+            writes: Arc::default(),
             correct_grade: Arc::new(Mutex::new(Grade::Good)),
             scopes: Arc::new(Mutex::new(HashMap::new())),
             weights: Arc::new(Mutex::new(HashMap::new())),
@@ -120,6 +123,11 @@ impl FakeExaminer {
             self.reads.lock().unwrap().push((step, text));
         }
         Ok(())
+    }
+
+    /// The concept of every question written so far, in order.
+    pub fn writes(&self) -> Vec<ConceptId> {
+        self.writes.lock().unwrap().clone()
     }
 
     pub fn set_correct_grade(&self, grade: Grade) {
@@ -228,6 +236,18 @@ impl Examiner for FakeExaminer {
         codebase: &impl Codebase,
     ) -> Result<Question> {
         self.probe(ExaminerStep::Write, codebase).await?;
+        // A concept written about again gets a new variant, as a model's
+        // questions vary (ADR-0009 D5).
+        let variant = {
+            let mut writes = self.writes.lock().unwrap();
+            writes.push(concept.id.clone());
+            writes.iter().filter(|c| **c == concept.id).count()
+        };
+        let again = if variant > 1 {
+            format!(" (variant {variant})")
+        } else {
+            String::new()
+        };
         let format = brief.format;
         let kind = brief.kinds[0];
         let code = match kind {
@@ -256,7 +276,7 @@ impl Examiner for FakeExaminer {
                     })
                     .collect();
                 QuestionBody::MultipleChoice {
-                    prompt: format!("Which statement about {} is true?", concept.title),
+                    prompt: format!("Which statement about {} is true?{again}", concept.title),
                     code,
                     options,
                     options_language,
@@ -265,7 +285,7 @@ impl Examiner for FakeExaminer {
                 }
             }
             QuestionFormat::Open => QuestionBody::Open {
-                prompt: format!("Explain {} in this change.", concept.title),
+                prompt: format!("Explain {} in this change.{again}", concept.title),
                 code,
                 rubric: format!("Covers {}", concept.title),
             },
@@ -277,6 +297,9 @@ impl Examiner for FakeExaminer {
             kind,
             body,
             explanation: Self::explanation(&concept.id),
+            // The fake's reasons discuss only its options (issue #5).
+            checked: true,
+            banked: None,
         })
     }
 
@@ -1081,6 +1104,18 @@ impl StateStore for AnyStore {
     }
     async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
         write!(self, save_rounds(rounds))
+    }
+    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
+        delegate!(self, bank_questions(concept))
+    }
+    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
+        write!(self, save_bank_question(question))
+    }
+    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
+        delegate!(self, load_seen(learner))
+    }
+    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
+        write!(self, save_seen(seen))
     }
 }
 

@@ -485,13 +485,14 @@ impl<L: Llm> Core<L> {
     /// quoted, and fails like any other invalid output after that.
     ///
     /// The question is written as `brief` asks (ADR-0007), and the check
-    /// is shown its code too (D7).
+    /// is shown its code too (D7). Also returns whether the check passed:
+    /// `false` when its reply couldn't be parsed (ADR-0009 D3).
     async fn multiple_choice(
         &self,
         concept: &Concept,
         brief: &QuestionBrief,
         code: &impl Codebase,
-    ) -> Result<MultipleChoice> {
+    ) -> Result<(MultipleChoice, bool)> {
         let schema = schemars::schema_for!(MultipleChoiceOutput);
         let schema = &schema;
         self.retrying(
@@ -513,8 +514,9 @@ impl<L: Llm> Core<L> {
                     Err(why) => return Ok((Err(why), after)),
                 };
                 Ok(match self.unlisted_options(&mc).await? {
-                    None => (Ok(mc), after),
-                    Some(why) => (Err(why), after),
+                    OptionCheck::Passed => (Ok((mc, true)), after),
+                    OptionCheck::Unknown => (Ok((mc, false)), after),
+                    OptionCheck::Failed(why) => (Err(why), after),
                 })
             },
         )
@@ -525,7 +527,7 @@ impl<L: Llm> Core<L> {
     /// offer: the problem if they do. An unusable reply from the check
     /// keeps the question; the check is a safeguard on output that has
     /// already passed validation, not a reason to lose it.
-    async fn unlisted_options(&self, mc: &MultipleChoice) -> Result<Option<String>> {
+    async fn unlisted_options(&self, mc: &MultipleChoice) -> Result<OptionCheck> {
         // The check reads nothing: it is about the question's own text.
         let raw = self
             .llm
@@ -547,9 +549,13 @@ impl<L: Llm> Core<L> {
             )
             .await?
             .text;
-        Ok(output::parse_json::<OptionCheckOutput>(&raw)
-            .ok()
-            .and_then(output::unlisted_option_problem))
+        Ok(match output::parse_json::<OptionCheckOutput>(&raw) {
+            Err(_) => OptionCheck::Unknown,
+            Ok(out) => match output::unlisted_option_problem(out) {
+                None => OptionCheck::Passed,
+                Some(why) => OptionCheck::Failed(why),
+            },
+        })
     }
 
     pub async fn extract_concepts(
@@ -581,11 +587,11 @@ impl<L: Llm> Core<L> {
         code: &impl Codebase,
     ) -> Result<Question> {
         let format = brief.format;
-        let (kind, body, explanation) = match format {
+        let (kind, body, explanation, checked) = match format {
             QuestionFormat::MultipleChoice => {
                 // One reason per option, written with the options and
                 // checked to discuss only those (issue #5).
-                let mc = self.multiple_choice(concept, brief, code).await?;
+                let (mc, checked) = self.multiple_choice(concept, brief, code).await?;
                 // The reasons name options by content, so they survive the
                 // shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
@@ -598,7 +604,7 @@ impl<L: Llm> Core<L> {
                     correct: mc.correct,
                     reasons: mc.reasons,
                 };
-                (mc.kind, body, explanation)
+                (mc.kind, body, explanation, checked)
             }
             QuestionFormat::Open => {
                 let open = self
@@ -615,7 +621,9 @@ impl<L: Llm> Core<L> {
                     code: open.code,
                     rubric: open.rubric,
                 };
-                (open.kind, body, open.explanation)
+                // No options to check: a valid open question is consistent
+                // (ADR-0009 D3).
+                (open.kind, body, open.explanation, true)
             }
         };
         Ok(Question {
@@ -625,6 +633,8 @@ impl<L: Llm> Core<L> {
             kind,
             body,
             explanation,
+            checked,
+            banked: None,
         })
     }
 
@@ -698,6 +708,16 @@ pub(crate) const NO_ANSWER_FEEDBACK: &str = "No answer was given.";
 pub(crate) const CHOICE_FOR_OPEN_FEEDBACK: &str = "This question needs a written answer.";
 
 /// `"{concept_id}/{mc|open}"`.
+/// What the option check (issue #5) said about a multiple-choice question.
+enum OptionCheck {
+    /// Its reasons discuss only its options.
+    Passed,
+    /// The check's reply couldn't be parsed: the question is kept, unchecked.
+    Unknown,
+    /// The problem to explain when the question is asked for again.
+    Failed(String),
+}
+
 pub(crate) fn question_id(concept: &Concept, format: QuestionFormat) -> QuestionId {
     let suffix = match format {
         QuestionFormat::MultipleChoice => "mc",

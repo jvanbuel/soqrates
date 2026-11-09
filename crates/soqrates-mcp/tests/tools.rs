@@ -81,6 +81,8 @@ impl Examiner for FakeExaminer {
             kind,
             body,
             explanation: EXPLANATION.into(),
+            checked: false,
+            banked: None,
         })
     }
 

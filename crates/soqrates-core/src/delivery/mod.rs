@@ -13,7 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ids::{AuthorId, ConceptId, Identity, QuestionId, SessionKey};
 
+mod bank;
 mod journal;
+pub use bank::{BankedQuestion, SeenQuestions, pick};
 pub use journal::{GradingJournal, StoreId};
 
 /// Whether a failed session blocks (ADR-0001 D8, D9).

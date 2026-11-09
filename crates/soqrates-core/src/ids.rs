@@ -14,6 +14,12 @@ pub struct ConceptId(pub String);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct QuestionId(pub String);
 
+/// Stable identity of a question in a question bank (ADR-0009 D6). Opaque,
+/// derived from the question when it was first banked, and kept when the
+/// question is revised.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct BankId(pub String);
+
 /// Identity of a session. In CI it is derived from the PR and its head
 /// commit (ADR-0001 D8); locally from the hook invocation.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

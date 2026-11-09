@@ -14,8 +14,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    Error, GradedSession, GradingJournal, Identity, IdentityLink, LearnerId, LearnerProfile,
-    LinkCode, PrRef, PrRounds, Result, Session, SessionKey,
+    BankId, BankedQuestion, ConceptId, Error, GradedSession, GradingJournal, Identity,
+    IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result, SeenQuestions,
+    Session, SessionKey,
 };
 
 #[derive(Debug, Default)]
@@ -27,6 +28,14 @@ struct Data {
     graded: BTreeMap<SessionKey, GradedSession>,
     gradings: BTreeMap<SessionKey, GradingJournal>,
     rounds: BTreeMap<String, PrRounds>,
+    bank: BTreeMap<BankId, BankedQuestion>,
+    seen: BTreeMap<LearnerId, SeenQuestions>,
+}
+
+/// `questions` in the order they were banked (ADR-0009 D1).
+fn in_bank_order(mut questions: Vec<BankedQuestion>) -> Vec<BankedQuestion> {
+    questions.sort_by(|a, b| (a.added_at(), a.id()).cmp(&(b.added_at(), b.id())));
+    questions
 }
 
 /// Keeps everything in memory. Useful for tests and for the MCP server's
@@ -61,6 +70,7 @@ impl StateStore for InMemoryStore {
         self.with(|d| {
             d.profiles.remove(learner);
             d.links.retain(|_, link| &link.learner != learner);
+            d.seen.remove(learner);
         });
         Ok(())
     }
@@ -136,13 +146,34 @@ impl StateStore for InMemoryStore {
         self.with(|d| d.rounds.insert(rounds.pr().id(), rounds.clone()));
         Ok(())
     }
+    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
+        Ok(in_bank_order(self.with(|d| {
+            d.bank
+                .values()
+                .filter(|q| q.concept() == concept)
+                .cloned()
+                .collect()
+        })))
+    }
+    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
+        self.with(|d| d.bank.insert(question.id().clone(), question.clone()));
+        Ok(())
+    }
+    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
+        Ok(self.with(|d| d.seen.get(learner).cloned()))
+    }
+    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
+        self.with(|d| d.seen.insert(seen.learner().clone(), seen.clone()));
+        Ok(())
+    }
 }
 
 impl LearnerStore for InMemoryStore {}
 
 /// One JSON document per profile, link, link code, pending session, grading
-/// journal, graded session and pull request's rounds, under a directory.
-/// File names are the hex-encoded keys.
+/// journal, graded session, pull request's rounds, bank question and
+/// learner's seen questions, under a directory. File names are the
+/// hex-encoded keys; bank questions are in a directory per concept.
 #[derive(Debug, Clone)]
 pub struct FileStore {
     pub root: PathBuf,
@@ -154,8 +185,12 @@ impl FileStore {
     }
 
     fn path(&self, kind: &str, key: &str) -> PathBuf {
-        let name: String = key.bytes().map(|b| format!("{b:02x}")).collect();
-        self.root.join(kind).join(format!("{name}.json"))
+        self.root.join(kind).join(format!("{}.json", hex(key)))
+    }
+
+    /// The directory of the bank questions about `concept` (ADR-0009 D1).
+    fn bank_dir(concept: &ConceptId) -> String {
+        format!("bank/{}", hex(&concept.0))
     }
 
     fn read<T: DeserializeOwned>(&self, kind: &str, key: &str) -> Result<Option<T>> {
@@ -207,6 +242,10 @@ impl FileStore {
     }
 }
 
+fn hex(key: &str) -> String {
+    key.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
 fn io(e: std::io::Error) -> Error {
     Error::Port(e.to_string())
 }
@@ -222,6 +261,7 @@ impl StateStore for FileStore {
         for link in self.links_of(learner).await? {
             self.delete_link(&link.identity).await?;
         }
+        self.remove("seen", &learner.0)?;
         self.remove("profiles", &learner.0)
     }
     async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
@@ -299,6 +339,22 @@ impl StateStore for FileStore {
     }
     async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
         self.write("rounds", &rounds.pr().id(), rounds)
+    }
+    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
+        Ok(in_bank_order(self.all(&Self::bank_dir(concept))?))
+    }
+    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
+        self.write(
+            &Self::bank_dir(question.concept()),
+            &question.id().0,
+            question,
+        )
+    }
+    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
+        self.read("seen", &learner.0)
+    }
+    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
+        self.write("seen", &seen.learner().0, seen)
     }
 }
 
@@ -401,6 +457,18 @@ impl StateStore for Store {
     async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
         delegate!(self, save_rounds(rounds))
     }
+    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
+        delegate!(self, bank_questions(concept))
+    }
+    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
+        delegate!(self, save_bank_question(question))
+    }
+    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
+        delegate!(self, load_seen(learner))
+    }
+    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
+        delegate!(self, save_seen(seen))
+    }
 }
 
 impl LearnerStore for Store {}
@@ -475,6 +543,28 @@ mod tests {
             host: "github.com".into(),
             account: account.into(),
         }
+    }
+
+    /// A checked question about `concept`, as banked at `at`.
+    fn banked(concept: &str, prompt: &str, at: chrono::DateTime<chrono::Utc>) -> BankedQuestion {
+        let question = soqrates_core::Question {
+            id: soqrates_core::QuestionId(format!("{concept}/mc")),
+            concept: ConceptId(concept.into()),
+            scope: soqrates_core::ConceptScope::General,
+            kind: soqrates_core::QuestionKind::Scenario,
+            body: soqrates_core::QuestionBody::MultipleChoice {
+                prompt: prompt.into(),
+                code: None,
+                options: vec!["a".into(), "b".into()],
+                options_language: None,
+                correct: 0,
+                reasons: Vec::new(),
+            },
+            explanation: "because".into(),
+            checked: true,
+            banked: None,
+        };
+        BankedQuestion::new(&question, soqrates_core::Level::Novice, at).unwrap()
     }
 
     /// The behaviour every `StateStore` adapter shares: records round-trip,
@@ -612,6 +702,40 @@ mod tests {
         assert!(store.load_rounds(&pr("o/r", 11)).await.unwrap().is_none());
         assert!(store.load_rounds(&pr("O/R", 1)).await.unwrap().is_none());
 
+        // The question bank, by concept, in the order banked (ADR-0009 D1).
+        let traits = ConceptId("rust.traits".into());
+        assert!(store.bank_questions(&traits).await.unwrap().is_empty());
+        let first = banked("rust.traits", "First?", now);
+        let second = banked("rust.traits", "Second?", now + chrono::Duration::seconds(1));
+        let elsewhere = banked("rust.ownership", "Other?", now);
+        for q in [&second, &first, &first, &elsewhere] {
+            store.save_bank_question(q).await.unwrap();
+        }
+        assert_eq!(
+            store.bank_questions(&traits).await.unwrap(),
+            vec![first.clone(), second.clone()]
+        );
+        let mut retired = first.clone();
+        retired.retire();
+        store.save_bank_question(&retired).await.unwrap();
+        assert_eq!(
+            store.bank_questions(&traits).await.unwrap(),
+            vec![retired, second.clone()],
+            "saving again replaces"
+        );
+
+        // What a learner was shown, deleted with the learner (ADR-0009 D5).
+        let cy = LearnerId("cy".into());
+        assert!(store.load_seen(&cy).await.unwrap().is_none());
+        let mut seen = SeenQuestions::new(cy.clone());
+        seen.show(first.id(), 1);
+        store.save_seen(&seen).await.unwrap();
+        seen.show(second.id(), 2);
+        store.save_seen(&seen).await.unwrap();
+        assert_eq!(store.load_seen(&cy).await.unwrap(), Some(seen));
+        store.delete_learner(&cy).await.unwrap();
+        assert!(store.load_seen(&cy).await.unwrap().is_none());
+
         // Keys are used verbatim: no collisions between similar keys.
         for key in ["o/r#1@abc", "o/r#1@abc ", "O/R#1@ABC", "o/r#1@ab'c"] {
             let mut s = session();
@@ -658,6 +782,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    // @adr-0009-d1
     #[tokio::test]
     async fn file_conforms() {
         let dir = temp_dir("conforms");
@@ -699,7 +824,7 @@ mod tests {
             conforms(&store).await;
         }
 
-        // @adr-0005-d1 @adr-0005-d2 @adr-0005-d6
+        // @adr-0005-d1 @adr-0005-d2 @adr-0005-d6 @adr-0009-d1
         #[tokio::test]
         async fn in_memory_sqlite_conforms() {
             conforms(&SqlStore::connect("sqlite::memory:").await.unwrap()).await;

@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{ConceptId, QuestionId};
+use crate::ids::{BankId, ConceptId, QuestionId};
 
 mod code;
 pub use code::*;
@@ -223,6 +223,25 @@ pub struct Question {
     /// Why the correct answer is correct (multiple choice) or what a good
     /// answer covers (open). Shown only after grading (ADR-0004 D1).
     pub explanation: String,
+    /// Whether the examiner checked that the explanation is consistent with
+    /// the question as shown (issue #5, ADR-0004 D1): for multiple choice,
+    /// the option check passed; an open question has no options to check
+    /// and is checked once it is valid. Only checked questions are banked
+    /// (ADR-0009 D3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checked: bool,
+    /// The question bank entry this question was taken from or added to
+    /// (ADR-0009 D6), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banked: Option<BankRef>,
+}
+
+/// A version of a question in a question bank (ADR-0009 D6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BankRef {
+    pub id: BankId,
+    /// 1 when first banked; a revision keeps the id and counts up.
+    pub version: u32,
 }
 
 impl Question {

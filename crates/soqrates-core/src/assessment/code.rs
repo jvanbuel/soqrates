@@ -592,6 +592,8 @@ mod tests {
             kind,
             body,
             explanation: "why".into(),
+            checked: false,
+            banked: None,
         }
     }
 
