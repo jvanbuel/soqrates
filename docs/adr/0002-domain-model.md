@@ -69,7 +69,7 @@ flowchart RL
     learner["learner<br/>profiles, levels, scheduling"] --> assessment["assessment<br/>concepts, questions, grades"]
     delivery["delivery<br/>sessions, checks, hooks"] --> learner
     delivery --> assessment
-    app["app<br/>engine, CI and hook workflows,<br/>ports, events"] --> delivery
+    app["app<br/>engine, store router, CI and hook<br/>workflows, ports, events"] --> delivery
     app --> learner
     app --> assessment
 ```
@@ -119,6 +119,14 @@ that their rules cannot be bypassed:
 Serde deserialization is how a store rehydrates them, and is used for
 nothing else. The `app` layer orchestrates (load, call the aggregate, save,
 emit events) and holds no domain rules.
+
+Inside `app`, `Soqrates` is a facade. Its operations are split by use case
+into services, one module and one `impl` each: identities, a learner's
+profile, composing a session, and grading. The services reach a store only
+through the store router (`app/stores`), which owns the knowledge of where
+data lives (ADR-0003 D4, D5) and of what to do when the learner store is
+unreachable, and which finishes interrupted gradings (D6) before it hands a
+store out. The router is crate-private, so it is not a glossary term.
 
 ### D4: Level rules
 **Enforcement:** automated
@@ -221,7 +229,13 @@ with none.
 
 While the entry exists, the session is being graded. Every engine operation
 that touches a learner or a session first finishes the entries left behind,
-e.g. by a crash or a failed write, by applying them again. Entries whose
+e.g. by a crash or a failed write, by applying them again. The store
+router does this, not each operation: a service gets at the stores only
+through `strict` (finish them, fail if one can't be finished), `best_effort`
+(try, carry on) or `without_recovery` (for documents no grading writes,
+such as the rounds of a pull request), so a new operation has to choose.
+Applying a journal is part of the router, since recovery is nothing but
+applying the journals found in its stores. Entries whose
 graded record exists only need removing. An operation that can't finish
 an entry fails, except looking up a session: the CI check then reports
 "being graded" rather than asking again. `Soqrates::session_state` is the
