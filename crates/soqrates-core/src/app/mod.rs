@@ -8,4 +8,4 @@ pub mod hook;
 pub mod ports;
 mod state;
 
-pub use engine::{Config, ProfileLocation, SessionOutcome, Soqrates};
+pub use engine::{Config, ProfileLocation, SessionOutcome, SessionState, Soqrates};

@@ -684,12 +684,12 @@ mod tests {
         };
         assert!(store.load_rounds(&pr("o/r", 1)).await.unwrap().is_none());
         let mut rounds = PrRounds::new(pr("o/r", 1));
-        rounds.record(soqrates_core::Round {
-            head: "abc".into(),
-            session: s.key().clone(),
-            concepts: vec![soqrates_core::ConceptId("rust.traits".into())],
-            at: now,
-        });
+        rounds.record(soqrates_core::Round::own(
+            "abc".into(),
+            s.key().clone(),
+            vec![soqrates_core::ConceptId("rust.traits".into())],
+            now,
+        ));
         store.save_rounds(&rounds).await.unwrap();
         store.save_rounds(&rounds).await.unwrap();
         assert_eq!(

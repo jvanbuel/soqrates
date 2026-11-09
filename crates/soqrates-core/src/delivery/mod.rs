@@ -11,7 +11,7 @@ use crate::assessment::{Answer, AnswerBody, Diff, Grade, Question};
 use crate::{Error, Result};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ids::{AuthorId, ConceptId, Identity, QuestionId, SessionKey};
+use crate::ids::{AuthorId, ConceptId, Identity, KeyParts, QuestionId, SessionKey};
 
 mod bank;
 mod journal;
@@ -238,6 +238,7 @@ impl PrRef {
 
 /// What Soqrates asked about one head of a pull request (ADR-0002 D9).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "RoundDoc")]
 pub struct Round {
     /// The head commit the round is for.
     pub head: String,
@@ -248,7 +249,68 @@ pub struct Round {
     /// The concepts this round's session asks, carried ones included
     /// (ADR-0002 D9). Empty when the round's session was carried forward.
     pub concepts: Vec<ConceptId>,
+    /// Whether `session` was carried forward from an earlier round, rather
+    /// than asked about this head. A carried round asked nothing about its
+    /// head, e.g. because carried questions filled the budget (ADR-0002 D10).
+    pub carried: bool,
     pub at: DateTime<Utc>,
+}
+
+impl Round {
+    /// A round whose `session` asks about `head` itself.
+    pub fn own(
+        head: String,
+        session: SessionKey,
+        concepts: Vec<ConceptId>,
+        at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            head,
+            session,
+            concepts,
+            carried: false,
+            at,
+        }
+    }
+
+    /// A round that carries the earlier round's `session` forward.
+    pub fn carrying(head: String, session: SessionKey, at: DateTime<Utc>) -> Self {
+        Self {
+            head,
+            session,
+            concepts: Vec::new(),
+            carried: true,
+            at,
+        }
+    }
+}
+
+/// A round as stored. Rounds stored before `carried` existed lack it: such
+/// a round asked its own questions exactly when the head in its session's
+/// key is its own head (ADR-0002 D9).
+#[derive(Deserialize)]
+struct RoundDoc {
+    head: String,
+    session: SessionKey,
+    concepts: Vec<ConceptId>,
+    #[serde(default)]
+    carried: Option<bool>,
+    at: DateTime<Utc>,
+}
+
+impl From<RoundDoc> for Round {
+    fn from(doc: RoundDoc) -> Self {
+        let carried = doc.carried.unwrap_or_else(
+            || !matches!(doc.session.parts(), KeyParts::Pr { head, .. } if head == doc.head),
+        );
+        Round {
+            head: doc.head,
+            session: doc.session,
+            concepts: doc.concepts,
+            carried,
+            at: doc.at,
+        }
+    }
 }
 
 /// The rounds of one pull request, oldest first (ADR-0002 D9). Holds
@@ -336,4 +398,38 @@ pub fn local_identity(
         .and_then(|host| configured.get(host))
         .cloned()
         .unwrap_or_else(|| Identity::Email(commit_email.to_string()))
+}
+
+#[cfg(test)]
+mod round_tests {
+    use super::*;
+
+    fn load(session: &str, head: &str, carried: Option<bool>) -> Round {
+        let mut doc = serde_json::json!({
+            "head": head,
+            "session": session,
+            "concepts": [],
+            "at": "2026-01-01T00:00:00Z",
+        });
+        if let Some(c) = carried {
+            doc["carried"] = c.into();
+        }
+        serde_json::from_value(doc).unwrap()
+    }
+
+    #[test]
+    fn rounds_stored_without_the_flag_are_read_as_before() {
+        assert!(!load("o/r#1@abc", "abc", None).carried);
+        assert!(load("o/r#1@abc", "def", None).carried);
+        assert!(load("local:a:1", "abc", None).carried);
+        assert!(load("o/r#1@", "abc", None).carried);
+    }
+
+    #[test]
+    fn a_stored_flag_wins_and_survives_a_round_trip() {
+        let round = load("o/r#1@abc", "abc", Some(true));
+        assert!(round.carried);
+        let back: Round = serde_json::from_value(serde_json::to_value(&round).unwrap()).unwrap();
+        assert_eq!(back, round);
+    }
 }
