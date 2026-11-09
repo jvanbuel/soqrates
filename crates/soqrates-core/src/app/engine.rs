@@ -12,8 +12,9 @@ use crate::assessment::{
     QuestionKind, Weight,
 };
 use crate::delivery::{
-    BankedQuestion, GradedSession, GradingJournal, Mode, PrRef, PrRounds, QuestionResult,
-    SeenQuestions, Session, StoreId, pick,
+    AskedQuestion, AskedSession, BankedQuestion, FeedbackGiven, FeedbackId, FeedbackKind,
+    FeedbackRequest, GradedSession, GradingJournal, Mode, PrRef, PrRounds, QuestionFeedback,
+    QuestionResult, SeenQuestions, Session, StoreId, pick,
 };
 use crate::ids::{AuthorId, BankId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, Level, LinkCode, LinkRejection, policy};
@@ -193,6 +194,53 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             None if self.org_stores.is_empty() => Ok(Some(&self.store)),
             None => Ok(None),
         }
+    }
+
+    /// The store that keeps `identity`'s asked sessions and their feedback
+    /// (ADR-0011 D1): the organisation's store, or the single store of a
+    /// deployment without organisations. `None` for an identity outside
+    /// every organisation when there are organisation stores: the remaining
+    /// store is the learner store, which holds no question text.
+    fn feedback_store_for(&self, identity: &Identity) -> Result<Option<&S>> {
+        match self.org_store_for(identity)? {
+            Some(store) => Ok(Some(store)),
+            None if self.org_stores.is_empty() => Ok(Some(&self.store)),
+            None => Ok(None),
+        }
+    }
+
+    /// Every store that may keep asked sessions (ADR-0011 D1).
+    fn feedback_stores(&self) -> Vec<&S> {
+        if self.org_stores.is_empty() {
+            vec![&self.store]
+        } else {
+            self.org_stores.values().collect()
+        }
+    }
+
+    /// The bank holding the bank questions asked from `store`'s sessions
+    /// (ADR-0009 D2): the shared bank if there is one, else `store`.
+    fn bank_of<'a>(&'a self, store: &'a S) -> &'a S {
+        self.shared_bank.as_ref().unwrap_or(store)
+    }
+
+    /// Apply `change` to the bank question `asked` came from, if any, in
+    /// `bank`. Does nothing for a question that isn't banked, or whose bank
+    /// entry is gone.
+    async fn change_bank_entry(
+        bank: &S,
+        asked: &AskedQuestion,
+        change: impl FnOnce(&mut BankedQuestion),
+    ) -> Result<()> {
+        let Some(reference) = asked.bank() else {
+            return Ok(());
+        };
+        let mut entries = bank.bank_questions(&asked.question.concept).await?;
+        if let Some(entry) = entries.iter_mut().find(|e| *e.id() == reference.id) {
+            change(entry);
+            bank.save_bank_question(entry).await?;
+        }
+        Ok(())
     }
 
     /// An opaque learner ID, derived from `identity` but not revealing it
@@ -766,10 +814,22 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         if let (Some(id), Some(p)) = (place.project_id, project) {
             profiles.push((id, p));
         }
+        // Kept for feedback where the session's store may hold question
+        // text (ADR-0011 D1).
+        let asked = self.feedback_store_for(&identity)?.is_some().then(|| {
+            AskedSession::new(
+                claimed.key().clone(),
+                place.learner.clone(),
+                now,
+                &questions,
+                &results,
+            )
+        });
         let journal = GradingJournal {
             session: claimed,
             graded,
             profiles,
+            asked,
         };
         let outcome = SessionOutcome {
             grades: result.grades,
@@ -804,6 +864,9 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         if store.load_graded(key).await?.is_none() {
             for (id, profile) in &journal.profiles {
                 self.store_by_id(id)?.save_profile(profile).await?;
+            }
+            if let Some(asked) = &journal.asked {
+                store.save_asked(asked).await?;
             }
             store.delete_session(key).await?;
             store.save_graded(&journal.graded).await?;
@@ -989,10 +1052,144 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     pub async fn delete_learner(&self, author: &AuthorId) -> Result<()> {
         self.recover().await?;
         let learner = self.resolve_in(&author.identity()?, &self.store).await?;
+        // Their feedback no longer counts on the bank questions it was about
+        // (ADR-0011 D8); the stores delete the feedback itself.
+        for store in self.all_stores() {
+            for asked in store.asked_sessions().await? {
+                if *asked.learner() != learner {
+                    continue;
+                }
+                for q in asked.questions().iter().filter(|q| !q.feedback.is_empty()) {
+                    Self::change_bank_entry(self.bank_of(store), q, |entry| {
+                        for f in &q.feedback {
+                            entry.settle(&f.id);
+                        }
+                    })
+                    .await?;
+                }
+            }
+        }
         for store in self.all_stores().chain(self.shared_bank.iter()) {
             store.delete_learner(&learner).await?;
         }
         Ok(())
+    }
+
+    // --- feedback (ADR-0011) ------------------------------------------------
+
+    /// Record `request`, feedback on a question of the graded session `key`
+    /// (ADR-0011 D2). `by` is the author giving it, who must be the
+    /// session's; `None` on a surface where holding the session key shows
+    /// that, such as MCP. `source` names where it came from, e.g. a forge
+    /// comment, so the same feedback counts once.
+    ///
+    /// Fails with `NotFound` when the session wasn't graded (or nothing of
+    /// it was kept) and with `Invalid` for anyone but its author or a
+    /// question it doesn't have. A dispute keeps the question's bank entry
+    /// from being reused; `good` feedback raises it (D6). No grade changes
+    /// (D7).
+    pub async fn give_feedback(
+        &self,
+        by: Option<&AuthorId>,
+        key: &SessionKey,
+        request: &FeedbackRequest,
+        source: Option<&str>,
+    ) -> Result<FeedbackGiven> {
+        self.recover().await?;
+        let not_graded = || {
+            Error::NotFound(format!(
+                "graded results for session {:?}: feedback is on the questions of graded results",
+                key.0
+            ))
+        };
+        let (store, mut asked, learner) = match by {
+            Some(author) => {
+                let store = self
+                    .feedback_store_for(&author.identity()?)?
+                    .ok_or_else(not_graded)?;
+                let asked = store.load_asked(key).await?.ok_or_else(not_graded)?;
+                let learner = self.place(author).await?.learner;
+                (store, asked, learner)
+            }
+            None => {
+                let mut found = None;
+                for store in self.feedback_stores() {
+                    if let Some(asked) = store.load_asked(key).await? {
+                        found = Some((store, asked));
+                        break;
+                    }
+                }
+                let (store, asked) = found.ok_or_else(not_graded)?;
+                let learner = asked.learner().clone();
+                (store, asked, learner)
+            }
+        };
+        let given = asked.give(&learner, request, source, self.clock.now())?;
+        if !given.new {
+            return Ok(given);
+        }
+        // The bank first: noting the same feedback again is harmless, and
+        // once the asked session is saved, the same source isn't noted again.
+        let number = given.number;
+        let question = &asked.questions()[number - 1];
+        let id = given.feedback.id.clone();
+        match given.feedback.kind {
+            kind if kind.disputes() => {
+                Self::change_bank_entry(self.bank_of(store), question, |e| e.dispute(&id)).await?
+            }
+            FeedbackKind::Good => {
+                Self::change_bank_entry(self.bank_of(store), question, |e| e.commend(&id)).await?
+            }
+            _ => {}
+        }
+        store.save_asked(&asked).await?;
+        Ok(given)
+    }
+
+    /// A maintainer accepts or rejects the feedback `id` (ADR-0011 D7). It
+    /// no longer keeps its bank question from being reused; accepting a
+    /// dispute retires that question. Grades and review cards stay as they
+    /// are. Fails with `NotFound` for unknown feedback.
+    pub async fn resolve_feedback(
+        &self,
+        id: &FeedbackId,
+        accept: bool,
+    ) -> Result<(AskedQuestion, QuestionFeedback)> {
+        self.recover().await?;
+        for store in self.feedback_stores() {
+            for mut asked in store.asked_sessions().await? {
+                let Some((question, feedback)) = asked.resolve(id, accept) else {
+                    continue;
+                };
+                let retire = accept && feedback.kind.disputes();
+                Self::change_bank_entry(self.bank_of(store), &question, |e| {
+                    e.settle(id);
+                    if retire {
+                        e.retire();
+                    }
+                })
+                .await?;
+                store.save_asked(&asked).await?;
+                return Ok((question, feedback));
+            }
+        }
+        Err(Error::NotFound(format!("feedback {:?}", id.0)))
+    }
+
+    /// Every asked question, oldest session first, as JSON lines for
+    /// `soqrates questions export` (ADR-0011 D9); with `with_feedback`, with
+    /// the answers, grades and feedback.
+    pub async fn export_questions(&self, with_feedback: bool) -> Result<Vec<serde_json::Value>> {
+        self.recover().await?;
+        let mut sessions = Vec::new();
+        for store in self.feedback_stores() {
+            sessions.extend(store.asked_sessions().await?);
+        }
+        sessions.sort_by(|a, b| (a.at(), a.key()).cmp(&(b.at(), b.key())));
+        Ok(sessions
+            .iter()
+            .flat_map(|s| s.export(with_feedback))
+            .collect())
     }
 }
 

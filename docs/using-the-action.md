@@ -8,7 +8,12 @@ Soqrates posts as your own app, `@<app slug> answer` work too. A mistyped
 command gets a hint, and an answer comment can be edited until it is graded.
 While the answers are graded, the comment that submitted them shows 👀, then
 👍 once the results are posted. The `soqrates` commit status reports the
-outcome.
+outcome. An author who thinks a question or its answer key is wrong comments
+`/soqrates feedback <question> <kind> [why]` on the results, e.g.
+`/soqrates feedback 2 disagree option c is also correct` (kinds: `disagree`,
+`unclear`, `wrong-explanation`, `off-topic`, `good`). Feedback never changes a
+grade; it is kept with the question for maintainers to review
+(`soqrates questions export --with-feedback`, ADR-0011).
 
 ## 1. Add your model key
 
@@ -41,7 +46,7 @@ jobs:
   soqrates:
     # Run on pull requests by people (not Dependabot and other bots), on
     # `/soqrates ...` and `/socrates ...` comments (startsWith ignores case)
-    # and comments starting with a mention that say "answer", also when the
+    # and comments starting with a mention that say "answer" or "feedback", also when the
     # PR author edits them, and when Soqrates' own question comment is
     # edited with "Grade my answers" ticked, so ticking an option doesn't
     # start a run.
@@ -54,7 +59,8 @@ jobs:
           (startsWith(github.event.comment.body, '/soqrates') ||
             startsWith(github.event.comment.body, '/socrates') ||
             (startsWith(github.event.comment.body, '@') &&
-              contains(github.event.comment.body, ' answer')))) ||
+              (contains(github.event.comment.body, ' answer') ||
+                contains(github.event.comment.body, ' feedback'))))) ||
         (github.event.action == 'edited' &&
           endsWith(github.event.comment.user.login, '[bot]') &&
           contains(github.event.comment.body, 'soqrates:session=') &&

@@ -13,9 +13,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    BankedQuestion, ConceptId, Error, GradedSession, GradingJournal, Identity, IdentityLink,
-    LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result, SeenQuestions, Session,
-    SessionKey,
+    AskedSession, BankedQuestion, ConceptId, Error, GradedSession, GradingJournal, Identity,
+    IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result, SeenQuestions,
+    Session, SessionKey,
 };
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
 use sqlx::{AnyConnection, AnyPool, Connection, Row};
@@ -72,6 +72,13 @@ const SCHEMA: &[&str] = &[
         learner TEXT PRIMARY KEY,
         doc TEXT NOT NULL
     )",
+    // Asked questions kept for feedback, also within version 1 (ADR-0011 D1).
+    "CREATE TABLE IF NOT EXISTS soqrates_asked (
+        session_key TEXT PRIMARY KEY,
+        learner TEXT NOT NULL,
+        doc TEXT NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS soqrates_asked_by_learner ON soqrates_asked (learner)",
 ];
 
 /// Serialises schema creation between processes sharing one PostgreSQL
@@ -248,6 +255,7 @@ impl SqlStore {
             "soqrates_rounds",
             "soqrates_bank",
             "soqrates_seen",
+            "soqrates_asked",
         ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
                 .execute(&self.pool)
@@ -304,11 +312,12 @@ impl StateStore for SqlStore {
         .await
     }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        // All or nothing (ADR-0003 D6, ADR-0009 D5).
+        // All or nothing (ADR-0003 D6, ADR-0009 D5, ADR-0011 D8).
         let mut tx = self.pool.begin().await.map_err(db)?;
         for sql in [
             "DELETE FROM soqrates_links WHERE learner = $1",
             "DELETE FROM soqrates_seen WHERE learner = $1",
+            "DELETE FROM soqrates_asked WHERE learner = $1",
             "DELETE FROM soqrates_profiles WHERE learner = $1",
         ] {
             sqlx::query(sql)
@@ -540,6 +549,35 @@ impl StateStore for SqlStore {
             &[&seen.learner().0, &to_json(seen)?],
         )
         .await
+    }
+    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
+        self.fetch_doc(
+            "SELECT doc FROM soqrates_asked WHERE session_key = $1",
+            "asked session",
+            &key.0,
+        )
+        .await
+    }
+    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
+        self.exec(
+            "INSERT INTO soqrates_asked (session_key, learner, doc) VALUES ($1, $2, $3)
+             ON CONFLICT (session_key) DO UPDATE SET learner = excluded.learner, doc = excluded.doc",
+            &[&asked.key().0, &asked.learner().0, &to_json(asked)?],
+        )
+        .await
+    }
+    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
+        let rows = sqlx::query("SELECT session_key, doc FROM soqrates_asked")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        rows.iter()
+            .map(|row| {
+                let key: String = row.try_get(0).map_err(db)?;
+                let doc: String = row.try_get(1).map_err(db)?;
+                from_json::<AskedSession>("asked session", &key, &doc)
+            })
+            .collect()
     }
 }
 

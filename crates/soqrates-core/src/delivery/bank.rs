@@ -1,12 +1,13 @@
 //! The question bank: questions Soqrates wrote, kept so that later rounds
 //! can ask them again instead of writing new ones (ADR-0009).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::assessment::{BankRef, Question, QuestionBrief, QuestionFormat, QuestionKind};
+use crate::delivery::FeedbackId;
 use crate::ids::{BankId, ConceptId, LearnerId};
 use crate::learner::Level;
 
@@ -24,6 +25,13 @@ pub struct BankedQuestion {
     asked: u32,
     /// A retired question is kept but never offered again (D6).
     retired: bool,
+    /// Open disputes about it, by feedback id, no text (ADR-0011 D6): while
+    /// there is one, it is not offered.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    disputes: BTreeSet<FeedbackId>,
+    /// `good` feedback about it, by feedback id (ADR-0011 D6).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    praise: BTreeSet<FeedbackId>,
 }
 
 impl BankedQuestion {
@@ -51,6 +59,8 @@ impl BankedQuestion {
             added_at: now,
             asked: 1,
             retired: false,
+            disputes: BTreeSet::new(),
+            praise: BTreeSet::new(),
         })
     }
 
@@ -94,6 +104,33 @@ impl BankedQuestion {
         self.retired
     }
 
+    /// Whether an open dispute keeps it from being offered (ADR-0011 D6).
+    pub fn is_disputed(&self) -> bool {
+        !self.disputes.is_empty()
+    }
+
+    /// How much `good` feedback it has (ADR-0011 D6).
+    pub fn praise(&self) -> usize {
+        self.praise.len()
+    }
+
+    /// Record the dispute `id` (ADR-0011 D6).
+    pub fn dispute(&mut self, id: &FeedbackId) {
+        self.disputes.insert(id.clone());
+    }
+
+    /// Record the `good` feedback `id` (ADR-0011 D6).
+    pub fn commend(&mut self, id: &FeedbackId) {
+        self.praise.insert(id.clone());
+    }
+
+    /// Forget the feedback `id`: its dispute was resolved, or its learner
+    /// deleted (ADR-0011 D7, D8). Returns whether it was recorded here.
+    pub fn settle(&mut self, id: &FeedbackId) -> bool {
+        let disputed = self.disputes.remove(id);
+        self.praise.remove(id) || disputed
+    }
+
     /// Never offer this question again (D6).
     pub fn retire(&mut self) {
         self.retired = true;
@@ -122,10 +159,10 @@ impl BankedQuestion {
     }
 
     /// Whether this question is what `brief` asks for (ADR-0009 D4): not
-    /// retired, and of the brief's format, of a kind it offers, with code
-    /// as it allows (ADR-0007 D2).
+    /// retired or disputed (ADR-0011 D6), and of the brief's format, of a
+    /// kind it offers, with code as it allows (ADR-0007 D2).
     pub fn suits(&self, brief: &QuestionBrief) -> bool {
-        !self.retired && brief.check(&self.question).is_ok()
+        !self.retired && !self.is_disputed() && brief.check(&self.question).is_ok()
     }
 
     /// The question, to put in a session: counted as asked once more, and
@@ -203,7 +240,8 @@ impl SeenQuestions {
 /// Which of `bank`'s questions to ask for `brief` in round `round` (ADR-0009
 /// D4), if any: a question that suits the brief and that the learner may be
 /// shown (D5). Unseen questions first, then the least recently seen; among
-/// those, the brief's most preferred kind, then the oldest entry. `except`
+/// those, the brief's most preferred kind, then the one with the most `good`
+/// feedback (ADR-0011 D6), then the oldest entry. `except`
 /// are questions already in this round.
 pub fn pick(
     bank: &[BankedQuestion],
@@ -219,13 +257,20 @@ pub fn pick(
         .filter(|(_, q)| seen.may_show(q.id(), round, gap))
         .min_by_key(|(_, q)| {
             let kind_rank = brief.kinds.iter().position(|k| *k == q.kind());
-            (seen.last_seen(q.id()), kind_rank, q.added_at, q.id.clone())
+            let praise = std::cmp::Reverse(q.praise());
+            (
+                seen.last_seen(q.id()),
+                kind_rank,
+                praise,
+                q.added_at,
+                q.id.clone(),
+            )
         })
         .map(|(i, _)| i)
 }
 
 /// 64-bit FNV-1a of `text`, in hex.
-fn fnv(text: &str) -> String {
+pub(super) fn fnv(text: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in text.bytes() {
         hash ^= u64::from(byte);
@@ -359,5 +404,38 @@ mod tests {
         assert_eq!(pick(&bank, &brief(), &seen, 4, 3, &[a.id().clone()]), None);
         let open = QuestionBrief::new(QuestionFormat::Open, &[QuestionKind::Scenario], Vec::new());
         assert_eq!(pick(&bank, &open, &seen, 9, 3, &[]), None, "wrong format");
+    }
+
+    // @adr-0011-d6
+    #[test]
+    fn disputed_questions_are_not_offered_and_praised_ones_come_first() {
+        let mut a = BankedQuestion::new(&question("c", "A?"), Level::Novice, at(1)).unwrap();
+        let mut b = BankedQuestion::new(&question("c", "B?"), Level::Novice, at(2)).unwrap();
+        let seen = SeenQuestions::new(LearnerId("ada".into()));
+        b.commend(&FeedbackId("fb-good".into()));
+        assert_eq!(
+            pick(&[a.clone(), b.clone()], &brief(), &seen, 1, 3, &[]),
+            Some(1),
+            "more good feedback beats being older"
+        );
+        b.dispute(&FeedbackId("fb-1".into()));
+        assert!(!b.suits(&brief()));
+        assert_eq!(
+            pick(&[a.clone(), b.clone()], &brief(), &seen, 1, 3, &[]),
+            Some(0)
+        );
+        a.dispute(&FeedbackId("fb-2".into()));
+        assert_eq!(
+            pick(&[a.clone(), b.clone()], &brief(), &seen, 1, 3, &[]),
+            None
+        );
+        assert!(b.settle(&FeedbackId("fb-1".into())));
+        assert!(!b.settle(&FeedbackId("fb-1".into())));
+        assert!(b.suits(&brief()));
+        // Stored before feedback existed, it still loads.
+        let mut json = serde_json::to_value(&a).unwrap();
+        json.as_object_mut().unwrap().remove("disputes");
+        let loaded: BankedQuestion = serde_json::from_value(json).unwrap();
+        assert!(!loaded.is_disputed());
     }
 }

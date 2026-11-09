@@ -14,9 +14,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    BankId, BankedQuestion, ConceptId, Error, GradedSession, GradingJournal, Identity,
-    IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result, SeenQuestions,
-    Session, SessionKey,
+    AskedSession, BankId, BankedQuestion, ConceptId, Error, GradedSession, GradingJournal,
+    Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result,
+    SeenQuestions, Session, SessionKey,
 };
 
 #[derive(Debug, Default)]
@@ -30,6 +30,7 @@ struct Data {
     rounds: BTreeMap<String, PrRounds>,
     bank: BTreeMap<BankId, BankedQuestion>,
     seen: BTreeMap<LearnerId, SeenQuestions>,
+    asked: BTreeMap<SessionKey, AskedSession>,
 }
 
 /// `questions` in the order they were banked (ADR-0009 D1).
@@ -42,7 +43,8 @@ fn in_bank_order(mut questions: Vec<BankedQuestion>) -> Vec<BankedQuestion> {
 /// ephemeral mode.
 #[derive(Debug, Default)]
 pub struct InMemoryStore {
-    data: Mutex<Data>,
+    // Boxed, so a `Store` holding it stays small.
+    data: Mutex<Box<Data>>,
 }
 
 impl InMemoryStore {
@@ -71,6 +73,7 @@ impl StateStore for InMemoryStore {
             d.profiles.remove(learner);
             d.links.retain(|_, link| &link.learner != learner);
             d.seen.remove(learner);
+            d.asked.retain(|_, a| a.learner() != learner);
         });
         Ok(())
     }
@@ -166,13 +169,23 @@ impl StateStore for InMemoryStore {
         self.with(|d| d.seen.insert(seen.learner().clone(), seen.clone()));
         Ok(())
     }
+    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
+        Ok(self.with(|d| d.asked.get(key).cloned()))
+    }
+    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
+        self.with(|d| d.asked.insert(asked.key().clone(), asked.clone()));
+        Ok(())
+    }
+    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
+        Ok(self.with(|d| d.asked.values().cloned().collect()))
+    }
 }
 
 impl LearnerStore for InMemoryStore {}
 
 /// One JSON document per profile, link, link code, pending session, grading
-/// journal, graded session, pull request's rounds, bank question and
-/// learner's seen questions, under a directory. File names are the
+/// journal, graded session, pull request's rounds, bank question,
+/// learner's seen questions and asked session, under a directory. File names are the
 /// hex-encoded keys; bank questions are in a directory per concept.
 #[derive(Debug, Clone)]
 pub struct FileStore {
@@ -262,6 +275,11 @@ impl StateStore for FileStore {
             self.delete_link(&link.identity).await?;
         }
         self.remove("seen", &learner.0)?;
+        for asked in self.all::<AskedSession>("asked")? {
+            if asked.learner() == learner {
+                self.remove("asked", &asked.key().0)?;
+            }
+        }
         self.remove("profiles", &learner.0)
     }
     async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
@@ -355,6 +373,15 @@ impl StateStore for FileStore {
     }
     async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
         self.write("seen", &seen.learner().0, seen)
+    }
+    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
+        self.read("asked", &key.0)
+    }
+    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
+        self.write("asked", &asked.key().0, asked)
+    }
+    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
+        self.all("asked")
     }
 }
 
@@ -469,6 +496,15 @@ impl StateStore for Store {
     async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
         delegate!(self, save_seen(seen))
     }
+    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
+        delegate!(self, load_asked(key))
+    }
+    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
+        delegate!(self, save_asked(asked))
+    }
+    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
+        delegate!(self, asked_sessions())
+    }
 }
 
 impl LearnerStore for Store {}
@@ -508,6 +544,7 @@ mod tests {
                 StoreId::LearnerStore,
                 LearnerProfile::new(LearnerId(learner.into())),
             )],
+            asked: None,
         }
     }
 
@@ -735,6 +772,35 @@ mod tests {
         assert_eq!(store.load_seen(&cy).await.unwrap(), Some(seen));
         store.delete_learner(&cy).await.unwrap();
         assert!(store.load_seen(&cy).await.unwrap().is_none());
+
+        // Asked sessions, kept for feedback and deleted with their learner
+        // (ADR-0011 D1, D8).
+        let asked_by = |key: &str, learner: &LearnerId| {
+            AskedSession::new(
+                SessionKey(key.into()),
+                learner.clone(),
+                now,
+                &[first.question()],
+                &[],
+            )
+        };
+        let dee = LearnerId("dee".into());
+        let mine = asked_by("o/r#2@abc", &cy);
+        let theirs = asked_by("o/r#2@def", &dee);
+        assert!(store.load_asked(mine.key()).await.unwrap().is_none());
+        store.save_asked(&mine).await.unwrap();
+        store.save_asked(&mine).await.unwrap();
+        store.save_asked(&theirs).await.unwrap();
+        assert_eq!(
+            store.load_asked(mine.key()).await.unwrap(),
+            Some(mine.clone())
+        );
+        let mut all = store.asked_sessions().await.unwrap();
+        all.sort_by(|a, b| a.key().cmp(b.key()));
+        assert_eq!(all, vec![mine.clone(), theirs.clone()]);
+        store.delete_learner(&cy).await.unwrap();
+        assert!(store.load_asked(mine.key()).await.unwrap().is_none());
+        assert_eq!(store.asked_sessions().await.unwrap(), vec![theirs]);
 
         // Keys are used verbatim: no collisions between similar keys.
         for key in ["o/r#1@abc", "o/r#1@abc ", "O/R#1@ABC", "o/r#1@ab'c"] {

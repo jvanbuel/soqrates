@@ -12,6 +12,7 @@ mod learner_state;
 mod local_hooks;
 mod mcp_server;
 mod question_bank;
+mod question_feedback;
 mod question_kinds;
 mod spaced_repetition;
 

@@ -1,7 +1,7 @@
 # Dogfooding (ADR-0001 D14): Soqrates checks its own pull requests.
 #
 # - Runs on PR open/push, when someone comments `/soqrates ...` (or
-#   `/socrates ...`, or `@<app slug> answer`) on a PR, when the PR author
+#   `/socrates ...`, or `@<app slug> answer`/`feedback`) on a PR, when the PR author
 #   edits such a comment (ADR-0004 D8), and when a Soqrates question comment
 #   is edited (ticking a checkbox edits the comment, ADR-0004 D3). Edits made
 #   with the workflow's own token don't trigger workflows, so posting results
@@ -42,8 +42,10 @@ permissions:
 jobs:
   check:
     # Commands may be spelt `/soqrates` or `/socrates` (startsWith ignores
-    # case), or mention the app (`@<slug> answer`; the binary checks the
-    # slug), the prefixes of soqrates-core's answer_command (ADR-0004 D8).
+    # case), or mention the app (`@<slug> answer` or `@<slug> feedback`; the
+    # binary checks the slug), the prefixes of soqrates-core's
+    # answer_command (ADR-0004 D8). `/soqrates feedback ...` comments on the
+    # results (ADR-0011 D2) pass the same filter.
     # The PR author may fix a command by editing it. Other comment edits
     # count only on Soqrates' own question comment, and only once "Grade my
     # answers" is ticked, so ticking options starts no runs.
@@ -60,7 +62,8 @@ jobs:
           (startsWith(github.event.comment.body, '/soqrates') ||
             startsWith(github.event.comment.body, '/socrates') ||
             (startsWith(github.event.comment.body, '@') &&
-              contains(github.event.comment.body, ' answer')))) ||
+              (contains(github.event.comment.body, ' answer') ||
+                contains(github.event.comment.body, ' feedback'))))) ||
         (github.event.action == 'edited' &&
           endsWith(github.event.comment.user.login, '[bot]') &&
           contains(github.event.comment.body, 'soqrates:session=') &&

@@ -14,8 +14,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::ids::{AuthorId, ConceptId, Identity, QuestionId, SessionKey};
 
 mod bank;
+mod feedback;
 mod journal;
 pub use bank::{BankedQuestion, SeenQuestions, pick};
+pub use feedback::{
+    AskedQuestion, AskedSession, FEEDBACK_CLOSE, FEEDBACK_OPEN, FeedbackCommand, FeedbackGiven,
+    FeedbackId, FeedbackKind, FeedbackRequest, FeedbackStatus, MAX_FEEDBACK_CHARS,
+    QuestionFeedback, QuestionRef, ReviewerKey, clean_feedback_text,
+};
 pub use journal::{GradingJournal, StoreId};
 
 /// Whether a failed session blocks (ADR-0001 D8, D9).

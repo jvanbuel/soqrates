@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::delivery::{GradedSession, Session};
+use crate::delivery::{AskedSession, GradedSession, Session};
 use crate::ids::SessionKey;
 use crate::learner::LearnerProfile;
 
@@ -27,6 +27,11 @@ pub struct GradingJournal {
     pub graded: GradedSession,
     /// Each profile to save, whole, and the store it goes to.
     pub profiles: Vec<(StoreId, LearnerProfile)>,
+    /// The session's questions with the answers, kept for feedback in the
+    /// store the journal is in (ADR-0011 D1). `None` where nothing may be
+    /// kept, and in journals written before feedback existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<AskedSession>,
 }
 
 impl GradingJournal {

@@ -11,10 +11,10 @@ use crate::Result;
 use crate::app::engine::SessionOutcome;
 use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionBrief};
 use crate::delivery::{
-    BankedQuestion, CheckStatus, GradedSession, GradingJournal, PrRef, PrRounds, PullRequest,
-    SeenQuestions, Session,
+    AskedSession, BankedQuestion, CheckStatus, FeedbackCommand, FeedbackRequest, GradedSession,
+    GradingJournal, PrRef, PrRounds, PullRequest, SeenQuestions, Session,
 };
-use crate::ids::{ConceptId, Identity, LearnerId, SessionKey};
+use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 
 /// Persists learner profiles, identity links, link codes and pending
@@ -25,7 +25,8 @@ pub trait StateStore: Send + Sync {
         learner: &LearnerId,
     ) -> impl Future<Output = Result<Option<LearnerProfile>>> + Send;
     fn save_profile(&self, profile: &LearnerProfile) -> impl Future<Output = Result<()>> + Send;
-    /// Remove the profile and every link of `learner` (ADR-0003 D6).
+    /// Remove the profile, every link, what they were shown and every asked
+    /// session of `learner` (ADR-0003 D6, ADR-0009 D5, ADR-0011 D8).
     fn delete_learner(&self, learner: &LearnerId) -> impl Future<Output = Result<()>> + Send;
 
     /// The learner an identity is linked to, if any (ADR-0003 D1).
@@ -95,6 +96,17 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<SeenQuestions>>> + Send;
     /// Create or replace what `seen.learner()` was shown.
     fn save_seen(&self, seen: &SeenQuestions) -> impl Future<Output = Result<()>> + Send;
+
+    /// The questions of the graded session `key`, kept for feedback
+    /// (ADR-0011 D1).
+    fn load_asked(
+        &self,
+        key: &SessionKey,
+    ) -> impl Future<Output = Result<Option<AskedSession>>> + Send;
+    /// Create or replace the asked session `asked.key()`.
+    fn save_asked(&self, asked: &AskedSession) -> impl Future<Output = Result<()>> + Send;
+    /// Every asked session in this store, in any order (ADR-0011 D9).
+    fn asked_sessions(&self) -> impl Future<Output = Result<Vec<AskedSession>>> + Send;
 }
 
 /// The store holding the profiles of linked learners, reachable from several
@@ -380,6 +392,27 @@ pub trait ScmProvider: Send + Sync {
         session: Option<&Session>,
         current: &Session,
     ) -> impl Future<Output = Result<()>> + Send;
+    /// The PR author's feedback commands on `pr` that have not been
+    /// answered yet, oldest first (ADR-0011 D2). Commands by anyone else are
+    /// left out. Providers without comments have none.
+    fn feedback_commands(
+        &self,
+        _pr: &PrRef,
+        _author: &AuthorId,
+    ) -> impl Future<Output = Result<Vec<FeedbackCommand>>> + Send {
+        async { Ok(Vec::new()) }
+    }
+    /// Answer the feedback command `command` with `note`, once: that it was
+    /// recorded, or why not (ADR-0011 D2). `note` is Soqrates' own text,
+    /// never the author's.
+    fn answer_feedback(
+        &self,
+        _pr: &PrRef,
+        _command: &FeedbackCommand,
+        _note: &str,
+    ) -> impl Future<Output = Result<()>> + Send {
+        async { Ok(()) }
+    }
     /// Set the check status with a human-readable `summary`. The summary
     /// never mentions the learner's other identities (ADR-0003 D6).
     fn set_check(
@@ -400,4 +433,11 @@ pub trait Prompter {
     fn ask(&mut self, question: &Question) -> Result<Answer>;
     /// Show the outcome to the author.
     fn report(&mut self, outcome: &SessionOutcome);
+    /// Ask, once, whether the author has feedback on one of the questions
+    /// just reported (ADR-0011 D2); `None` to skip.
+    fn ask_feedback(&mut self, _outcome: &SessionOutcome) -> Result<Option<FeedbackRequest>> {
+        Ok(None)
+    }
+    /// Tell the author what became of their feedback.
+    fn feedback_noted(&mut self, _note: &str) {}
 }

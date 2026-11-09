@@ -226,12 +226,14 @@ Feature: The CI check is an asynchronous round trip
       | a file store      | 1      | being graded |
       | a file store      | 2      | being graded |
       | a file store      | 3      | being graded |
-      | a file store      | 4      | graded       |
+      | a file store      | 4      | being graded |
+      | a file store      | 5      | graded       |
       | a SQLite database | 0      | pending      |
       | a SQLite database | 1      | being graded |
       | a SQLite database | 2      | being graded |
       | a SQLite database | 3      | being graded |
-      | a SQLite database | 4      | graded       |
+      | a SQLite database | 4      | being graded |
+      | a SQLite database | 5      | graded       |
 
   @adr-0002-d6
   Scenario: Two simultaneous submissions grade the session once

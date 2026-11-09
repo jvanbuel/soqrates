@@ -8,17 +8,20 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
+use soqrates_core::answer_command::{
+    Command, hints_due, parse_answers, parse_feedback, read_command, read_feedback,
+};
 use soqrates_core::ports::{
     BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, Examiner, LearnerStore,
     Prompter, ScmProvider, StateStore,
 };
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, BankedQuestion, CheckStatus, CodeLocation, CodeSnippet, Concept,
-    ConceptId, ConceptScope, Diff, Error, Grade, GradedSession, Grading, GradingJournal, Identity,
-    IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question,
-    QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind, Result, SeenQuestions,
-    Session, SessionKey, SessionOutcome, SnippetOrigin, Weight,
+    Answer, AnswerBody, AskedSession, AuthorId, BankedQuestion, CheckStatus, CodeLocation,
+    CodeSnippet, Concept, ConceptId, ConceptScope, Diff, Error, FeedbackCommand, FeedbackRequest,
+    Grade, GradedSession, Grading, GradingJournal, Identity, IdentityLink, LearnerId,
+    LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionBrief,
+    QuestionFormat, QuestionId, QuestionKind, Result, SeenQuestions, Session, SessionKey,
+    SessionOutcome, SnippetOrigin, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -495,6 +498,9 @@ pub struct ScmState {
     /// What the author saw happen on the pull request, in order: check
     /// summaries, reactions and results (ADR-0004 D9).
     pub timeline: Vec<String>,
+    /// Soqrates' answers to feedback comments: the comment id and the note
+    /// (ADR-0011 D2).
+    pub feedback_notes: Vec<(u64, String)>,
 }
 
 /// A comment on a pull request, posted after the question comment of
@@ -877,6 +883,55 @@ impl ScmProvider for FakeScm {
         Ok(())
     }
 
+    /// The author's feedback comments not answered yet, each about the
+    /// session it was posted under if that session's results were posted,
+    /// as the GitHub adapter reads them (ADR-0011 D2, D4).
+    async fn feedback_commands(
+        &self,
+        pr: &PrRef,
+        author: &AuthorId,
+    ) -> Result<Vec<FeedbackCommand>> {
+        let state = self.state.lock().unwrap();
+        let slug = state.app_slug.clone();
+        Ok(state
+            .comments
+            .iter()
+            .filter(|c| c.pr == *pr && c.author == *author)
+            .filter(|c| !state.feedback_notes.iter().any(|(id, _)| *id == c.id))
+            .filter_map(|c| {
+                let request = read_feedback(&c.body, slug.as_deref())?;
+                let graded = state
+                    .results
+                    .iter()
+                    .any(|(p, k, _)| p == pr && *k == c.session);
+                Some(FeedbackCommand {
+                    source: format!("fake:{}", c.id),
+                    session: graded.then(|| c.session.clone()),
+                    request,
+                })
+            })
+            .collect())
+    }
+
+    async fn answer_feedback(
+        &self,
+        _pr: &PrRef,
+        command: &FeedbackCommand,
+        note: &str,
+    ) -> Result<()> {
+        let id = command
+            .source
+            .strip_prefix("fake:")
+            .and_then(|id| id.parse().ok())
+            .expect("a fake feedback source");
+        self.state
+            .lock()
+            .unwrap()
+            .feedback_notes
+            .push((id, note.to_string()));
+        Ok(())
+    }
+
     async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
         let mut state = self.state.lock().unwrap();
         state.checks.push((pr.clone(), status));
@@ -897,6 +952,11 @@ pub struct ScriptedPrompter {
     pub answer_correctly: bool,
     pub asked: Vec<Question>,
     pub reported: Vec<SessionOutcome>,
+    /// What the author types at the feedback prompt; Enter when `None`
+    /// (ADR-0011 D2).
+    pub feedback: Option<String>,
+    /// What the author was told about their feedback.
+    pub noted: Vec<String>,
 }
 
 impl Prompter for ScriptedPrompter {
@@ -907,6 +967,17 @@ impl Prompter for ScriptedPrompter {
 
     fn report(&mut self, outcome: &SessionOutcome) {
         self.reported.push(outcome.clone());
+    }
+
+    fn ask_feedback(&mut self, _outcome: &SessionOutcome) -> Result<Option<FeedbackRequest>> {
+        match self.feedback.take() {
+            None => Ok(None),
+            Some(line) => parse_feedback(&line).map(Some).map_err(Error::Invalid),
+        }
+    }
+
+    fn feedback_noted(&mut self, note: &str) {
+        self.noted.push(note.to_string());
     }
 }
 
@@ -1116,6 +1187,15 @@ impl StateStore for AnyStore {
     }
     async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
         write!(self, save_seen(seen))
+    }
+    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
+        delegate!(self, load_asked(key))
+    }
+    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
+        write!(self, save_asked(asked))
+    }
+    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
+        delegate!(self, asked_sessions())
     }
 }
 

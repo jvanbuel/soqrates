@@ -15,6 +15,8 @@
 //! check is reported as a commit status with context `soqrates`, which works
 //! with the Actions `GITHUB_TOKEN` given `statuses: write`. Authors are
 //! identified by host and numeric user id, never by login (ADR-0003 D1).
+//! The PR author's `/soqrates feedback` comments are about the results
+//! comment before them, and each gets one short answer (ADR-0011 D2).
 
 mod format;
 
@@ -26,16 +28,17 @@ use octocrab::models::issues::Comment;
 use soqrates_core::answer_command::{hints_due, parse_answers};
 use soqrates_core::ports::ScmProvider;
 use soqrates_core::{
-    Answer, AuthorId, CheckStatus, Diff, Error, PrRef, PullRequest, Result, Session, SessionKey,
-    SessionOutcome,
+    Answer, AuthorId, CheckStatus, Diff, Error, FeedbackCommand, PrRef, PullRequest, Result,
+    Session, SessionKey, SessionOutcome,
 };
 
 use crate::format::{
-    AnswerComment, AnswerSource, EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, boxes_read,
-    commit_status, diff_of_files, editor_database_id, graphql_base, hinted_comment, host_of,
-    is_slug, marker_key, merge_answers, parse_checkboxes, render_graded_questions, render_hint,
-    render_questions, render_results, render_superseded_questions, select_answer_comment,
-    session_marker, split_repo, takes_answers,
+    AnswerComment, AnswerSource, EDITOR_QUERY, ListedComment, STATUS_CONTEXT, StatusState,
+    author_id, boxes_read, commit_status, diff_of_files, editor_database_id, graphql_base,
+    hinted_comment, host_of, is_slug, marker_key, merge_answers, parse_checkboxes,
+    render_feedback_note, render_graded_questions, render_hint, render_questions, render_results,
+    render_superseded_questions, select_answer_comment, select_feedback, session_marker,
+    split_repo, takes_answers,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -59,6 +62,9 @@ pub struct GitHubProvider {
     /// How the answers found by `fetch_answers` were submitted, for
     /// `acknowledge_answers` and `post_results`.
     submissions: Mutex<HashMap<SessionKey, Submission>>,
+    /// The URL of each feedback comment found by `feedback_commands`, by
+    /// comment id, for `answer_feedback`.
+    feedback_urls: Mutex<HashMap<u64, String>>,
 }
 
 /// How a session's answers were submitted (ADR-0004 D8, D9).
@@ -109,6 +115,7 @@ impl GitHubProvider {
             head_shas: Mutex::new(HashMap::new()),
             app_slug: None,
             submissions: Mutex::new(HashMap::new()),
+            feedback_urls: Mutex::new(HashMap::new()),
         })
     }
 
@@ -320,6 +327,12 @@ fn question_comment<'a>(comments: &'a [Comment], marker: &str) -> Option<&'a Com
     comments
         .iter()
         .find(|c| c.body.as_deref().is_some_and(|b| b.contains(marker)))
+}
+
+/// Where a feedback comment came from: its forge and id, so the same
+/// comment counts once (ADR-0011 D2).
+fn feedback_source(host: &str, comment_id: u64) -> String {
+    format!("{host}:comment:{comment_id}")
 }
 
 fn repo(pr: &PrRef) -> Result<(&str, &str)> {
@@ -588,6 +601,72 @@ impl ScmProvider for GitHubProvider {
                 "mark question comment superseded",
             )
             .await?;
+        }
+        Ok(())
+    }
+
+    async fn feedback_commands(
+        &self,
+        pr: &PrRef,
+        author: &AuthorId,
+    ) -> Result<Vec<FeedbackCommand>> {
+        let comments = self.comments(pr).await?;
+        let listed: Vec<ListedComment> = comments
+            .iter()
+            .map(|c| ListedComment {
+                id: c.id.into_inner(),
+                user: c.user.id.into_inner(),
+                author: self.author(c.user.id.into_inner()),
+                body: c.body.clone().unwrap_or_default(),
+            })
+            .collect();
+        let selected = select_feedback(&listed, &author.0, self.app_slug());
+        if let Ok(mut urls) = self.feedback_urls.lock() {
+            for (id, ..) in &selected {
+                if let Some(c) = comments.iter().find(|c| c.id.into_inner() == *id) {
+                    urls.insert(*id, c.html_url.to_string());
+                }
+            }
+        }
+        Ok(selected
+            .into_iter()
+            .map(|(id, session, request)| FeedbackCommand {
+                source: feedback_source(&self.host, id),
+                session,
+                request,
+            })
+            .collect())
+    }
+
+    async fn answer_feedback(
+        &self,
+        pr: &PrRef,
+        command: &FeedbackCommand,
+        note: &str,
+    ) -> Result<()> {
+        let Some(id) = command
+            .source
+            .rsplit_once(':')
+            .and_then(|(_, id)| id.parse::<u64>().ok())
+        else {
+            return Ok(());
+        };
+        let url = self
+            .feedback_urls
+            .lock()
+            .ok()
+            .and_then(|urls| urls.get(&id).cloned())
+            .unwrap_or_default();
+        let (owner, name) = repo(pr)?;
+        // Best effort, like a hint: the feedback is recorded already, and
+        // the next run answers it if this fails.
+        if let Err(e) = self
+            .client()?
+            .issues(owner, name)
+            .create_comment(pr.number, render_feedback_note(id, &url, note))
+            .await
+        {
+            eprintln!("warning: could not answer a feedback comment: {e}");
         }
         Ok(())
     }
