@@ -6,5 +6,6 @@ pub mod engine;
 pub mod events;
 pub mod hook;
 pub mod ports;
+mod state;
 
 pub use engine::{Config, ProfileLocation, SessionOutcome, Soqrates};
