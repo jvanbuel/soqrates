@@ -2979,7 +2979,7 @@ dependencies = [
 
 [[package]]
 name = "soqrates-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "clap",
@@ -2998,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "soqrates-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "rs-fsrs",
@@ -3009,7 +3009,7 @@ dependencies = [
 
 [[package]]
 name = "soqrates-examiner"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "futures",
  "globset",
@@ -3024,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "soqrates-mcp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "rmcp",
@@ -3037,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "soqrates-scm-github"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "octocrab",
@@ -3047,7 +3047,7 @@ dependencies = [
 
 [[package]]
 name = "soqrates-spec"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cargo_metadata",
  "chrono",
@@ -3062,7 +3062,7 @@ dependencies = [
 
 [[package]]
 name = "soqrates-store"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "serde",
