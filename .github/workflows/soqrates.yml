@@ -3,7 +3,8 @@
 # - Runs on PR open/push, when someone comments `/soqrates ...` (or
 #   `/socrates ...`, or `@<app slug> answer`) on a PR, when the PR author
 #   edits such a comment (ADR-0004 D8), and when a Soqrates question comment
-#   is edited (ticking a checkbox edits the comment, ADR-0004 D3). Edits made
+#   is edited (ticking a checkbox or typing into an open question's answer
+#   field edits the comment, ADR-0004 D3, D11). Edits made
 #   with the workflow's own token don't trigger workflows, so posting results
 #   doesn't loop.
 # - On every push to main it builds and caches main's binary (job `warm`):
@@ -46,7 +47,10 @@ jobs:
     # slug), the prefixes of soqrates-core's answer_command (ADR-0004 D8).
     # The PR author may fix a command by editing it. Other comment edits
     # count only on Soqrates' own question comment, and only once "Grade my
-    # answers" is ticked, so ticking options starts no runs.
+    # answers" is ticked, so ticking options and typing into answer fields
+    # (ADR-0004 D11) start no runs. The binary reads the comment itself, so
+    # text typed into a field that merely looks like a ticked box starts a
+    # run that finds nothing submitted.
     # Pull requests by bots (Dependabot) and release PRs (release-plz, even
     # when opened with a personal token) have nobody to ask.
     if: >-

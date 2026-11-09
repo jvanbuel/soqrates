@@ -2,8 +2,10 @@
 
 Soqrates runs as a GitHub Action (ADR-0006). On every pull request it asks the
 author a few questions about the concepts in their change, as a comment. The
-author answers by ticking boxes or with a `/soqrates answer` comment, and gets
-the results in a new comment. `/socrates answer`, any letter case, and, when
+author answers in that comment, ticking boxes for multiple choice and typing
+open answers into the answer field under each open question, then ticks
+**Grade my answers**; authors who can't edit the comment answer with a
+`/soqrates answer` comment instead. They get the results in a new comment. `/socrates answer`, any letter case, and, when
 Soqrates posts as your own app, `@<app slug> answer` work too. A mistyped
 command gets a hint, and an answer comment can be edited until it is graded.
 While the answers are graded, the comment that submitted them shows 👀, then
@@ -43,8 +45,8 @@ jobs:
     # `/soqrates ...` and `/socrates ...` comments (startsWith ignores case)
     # and comments starting with a mention that say "answer", also when the
     # PR author edits them, and when Soqrates' own question comment is
-    # edited with "Grade my answers" ticked, so ticking an option doesn't
-    # start a run.
+    # edited with "Grade my answers" ticked, so ticking an option or typing
+    # into an answer field doesn't start a run.
     if: >-
       (github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot') ||
       (github.event.issue.pull_request && (

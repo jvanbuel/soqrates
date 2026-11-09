@@ -1,14 +1,15 @@
-//! Steps for `answer_commands.feature` (ADR-0004 D8, D9): answer comments as
-//! text, read with the forgiving answer command, hints for mistyped commands
-//! and the acknowledgement of submitted answers, on the fake forge (ADR-0001
-//! D12).
+//! Steps for `answer_commands.feature` and `answer_fields.feature` (ADR-0004
+//! D8, D9, D11): answer comments as text, read with the forgiving answer
+//! command, hints for mistyped commands, answers typed into the question
+//! comment and the acknowledgement of submitted answers, on the fake forge
+//! (ADR-0001 D12).
 
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 use soqrates_core::{QuestionBody, Session};
 
-use super::correctness;
-use crate::fakes::{CORRECT_TEXT, Reaction, Submitter, WRONG_TEXT};
+use super::{author, correctness};
+use crate::fakes::{CORRECT_TEXT, FakeExaminer, Reaction, Submitter, WRONG_TEXT};
 use crate::world::SpecWorld;
 
 fn latest_posted(w: &SpecWorld) -> Session {
@@ -84,10 +85,12 @@ fn results_correct(w: &mut SpecWorld, n: usize) {
 
 /// A row of "the author saw, in order" as the start of a timeline entry.
 fn timeline_entry(w: &SpecWorld, row: &str) -> String {
-    let comment = Submitter::Comment(that_comment(w));
+    let on = |submitter: Submitter, reaction: Reaction| format!("{submitter:?}: {reaction:?}");
     match row {
-        "👀 on the answer comment" => format!("{comment:?}: {:?}", Reaction::Eyes),
-        "✅ on the answer comment" => format!("{comment:?}: {:?}", Reaction::Done),
+        "👀 on the answer comment" => on(Submitter::Comment(that_comment(w)), Reaction::Eyes),
+        "✅ on the answer comment" => on(Submitter::Comment(that_comment(w)), Reaction::Done),
+        "👀 on the question comment" => on(Submitter::QuestionComment, Reaction::Eyes),
+        "✅ on the question comment" => on(Submitter::QuestionComment, Reaction::Done),
         other => other.to_string(),
     }
 }
@@ -111,27 +114,106 @@ fn saw_in_order(w: &mut SpecWorld, step: &Step) {
     }
 }
 
-fn reactions_on_that_comment(w: &SpecWorld) -> Vec<Reaction> {
-    let comment = Submitter::Comment(that_comment(w));
+fn reactions_on(w: &SpecWorld, submitter: Submitter) -> Vec<Reaction> {
     w.scm
         .state
         .lock()
         .unwrap()
         .reactions
         .iter()
-        .filter(|(s, _)| *s == comment)
+        .filter(|(s, _)| *s == submitter)
         .map(|(_, r)| *r)
         .collect()
 }
 
-#[then("the answer comment shows only ✅")]
-fn only_done(w: &mut SpecWorld) {
-    assert_eq!(reactions_on_that_comment(w), vec![Reaction::Done]);
+/// The answer comment (the latest comment) or the question comment.
+fn submitter(w: &SpecWorld, which: &str) -> Submitter {
+    match which {
+        "answer" => Submitter::Comment(that_comment(w)),
+        "question" => Submitter::QuestionComment,
+        other => panic!("expected answer or question, got {other:?}"),
+    }
 }
 
-#[then("the answer comment shows no reaction")]
-fn no_reaction(w: &mut SpecWorld) {
-    assert_eq!(reactions_on_that_comment(w), vec![]);
+#[then(regex = r"^the (answer|question) comment shows only ✅$")]
+fn only_done(w: &mut SpecWorld, which: String) {
+    assert_eq!(reactions_on(w, submitter(w, &which)), vec![Reaction::Done]);
+}
+
+#[then(regex = r"^the (answer|question) comment shows no reaction$")]
+fn no_reaction(w: &mut SpecWorld, which: String) {
+    assert_eq!(reactions_on(w, submitter(w, &which)), vec![]);
+}
+
+// ---------------------------------------------------------------------------
+// Answering inside the question comment (ADR-0004 D11)
+
+/// `by` edits the question comment of the latest session: ticks options and
+/// types open answers into the answer fields, as the answer key says is
+/// correct or wrong, and ticks "Grade my answers" or not.
+#[given(
+    regex = r#"^(the author|"[^"]+") types (correct|wrong) answers into the question comment (and ticks|without ticking) "Grade my answers"$"#
+)]
+#[when(
+    regex = r#"^(the author|"[^"]+") types (correct|wrong) answers into the question comment (and ticks|without ticking) "Grade my answers"$"#
+)]
+fn types_into_question_comment(w: &mut SpecWorld, who: String, how: String, done: String) {
+    let session = latest_posted(w);
+    let by = match who.as_str() {
+        "the author" => session.author().clone(),
+        quoted => author(quoted.trim_matches('"')),
+    };
+    let answers = session
+        .questions()
+        .iter()
+        .map(|q| FakeExaminer::answer(q, correctness(&how)))
+        .collect();
+    w.scm
+        .edit_question_comment(session.key(), &by, answers, done == "and ticks");
+}
+
+#[given(
+    regex = r#"^the author comments "([^"]*)" answering only question (\d+) (correctly|wrongly)$"#
+)]
+#[when(
+    regex = r#"^the author comments "([^"]*)" answering only question (\d+) (correctly|wrongly)$"#
+)]
+fn comments_one(w: &mut SpecWorld, command: String, n: usize, how: String) {
+    let session = latest_posted(w);
+    let full = answer_comment(&session, &command, correctness(&how));
+    // The command line, then only the line of question `n`.
+    let mut lines = full.lines();
+    let mut body = lines.next().unwrap_or_default().to_string();
+    let line = lines
+        .find(|l| l.starts_with(&format!("{n}. ")))
+        .unwrap_or_else(|| panic!("no question {n}"));
+    body.push('\n');
+    body.push_str(line);
+    let pr = w.current_pr().clone();
+    w.scm.comment(&pr, session.key(), session.author(), &body);
+}
+
+#[then("every posted question is an open question")]
+fn all_open(w: &mut SpecWorld) {
+    let session = latest_posted(w);
+    assert!(!session.questions().is_empty(), "no questions were posted");
+    for q in session.questions() {
+        assert!(
+            matches!(q.body, QuestionBody::Open { .. }),
+            "not an open question: {q:?}"
+        );
+    }
+}
+
+#[then(regex = r"^the posted result for question (\d+) is (correct|wrong)$")]
+fn result_n(w: &mut SpecWorld, n: usize, how: String) {
+    let state = w.scm.state.lock().unwrap();
+    let (_, _, outcome) = state.results.last().expect("no results posted");
+    let r = outcome
+        .results
+        .get(n - 1)
+        .unwrap_or_else(|| panic!("no result for question {n}"));
+    assert_eq!(r.is_correct(), correctness(&how), "result: {r:?}");
 }
 
 #[then(regex = r#"^the check never said "([^"]+)"$"#)]
