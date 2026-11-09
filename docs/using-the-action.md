@@ -120,6 +120,11 @@ commit SHA if you prefer.
 Questions are multiple choice. To give experts open questions instead, set
 `SOQRATES_OPEN_QUESTIONS: "true"` in the job's `env` (ADR-0002 D5).
 
+Each wrong answer gets a new question about its concept in a follow-up
+comment, at most two rounds, and the check waits for it. To change the
+number of rounds, or turn them off, set `SOQRATES_MAX_FOLLOW_UPS` (e.g.
+`"0"`) in the job's `env` (ADR-0010 D2).
+
 Without the key of the chosen provider, for example on pull requests from
 forks, which get no secrets, the action skips the check with a notice.
 

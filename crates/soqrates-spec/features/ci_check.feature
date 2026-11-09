@@ -77,6 +77,7 @@ Feature: The CI check is an asynchronous round trip
   @adr-0001-d8 @adr-0001-d4
   Scenario: Advisory is the default mode for the check
     Given the default configuration
+    And Soqrates asks no follow-up rounds
     And the Soqrates check has run
     And the author replies with wrong answers
     When the Soqrates check runs

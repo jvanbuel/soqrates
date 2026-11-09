@@ -9,6 +9,7 @@ Feature: Local hooks share one entry point
   @adr-0001-d9
   Scenario Outline: In the default Advisory mode a failed quiz is reported but allowed
     Given the default configuration
+    And Soqrates asks no follow-up rounds
     And the author will answer wrongly at the terminal
     When "email:jan@example.com" runs the <hook> hook on a change touching "rust.ownership", "rust.traits"
     Then the hook allows it
@@ -90,3 +91,29 @@ Feature: Local hooks share one entry point
     When 30 days pass
     And "email:jan@example.com" runs the pre-push hook on a change touching "tokio.select"
     Then the author was asked about "rust.ownership", "tokio.select", in that order
+
+  @adr-0010-d7
+  Scenario Outline: A wrong answer at the terminal gets a follow-up question right away
+    Given Soqrates runs in Blocking mode
+    And Soqrates asks at most 1 follow-up round
+    And the author will answer wrongly at the terminal
+    When "email:jan@example.com" runs the <hook> hook on a change touching "rust.ownership", "rust.traits"
+    Then the hook blocks it
+    And the author was asked about "rust.ownership", "rust.traits", "rust.ownership", "rust.traits", in that order
+    And 2 results were reported to the author, the last one failed
+    And the history of "email:jan@example.com" has 2 graded answers
+
+    Examples:
+      | hook       |
+      | pre-commit |
+      | pre-push   |
+
+  @adr-0010-d7 @adr-0010-d4
+  Scenario: A follow-up answered correctly at the terminal allows a blocked quiz
+    Given Soqrates runs in Blocking mode
+    And Soqrates asks at most 2 follow-up rounds
+    And the author will answer the first 2 questions wrongly, then correctly, at the terminal
+    When "email:jan@example.com" runs the pre-commit hook on a change touching "rust.ownership", "rust.traits"
+    Then the hook allows it
+    And the author was asked 4 questions at the terminal
+    And 2 results were reported to the author, the last one passed

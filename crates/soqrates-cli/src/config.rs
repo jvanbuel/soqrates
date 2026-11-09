@@ -19,6 +19,9 @@ pub struct File {
     pub pass_threshold: Option<f64>,
     /// Whether experts get open questions (ADR-0002 D5). Off by default.
     pub open_questions: Option<bool>,
+    /// Follow-up rounds per session at most, for wrong answers (ADR-0010
+    /// D2). 0 turns them off.
+    pub max_follow_ups: Option<u32>,
     /// Where the local learner store lives.
     pub state_dir: Option<PathBuf>,
     /// Forge host -> the identity to use there (ADR-0003 D7).
@@ -66,6 +69,7 @@ impl File {
         self.max_questions = over.max_questions.or(self.max_questions);
         self.pass_threshold = over.pass_threshold.or(self.pass_threshold);
         self.open_questions = over.open_questions.or(self.open_questions);
+        self.max_follow_ups = over.max_follow_ups.or(self.max_follow_ups);
         self.state_dir = over.state_dir.or(self.state_dir);
         self.identities.extend(over.identities);
         self

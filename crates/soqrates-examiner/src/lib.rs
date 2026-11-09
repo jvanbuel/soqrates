@@ -177,6 +177,18 @@ impl Examiner for RigExaminer {
     ) -> Result<Question> {
         self.core.write_question(concept, brief, code).await
     }
+    async fn write_follow_up(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        previous: &Question,
+        answer: Option<&Answer>,
+        code: &impl Codebase,
+    ) -> Result<Question> {
+        self.core
+            .write_follow_up(concept, brief, previous, answer, code)
+            .await
+    }
     async fn grade(
         &self,
         question: &Question,
