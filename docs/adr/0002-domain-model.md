@@ -139,14 +139,22 @@ cost of questions that are too easy.
 ### D5: Format rule
 **Enforcement:** automated
 
-This defines the "mix" from ADR-0001 D7 (gap G3). The `i`-th question
-(0-based) of a session has format `format_for(level, i)`:
+This makes ADR-0001 D7 precise. Every question of a session has the same
+format, `format_for(level, open_questions)`:
 
-| Level | Format |
-|---|---|
-| Novice | always multiple choice |
-| Intermediate | multiple choice when `i` is even, open when `i` is odd |
-| Expert | always open |
+| Level | `open_questions` off (default) | `open_questions` on |
+|---|---|---|
+| Novice | multiple choice | multiple choice |
+| Intermediate | multiple choice | multiple choice |
+| Expert | multiple choice | open |
+
+Intermediates used to alternate, multiple choice on even and open on odd
+questions; a round that switches formats midway read as arbitrary, so no
+level mixes formats any more. Open questions are off by default until their
+grading has been evaluated; `open_questions = true` in the configuration
+(or `SOQRATES_OPEN_QUESTIONS=true`) turns them on for experts. Open
+questions already asked, e.g. carried into a later round (D9), are still
+graded as open.
 
 The kind of each question is chosen by the examiner, steered by the level
 (ADR-0007 D2).

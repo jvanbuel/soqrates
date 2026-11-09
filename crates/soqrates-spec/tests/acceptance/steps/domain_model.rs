@@ -15,9 +15,8 @@ use soqrates_core::policy::{DEMOTE_AFTER, PROMOTE_AFTER, format_for, next_level}
 use soqrates_core::ports::Clock;
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, ConceptId, ConceptScope, DomainEvent, Error, Grade, GradedAnswer,
-    Identity, LearnerEvent, LearnerId, LearnerProfile, Level, Question, QuestionBody,
-    QuestionFormat, QuestionId, QuestionKind, Session, SessionEvent, SessionKey, SessionOutcome,
-    SessionResult,
+    Identity, LearnerEvent, LearnerId, LearnerProfile, Question, QuestionBody, QuestionFormat,
+    QuestionId, QuestionKind, Session, SessionEvent, SessionKey, SessionOutcome, SessionResult,
 };
 
 use super::{author, concepts, format, grade, level};
@@ -328,24 +327,20 @@ fn policy_next_level(w: &mut SpecWorld, current: String, reviews: String, expect
 // ---------------------------------------------------------------------------
 // D5: format rule
 
-#[then(regex = r"^the question at index (\d+) for an? (\w+) author is (multiple-choice|open)$")]
-fn format_at(_w: &mut SpecWorld, index: usize, lvl: String, fmt: String) {
+#[then(
+    regex = r"^questions for an? (\w+) author with open questions (on|off) are (multiple-choice|open)$"
+)]
+fn format_for_level(_w: &mut SpecWorld, lvl: String, open: String, fmt: String) {
     assert_eq!(
-        format_for(level(&lvl), index),
+        format_for(level(&lvl), open == "on"),
         format(&fmt),
-        "format of question {index} for a {lvl} author"
+        "format for a {lvl} author with open questions {open}"
     );
 }
 
-#[then(
-    regex = r"^the questions at indices (\d+) to (\d+) for an? (\w+) author are (.+), in that order$"
-)]
-fn formats_from_to(_w: &mut SpecWorld, from: usize, to: usize, lvl: String, list: String) {
-    let want: Vec<QuestionFormat> = plain_list(&list).iter().map(|f| format(f)).collect();
-    assert_eq!(want.len(), to - from + 1, "one format per index");
-    let lvl: Level = level(&lvl);
-    let got: Vec<QuestionFormat> = (from..=to).map(|i| format_for(lvl, i)).collect();
-    assert_eq!(got, want, "formats for a {lvl:?} author");
+#[then("open questions are off in the default configuration")]
+fn open_off_by_default(_w: &mut SpecWorld) {
+    assert!(!soqrates_core::Config::default().open_questions);
 }
 
 // ---------------------------------------------------------------------------

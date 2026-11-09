@@ -57,6 +57,9 @@ struct Cli {
     /// Whether a failed session blocks.
     #[arg(long, global = true, value_enum, env = "SOQRATES_MODE")]
     mode: Option<ModeName>,
+    /// Give experts open questions (off by default: multiple choice only).
+    #[arg(long, global = true, env = "SOQRATES_OPEN_QUESTIONS")]
+    open_questions: Option<bool>,
     #[command(subcommand)]
     command: Command,
 }
@@ -142,6 +145,7 @@ fn settings(cli: &Cli, project_root: Option<&std::path::Path>) -> Result<config:
     Ok(file.overlay(config::File {
         model: cli.model.clone(),
         mode: cli.mode,
+        open_questions: cli.open_questions,
         state_dir: cli.state_dir.clone(),
         ..config::File::default()
     }))
@@ -155,6 +159,7 @@ async fn build_app(cli: &Cli, settings: &config::File) -> Result<App, String> {
     let core = soqrates_core::Config {
         max_questions: settings.max_questions.unwrap_or(defaults.max_questions),
         pass_threshold: settings.pass_threshold.unwrap_or(defaults.pass_threshold),
+        open_questions: settings.open_questions.unwrap_or(defaults.open_questions),
         mode: settings.mode.map(Into::into).unwrap_or(defaults.mode),
         ..defaults
     };

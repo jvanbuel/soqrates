@@ -51,6 +51,10 @@ pub struct Config {
     /// Fraction of correct answers needed to pass, in `0.0..=1.0`.
     pub pass_threshold: f64,
     pub mode: Mode,
+    /// Whether experts get open questions (ADR-0002 D5). Off: everyone
+    /// gets multiple choice.
+    #[serde(default)]
+    pub open_questions: bool,
     /// Forge host -> the organisation that administers it (ADR-0003 D2, D5).
     pub forges: BTreeMap<String, String>,
 }
@@ -61,6 +65,7 @@ impl Default for Config {
             max_questions: 5,
             pass_threshold: 0.6,
             mode: Mode::Advisory,
+            open_questions: false,
             forges: BTreeMap::new(),
         }
     }
@@ -373,7 +378,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             // The format follows the level (ADR-0002 D5); the kind is the
             // examiner's choice among those the level allows, and the
             // question must be what was asked for (ADR-0007 D2, D4).
-            let format = policy::format_for(level, questions.len());
+            let format = policy::format_for(level, self.config.open_questions);
             let asked: Vec<QuestionKind> = questions.iter().map(|q| q.kind).collect();
             let brief = QuestionBrief::new(
                 format,

@@ -39,39 +39,22 @@ fn at_least_one(w: &mut SpecWorld, f: String) {
     );
 }
 
-#[then("the session mixes multiple-choice and open questions")]
-fn mixes(w: &mut SpecWorld) {
-    let f = formats(session(w));
-    assert!(
-        f.contains(&QuestionFormat::MultipleChoice) && f.contains(&QuestionFormat::Open),
-        "formats: {f:?}"
-    );
-}
-
 #[then(regex = r"^the question formats follow the policy for (\w+) authors$")]
 fn follow_policy(w: &mut SpecWorld, lvl: String) {
     let lvl = level(&lvl);
     let s = session(w);
     assert!(!s.questions().is_empty(), "the session asks nothing");
-    let want: Vec<_> = (0..s.questions().len())
-        .map(|i| format_for(lvl, i))
-        .collect();
-    assert_eq!(formats(s), want, "formats for a {lvl:?} author");
+    let want = format_for(lvl, w.app.config.open_questions);
+    assert!(
+        formats(s).iter().all(|f| *f == want),
+        "formats for a {lvl:?} author: {:?}",
+        formats(s)
+    );
 }
 
-#[then(
-    regex = r"^the first (\d+) questions for an? (\w+) author are (all multiple-choice|all open|a mix of multiple-choice and open)$"
-)]
-fn first_questions(_w: &mut SpecWorld, n: usize, lvl: String, expect: String) {
-    let lvl = level(&lvl);
-    let f: Vec<_> = (0..n).map(|i| format_for(lvl, i)).collect();
-    let mc = f.contains(&QuestionFormat::MultipleChoice);
-    let open = f.contains(&QuestionFormat::Open);
-    match expect.as_str() {
-        "all multiple-choice" => assert!(mc && !open, "{lvl:?}: {f:?}"),
-        "all open" => assert!(open && !mc, "{lvl:?}: {f:?}"),
-        _ => assert!(mc && open, "{lvl:?}: {f:?}"),
-    }
+#[given("open questions are enabled")]
+fn open_questions_enabled(w: &mut SpecWorld) {
+    w.app.config.open_questions = true;
 }
 
 #[given(regex = r"^an? (\w+) author with a history of (\d+) (correct|wrong) answers?$")]
