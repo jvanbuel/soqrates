@@ -13,8 +13,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::ports::{LearnerStore, StateStore};
 use soqrates_core::{
-    Error, GradedSession, GradingJournal, Identity, IdentityLink, LearnerId, LearnerProfile,
-    LinkCode, PrRef, PrRounds, Result, Session, SessionKey,
+    BankedQuestion, ConceptId, Error, GradedSession, GradingJournal, Identity, IdentityLink,
+    LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result, SeenQuestions, Session,
+    SessionKey,
 };
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
 use sqlx::{AnyConnection, AnyPool, Connection, Row};
@@ -58,6 +59,17 @@ const SCHEMA: &[&str] = &[
     // Also added within version 1 (ADR-0002 D6).
     "CREATE TABLE IF NOT EXISTS soqrates_gradings (
         session_key TEXT PRIMARY KEY,
+        doc TEXT NOT NULL
+    )",
+    // The question bank, also within version 1 (ADR-0009 D1).
+    "CREATE TABLE IF NOT EXISTS soqrates_bank (
+        id TEXT PRIMARY KEY,
+        concept TEXT NOT NULL,
+        doc TEXT NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS soqrates_bank_by_concept ON soqrates_bank (concept)",
+    "CREATE TABLE IF NOT EXISTS soqrates_seen (
+        learner TEXT PRIMARY KEY,
         doc TEXT NOT NULL
     )",
 ];
@@ -234,6 +246,8 @@ impl SqlStore {
             "soqrates_graded",
             "soqrates_gradings",
             "soqrates_rounds",
+            "soqrates_bank",
+            "soqrates_seen",
         ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
                 .execute(&self.pool)
@@ -290,10 +304,11 @@ impl StateStore for SqlStore {
         .await
     }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        // Both or neither (ADR-0003 D6).
+        // All or nothing (ADR-0003 D6, ADR-0009 D5).
         let mut tx = self.pool.begin().await.map_err(db)?;
         for sql in [
             "DELETE FROM soqrates_links WHERE learner = $1",
+            "DELETE FROM soqrates_seen WHERE learner = $1",
             "DELETE FROM soqrates_profiles WHERE learner = $1",
         ] {
             sqlx::query(sql)
@@ -481,6 +496,48 @@ impl StateStore for SqlStore {
             "INSERT INTO soqrates_rounds (pr, doc) VALUES ($1, $2)
              ON CONFLICT (pr) DO UPDATE SET doc = excluded.doc",
             &[&rounds.pr().id(), &to_json(rounds)?],
+        )
+        .await
+    }
+
+    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
+        let rows = sqlx::query("SELECT id, doc FROM soqrates_bank WHERE concept = $1")
+            .bind(concept.0.clone())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        let mut questions = rows
+            .iter()
+            .map(|row| {
+                let id: String = row.try_get(0).map_err(db)?;
+                let doc: String = row.try_get(1).map_err(db)?;
+                from_json::<BankedQuestion>("bank question", &id, &doc)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        questions.sort_by(|a, b| (a.added_at(), a.id()).cmp(&(b.added_at(), b.id())));
+        Ok(questions)
+    }
+    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
+        self.exec(
+            "INSERT INTO soqrates_bank (id, concept, doc) VALUES ($1, $2, $3)
+             ON CONFLICT (id) DO UPDATE SET concept = excluded.concept, doc = excluded.doc",
+            &[&question.id().0, &question.concept().0, &to_json(question)?],
+        )
+        .await
+    }
+    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
+        self.fetch_doc(
+            "SELECT doc FROM soqrates_seen WHERE learner = $1",
+            "seen questions",
+            &learner.0,
+        )
+        .await
+    }
+    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
+        self.exec(
+            "INSERT INTO soqrates_seen (learner, doc) VALUES ($1, $2)
+             ON CONFLICT (learner) DO UPDATE SET doc = excluded.doc",
+            &[&seen.learner().0, &to_json(seen)?],
         )
         .await
     }

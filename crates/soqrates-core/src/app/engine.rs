@@ -12,9 +12,10 @@ use crate::assessment::{
     QuestionKind, Weight,
 };
 use crate::delivery::{
-    GradedSession, GradingJournal, Mode, PrRef, PrRounds, QuestionResult, Session, StoreId,
+    BankedQuestion, GradedSession, GradingJournal, Mode, PrRef, PrRounds, QuestionResult,
+    SeenQuestions, Session, StoreId, pick,
 };
-use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
+use crate::ids::{AuthorId, BankId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, Level, LinkCode, LinkRejection, policy};
 use crate::{Error, Result};
 
@@ -57,6 +58,21 @@ pub struct Config {
     pub open_questions: bool,
     /// Forge host -> the organisation that administers it (ADR-0003 D2, D5).
     pub forges: BTreeMap<String, String>,
+    /// Whether rounds reuse questions from the question bank (ADR-0009).
+    #[serde(default = "default_true")]
+    pub question_bank: bool,
+    /// A learner is shown a bank question at most once within this many
+    /// rounds (ADR-0009 D5).
+    #[serde(default = "default_reask_after_rounds")]
+    pub reask_after_rounds: u64,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_reask_after_rounds() -> u64 {
+    10
 }
 
 impl Default for Config {
@@ -67,6 +83,8 @@ impl Default for Config {
             mode: Mode::Advisory,
             open_questions: false,
             forges: BTreeMap::new(),
+            question_bank: true,
+            reask_after_rounds: default_reask_after_rounds(),
         }
     }
 }
@@ -78,6 +96,9 @@ pub struct Soqrates<S, E, C> {
     /// and for profiles local to a forge when the learner store is
     /// unreachable (D4). Keyed by organisation.
     pub org_stores: BTreeMap<String, S>,
+    /// A question bank shared across organisations, if the deployment has
+    /// one; otherwise each organisation's store holds its own (ADR-0009 D2).
+    pub shared_bank: Option<S>,
     pub examiner: E,
     pub clock: C,
     pub config: Config,
@@ -101,6 +122,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         Self {
             store,
             org_stores: BTreeMap::new(),
+            shared_bank: None,
             examiner,
             clock,
             config,
@@ -110,6 +132,13 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// Add the store of `organisation` (ADR-0003 D5).
     pub fn with_org_store(mut self, organisation: impl Into<String>, store: S) -> Self {
         self.org_stores.insert(organisation.into(), store);
+        self
+    }
+
+    /// Keep the question bank in `store`, shared across organisations,
+    /// instead of in each organisation's store (ADR-0009 D2).
+    pub fn with_shared_bank(mut self, store: S) -> Self {
+        self.shared_bank = Some(store);
         self
     }
 
@@ -145,6 +174,25 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         Ok(self
             .org_store_for(&author.identity()?)?
             .unwrap_or(&self.store))
+    }
+
+    /// The store holding the question bank for `author`'s rounds (ADR-0009
+    /// D2): the shared bank if there is one, else the store of `author`'s
+    /// sessions. Never the shared learner store: with organisation stores
+    /// configured, an author outside every organisation gets no bank.
+    /// `None` when the bank is off.
+    fn bank_store_for(&self, author: &AuthorId) -> Result<Option<&S>> {
+        if !self.config.question_bank {
+            return Ok(None);
+        }
+        if let Some(shared) = &self.shared_bank {
+            return Ok(Some(shared));
+        }
+        match self.org_store_for(&author.identity()?)? {
+            Some(store) => Ok(Some(store)),
+            None if self.org_stores.is_empty() => Ok(Some(&self.store)),
+            None => Ok(None),
+        }
     }
 
     /// An opaque learner ID, derived from `identity` but not revealing it
@@ -315,7 +363,12 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// remaining slots. New concepts in `skip`, or that the author knows and
     /// isn't due to review, are left out, as are incidental ones; concepts
     /// in `skip` whose review is due are still asked. The examiner may read
-    /// `code`, the codebase of the change (ADR-0008 D2). Persists nothing.
+    /// `code`, the codebase of the change (ADR-0008 D2).
+    ///
+    /// Each question comes from the question bank if it has one that suits
+    /// and that the author may be shown; only otherwise is one written, and
+    /// banked if it may be (ADR-0009 D4). Persists the bank and what the
+    /// author was shown (D5), nothing else.
     pub async fn compose_questions(
         &self,
         author: &AuthorId,
@@ -374,6 +427,17 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             .into_iter()
             .take(n_reviews)
             .chain(new.into_iter().take(n_new));
+        let mut bank = match self.bank_store_for(author)? {
+            Some(store) => {
+                let seen = store
+                    .load_seen(&place.learner)
+                    .await?
+                    .unwrap_or_else(|| SeenQuestions::new(place.learner.clone()));
+                Some((store, seen))
+            }
+            None => None,
+        };
+        let round = bank.as_ref().map_or(0, |(_, seen)| seen.next_round());
         for concept in concepts {
             // The format follows the level (ADR-0002 D5); the kind is the
             // examiner's choice among those the level allows, and the
@@ -385,14 +449,88 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 &policy::kinds_for(level, format, &asked),
                 diff.hunks_at(&concept.locations),
             );
-            let mut q = self.examiner.write_question(&concept, &brief, code).await?;
-            brief
-                .check(&q)
-                .map_err(|why| Error::Port(format!("examiner: {why}")))?;
-            q.scope = concept.scope;
+            let q = match &mut bank {
+                Some((store, seen)) => {
+                    let in_round: Vec<BankId> = questions
+                        .iter()
+                        .filter_map(|q| q.banked.as_ref().map(|b| b.id.clone()))
+                        .collect();
+                    self.banked_or_written(
+                        *store, seen, round, &in_round, &concept, &brief, level, code,
+                    )
+                    .await?
+                }
+                None => self.written(&concept, &brief, code).await?,
+            };
             questions.push(q);
         }
+        if let Some((store, mut seen)) = bank {
+            seen.end_round(round);
+            store.save_seen(&seen).await?;
+        }
         Ok(questions)
+    }
+
+    /// A question about `concept` that the examiner writes as `brief` asks,
+    /// checked to be what was asked for (ADR-0007 D2, D4).
+    async fn written(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        code: &impl Codebase,
+    ) -> Result<Question> {
+        let mut q = self.examiner.write_question(concept, brief, code).await?;
+        brief
+            .check(&q)
+            .map_err(|why| Error::Port(format!("examiner: {why}")))?;
+        q.scope = concept.scope;
+        Ok(q)
+    }
+
+    /// A question about `concept` for round `round`: from the bank in
+    /// `store` if one suits `brief` and the learner may be shown it (not one
+    /// of `in_round`), else written and banked if it may be (ADR-0009 D3,
+    /// D4). Records in `seen` that the learner was shown it (D5).
+    #[allow(clippy::too_many_arguments)]
+    async fn banked_or_written(
+        &self,
+        store: &S,
+        seen: &mut SeenQuestions,
+        round: u64,
+        in_round: &[BankId],
+        concept: &Concept,
+        brief: &QuestionBrief,
+        level: Level,
+        code: &impl Codebase,
+    ) -> Result<Question> {
+        let mut bank = store.bank_questions(&concept.id).await?;
+        let gap = self.config.reask_after_rounds;
+        if let Some(i) = pick(&bank, brief, seen, round, gap, in_round) {
+            let entry = &mut bank[i];
+            // Asked as it is: the stored question, in this concept's scope.
+            let mut q = entry.take();
+            q.scope = concept.scope;
+            store.save_bank_question(entry).await?;
+            seen.show(entry.id(), round);
+            return Ok(q);
+        }
+        let mut q = self.written(concept, brief, code).await?;
+        let Some(new) = BankedQuestion::new(&q, level, self.clock.now()) else {
+            return Ok(q);
+        };
+        // The same question written again is banked once.
+        let entry = match bank.iter_mut().find(|e| e.id() == new.id()) {
+            Some(existing) if existing.is_retired() => return Ok(q),
+            Some(existing) => {
+                existing.take();
+                existing.clone()
+            }
+            None => new,
+        };
+        store.save_bank_question(&entry).await?;
+        seen.show(entry.id(), round);
+        q.banked = Some(entry.reference());
+        Ok(q)
     }
 
     /// Concepts `place`'s learner has a review card for, in either store,
@@ -851,7 +989,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     pub async fn delete_learner(&self, author: &AuthorId) -> Result<()> {
         self.recover().await?;
         let learner = self.resolve_in(&author.identity()?, &self.store).await?;
-        for store in self.all_stores() {
+        for store in self.all_stores().chain(self.shared_bank.iter()) {
             store.delete_learner(&learner).await?;
         }
         Ok(())
