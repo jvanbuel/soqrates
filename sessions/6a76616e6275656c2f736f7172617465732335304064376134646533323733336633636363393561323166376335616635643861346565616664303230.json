@@ -1,0 +1,161 @@
+{
+  "author": "github.com:16427728",
+  "created_at": "2026-11-09T21:40:27.015842306Z",
+  "key": "jvanbuel/soqrates#50@d7a4de32733f3ccc95a21f7c5af5d8a4eeafd020",
+  "questions": [
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "python",
+            "origin": "General",
+            "text": "def new_side(hunk_lines, start):\n    # start: the number after '+' in the hunk header\n    out = []\n    n = start\n    for line in hunk_lines:\n        if line.startswith(\"+\") or line.startswith(\" \"):\n            out.append((n, line[1:]))\n        n += 1\n    return out"
+          },
+          "correct": 1,
+          "options": [
+            "Context lines (starting with a space) should be skipped, because only added lines belong to the new side.",
+            "The counter advances on removed lines too, so after any `-` line every later number is too high.",
+            "The counter should start from the `-` number of the header, not the `+` number.",
+            "The slice `line[1:]` should not be used, because the leading `+` or space is part of the code line."
+          ],
+          "prompt": "This function takes the lines of one hunk of a unified diff, plus the number after `+` in its `@@ -a,b +c,d @@` header. It is meant to return each new-side line (context and added) with its line number in the new file. For hunks that contain removed lines, the numbers come out wrong. Which line is the bug, and why?",
+          "reasons": [
+            "Context lines are present in both the old and new files, so they do have new-side line numbers. Skipping them would drop real lines and also leave gaps in the numbering.",
+            "In a unified diff, `-` lines exist only in the old file. The counter, which starts from the `+` number of the header, must advance only for context and added lines. Advancing it for every line shifts all numbers after a removal.",
+            "The `-` number is the old-file position. The question asks for new-file lines, so the `+` number is the right start.",
+            "The first character is only the diff marker, not file content. Stripping it is correct, and keeping it would put a stray character in front of every line."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "git.unified-diff.format",
+      "explanation": "In a unified diff, `-` lines exist only in the old file. The counter, which starts from the `+` number of the header, must advance only for context and added lines. Advancing it for every line shifts all numbers after a removal.",
+      "id": "git.unified-diff.format/mc",
+      "kind": "SpotTheBug",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "fn clip(text: &str, max: usize) -> &str {\n    let head = &text[..max];\n    match head.rfind('\\n') {\n        Some(n) if n > 0 => &head[..=n],\n        _ => head,\n    }\n}\n\nfn main() {\n    let out = clip(\"\\nabcdef\", 5);\n    println!(\"{:?}\", out);\n}"
+          },
+          "correct": 1,
+          "options": [
+            "It prints \"\\n\", because the last newline is found and the text is cut right after it.",
+            "It prints \"\\nabcd\", the whole 5-byte head.",
+            "It panics, because the guard makes the match non-exhaustive for `Some(0)`.",
+            "It prints \"\", because a newline at the start leaves nothing worth keeping."
+          ],
+          "prompt": "The function below trims text to a byte budget and tries to end on a line boundary. The match on the `Option` returned by `rfind` has a guard on its `Some` arm. What does the program print, and why?",
+          "reasons": [
+            "This ignores the guard. A `Some(n)` pattern with `if n > 0` matches only when the guard is true, and here n is 0, so the cut arm is never taken.",
+            "`rfind` returns `Some(0)` because the only newline is at index 0. The guard `n > 0` is false, so the arm is skipped and the wildcard arm returns the whole head. The guard stops the cut from keeping only a bare newline.",
+            "The match is exhaustive. The wildcard arm covers `None` and also `Some` values that fail the guard, so `Some(0)` falls through to it and nothing panics.",
+            "Nothing in the code produces an empty string. The fallback arm returns `head` unchanged, not an empty slice."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "rust.control-flow.option-match-filter",
+      "explanation": "`rfind` returns `Some(0)` because the only newline is at index 0. The guard `n > 0` is false, so the arm is skipped and the wildcard arm returns the whole head. The guard stops the cut from keeping only a bare newline.",
+      "id": "rust.control-flow.option-match-filter/mc",
+      "kind": "PredictOutcome",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "impl<D: DocumentStore> StateStore for D {\n    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {\n        get(self, Kind::Profile, &learner.0).await\n    }\n    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {\n        put(self, Kind::Profile, &profile.learner().0, profile).await\n    }\n    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {\n        let key = &profile.learner().0;\n        let stored = self.load(Kind::Profile, key).await?;\n        let version = match &stored {\n            Some(doc) => decode::<LearnerProfile>(Kind::Profile, key, doc.clone())?.version(),\n            None => 0,\n        };\n        if version != profile.version() {"
+          },
+          "correct": 1,
+          "options": [
+            "It makes the profile version check atomic, because the blanket impl runs the load and the comparison inside one critical section.",
+            "Any type that implements only the document port automatically gets the typed state API. Encoding, decoding and the version check are written once in the core, so a new backend never repeats them or knows about profiles and sessions.",
+            "It lets the engine choose between the memory, file and SQL backends at runtime through a trait object, because the generic impl erases the concrete backend type.",
+            "Each backend must still write its own `StateStore` impl. The blanket impl only supplies default helper methods that it can override."
+          ],
+          "prompt": "The change implements `StateStore` with `impl<D: DocumentStore> StateStore for D`, and `save_profile_if_current` loads the stored document, decodes it and compares versions here instead of in each backend. What does this design give the codebase?",
+          "reasons": [
+            "The blanket impl adds no locking. The load and the comparison are separate steps, and atomicity comes from the backend's `swap`, which only replaces the document if it is still the one that was read.",
+            "A blanket impl over every `DocumentStore` gives each backend the typed `StateStore` for free. Serialisation, decoding and the version check for `save_profile_if_current` live in one place, and the backend only stores documents and offers `load` and `swap`.",
+            "A generic impl is resolved at compile time per concrete type and erases nothing. It is unrelated to runtime backend selection, and traits with `impl Future` return types are not usable as trait objects anyway.",
+            "A blanket impl is a full implementation, not a set of default methods. A backend does not write its own `StateStore`, and a second impl for the same type would conflict with the blanket one."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "architecture.ports-and-adapters.blanket-impl",
+      "explanation": "A blanket impl over every `DocumentStore` gives each backend the typed `StateStore` for free. Serialisation, decoding and the version check for `save_profile_if_current` live in one place, and the backend only stores documents and offers `load` and `swap`.",
+      "id": "architecture.ports-and-adapters.blanket-impl/mc",
+      "kind": "ExplainYourChange",
+      "scope": "Project"
+    },
+    {
+      "banked": {
+        "id": "bank-3674bc27c325b6a0",
+        "version": 1
+      },
+      "body": {
+        "MultipleChoice": {
+          "correct": 3,
+          "options": [
+            "Both saves succeed: each passes the version check against version 3 and writes version 4, and the later write simply overwrites the earlier one, which is harmless.",
+            "The first check of the loaded version against the profile's version already makes the save safe, so the later swap is only a redundant second check and could be replaced by a plain write.",
+            "Both saves are rejected, because two writers holding the same expected version are a conflict and neither can be trusted to go first.",
+            "Exactly one save returns true and stores version 4. The other returns false and stores nothing, and its caller must reload the profile and retry. The comparison inside the swap is what decides, because it is atomic with the write."
+          ],
+          "prompt": "Two processes, for example two commit hooks, both load the same learner's profile at version 3. Each updates its own copy and then calls a save that first loads the stored profile and compares its version with the version of the profile it holds. It then replaces the stored document with the new version 4 profile, but only if the stored document is still the one it loaded. Both run at nearly the same moment. What happens, and why is the final replace step needed in addition to the version comparison?",
+          "reasons": [
+            "This is the lost update that optimistic concurrency exists to prevent. The second writer's changes would be built on stale data and would silently erase the first writer's changes.",
+            "The first check and a plain write are two separate steps, so another writer can save between them. Both writers would then pass the check and both would write, losing an update. The atomic swap closes that gap.",
+            "Compare-and-swap guarantees exactly one winner, not zero. Rejecting both would make progress impossible under contention.",
+            "The earlier load-and-compare can pass for both writers, since each ran it before either wrote. Only the swap compares the stored document with the expected one and replaces it as one indivisible step, serialised for example by a mutex or file lock. So the first swap wins and the second sees a changed document, returns false and changes nothing."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "concurrency.atomic.compare-and-swap",
+      "explanation": "The earlier load-and-compare can pass for both writers, since each ran it before either wrote. Only the swap compares the stored document with the expected one and replaces it as one indivisible step, serialised for example by a mutex or file lock. So the first swap wins and the second sees a changed document, returns false and changes nothing.",
+      "id": "concurrency.atomic.compare-and-swap/mc",
+      "kind": "Scenario",
+      "scope": "General"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {\n    let _lock = self.lock(to)?;\n    let Some(pending) = self.find(from, key)? else {\n        return Ok(false);\n    };\n    if self.find(to, key)?.is_some() {\n        return Ok(false);\n    }\n    remove_file(&pending)?;\n    self.put(to, key, doc)?;\n    Ok(true)\n}"
+          },
+          "correct": 3,
+          "options": [
+            "The lock is taken on the target kind rather than the source kind, so two concurrent claims of the same key can both succeed.",
+            "The check for an existing target document should come after the removal, so that the removal and the existence check form a single step.",
+            "The function returns `Ok(false)` instead of an error when the source is missing, which hides a lost session from the caller.",
+            "The source file is removed before the target is written, so a crash between the two steps loses the record entirely, with neither source nor target left on disk."
+          ],
+          "prompt": "This is a claim for a file-backed store with no transactions. It moves a pending record into a grading journal under the same key, as one logical step, and the process can be stopped at any moment, for example by a crash or a kill. The store is meant to survive such a stop without losing data. Which line is the bug, and why?",
+          "reasons": [
+            "Claims for the same key all contend on the same target-kind lock, so they are serialised. The lock is not the problem in this snippet.",
+            "Moving the check after the removal would make a refused claim destroy the pending record. The check must come first so that a `false` result changes nothing.",
+            "Returning `false` with no change is the intended contract for a missing source or an existing target. It is how callers learn that someone else already claimed it, and it does not risk data loss.",
+            "A file backend has no transaction to roll back. The target must be written first so that a stop in between leaves both records, which a later retry or cleanup can resolve. Removing first can leave neither."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "storage.crash-safe-claim.ordering",
+      "explanation": "A file backend has no transaction to roll back. The target must be written first so that a stop in between leaves both records, which a later retry or cleanup can resolve. Removing first can leave neither.",
+      "id": "storage.crash-safe-claim.ordering/mc",
+      "kind": "SpotTheBug",
+      "scope": "Project"
+    }
+  ]
+}

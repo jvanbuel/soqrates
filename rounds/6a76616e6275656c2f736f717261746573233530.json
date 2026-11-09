@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "number": 50,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-09T21:40:27.015842306Z",
+      "concepts": [
+        "git.unified-diff.format",
+        "rust.control-flow.option-match-filter",
+        "architecture.ports-and-adapters.blanket-impl",
+        "concurrency.atomic.compare-and-swap",
+        "storage.crash-safe-claim.ordering"
+      ],
+      "head": "d7a4de32733f3ccc95a21f7c5af5d8a4eeafd020",
+      "session": "jvanbuel/soqrates#50@d7a4de32733f3ccc95a21f7c5af5d8a4eeafd020"
+    }
+  ]
+}
