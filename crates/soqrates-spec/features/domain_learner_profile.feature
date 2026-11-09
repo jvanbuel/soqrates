@@ -184,29 +184,21 @@ Feature: The learner profile aggregate
   # D5: format rule
 
   @adr-0002-d5
-  Scenario Outline: The format of each question follows the level
-    Then the question at index <index> for a <level> author is <format>
+  Scenario Outline: The format of every question follows the level
+    Then questions for a <level> author with open questions <open> are <format>
 
     Examples:
-      | level        | index | format          |
-      | Novice       | 0     | multiple-choice |
-      | Novice       | 1     | multiple-choice |
-      | Novice       | 2     | multiple-choice |
-      | Novice       | 7     | multiple-choice |
-      | Intermediate | 0     | multiple-choice |
-      | Intermediate | 1     | open            |
-      | Intermediate | 2     | multiple-choice |
-      | Intermediate | 3     | open            |
-      | Intermediate | 10    | multiple-choice |
-      | Intermediate | 11    | open            |
-      | Expert       | 0     | open            |
-      | Expert       | 1     | open            |
-      | Expert       | 2     | open            |
-      | Expert       | 7     | open            |
+      | level        | open | format          |
+      | Novice       | off  | multiple-choice |
+      | Novice       | on   | multiple-choice |
+      | Intermediate | off  | multiple-choice |
+      | Intermediate | on   | multiple-choice |
+      | Expert       | off  | multiple-choice |
+      | Expert       | on   | open            |
 
   @adr-0002-d5
-  Scenario: An intermediate gets alternating formats, starting with multiple choice
-    Then the questions at indices 0 to 5 for an Intermediate author are multiple-choice, open, multiple-choice, open, multiple-choice, open, in that order
+  Scenario: Open questions are off by default
+    Then open questions are off in the default configuration
 
   # -------------------------------------------------------------------------
   # D7: domain events emitted by the learner profile

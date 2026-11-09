@@ -62,8 +62,12 @@ allows, in this order of preference:
 | Level | Multiple choice | Open |
 |---|---|---|
 | Novice | `PredictOutcome`, `SpotTheBug`, `Scenario`, `ChooseTheFix` | n/a |
-| Intermediate | `SpotTheBug`, `ChooseTheFix`, `PredictOutcome`, `Scenario` | `ExplainYourChange`, `PredictOutcome`, `Scenario`, `SpotTheBug` |
-| Expert | n/a | `ExplainYourChange`, `SpotTheBug`, `Scenario`, `PredictOutcome` |
+| Intermediate | `SpotTheBug`, `ChooseTheFix`, `PredictOutcome`, `Scenario` | n/a |
+| Expert | `ExplainYourChange`, `SpotTheBug`, `Scenario`, `PredictOutcome` | the same |
+
+Since ADR-0002 D5 no longer mixes formats, intermediates get no open
+questions, and experts get multiple choice unless open questions are
+enabled; an expert's preference is the same in either format.
 
 Rounds mix kinds: kinds already asked in the session move to the back of
 the list, keeping their order (`policy::kinds_for`). The examiner takes

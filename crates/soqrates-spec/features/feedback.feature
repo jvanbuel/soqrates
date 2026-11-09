@@ -45,7 +45,8 @@ Feature: Feedback after grading
 
   @adr-0004-d1
   Scenario Outline: An open result carries the examiner's feedback
-    Given "github:1001" is a known Expert author
+    Given open questions are enabled
+    And "github:1001" is a known Expert author
     And "github:1001" starts a session for a change touching "rust.traits"
     When "github:1001" answers every question <how>
     Then the result for "rust.traits" is <verdict>

@@ -35,6 +35,7 @@ Configuration lives in `~/.config/soqrates/config.toml`, overlaid by
 model = "anthropic:claude-sonnet-5-5"
 mode = "advisory"          # or "blocking"
 max_questions = 5          # a cap: rounds ask only what the change and your history call for
+open_questions = false     # true: experts get open questions; off by default, so everyone gets multiple choice
 [identities]
 "github.com" = "github.com:1001"
 ```
@@ -81,7 +82,8 @@ on every PR, and posts the questions as a PR comment (ADR-0004):
 
 - **Multiple choice:** tick one option per question, then tick
   **Grade my answers**.
-- **Open questions** (and authors who can't tick boxes) answer with a comment:
+- **Open questions** (asked only of experts, and only with `open_questions`
+  on), and authors who can't tick boxes, answer with a comment:
 
   ```
   /soqrates answer

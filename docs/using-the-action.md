@@ -117,6 +117,9 @@ commit SHA if you prefer.
 | `app-id`, `app-private-key` | | Post as your own GitHub App instead of github-actions[bot]; see [Posting as your own app](#posting-as-your-own-app). |
 | `app-slug` | the app's slug | Authors may answer with `@<app-slug> answer`. Taken from the app token when `app-id` is set; set it only to override that. |
 
+Questions are multiple choice. To give experts open questions instead, set
+`SOQRATES_OPEN_QUESTIONS: "true"` in the job's `env` (ADR-0002 D5).
+
 Without the key of the chosen provider, for example on pull requests from
 forks, which get no secrets, the action skips the check with a notice.
 

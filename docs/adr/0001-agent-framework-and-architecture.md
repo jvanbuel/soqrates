@@ -196,10 +196,12 @@ because reviews happen once per change, not in drills.
 **Enforcement:** automated
 
 Each profile has a `Level` (`Novice`, `Intermediate`, `Expert`). New authors
-start as `Novice`. Novices get multiple-choice questions, experts get open
-questions, and intermediates get a mix. The level goes up after sustained
+start as `Novice`. Novices and intermediates get multiple-choice questions.
+Experts get open questions when open questions are enabled
+(`open_questions`, off by default); otherwise they get multiple choice too.
+A session never alternates formats. The level goes up after sustained
 correct answers and down after sustained wrong ones. ADR-0002 D4 and D5 make
-"sustained" and "mix" precise.
+"sustained" and the format rule precise.
 
 ### D8: CI check is an asynchronous round trip
 **Enforcement:** automated

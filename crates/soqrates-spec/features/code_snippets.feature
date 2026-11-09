@@ -10,7 +10,8 @@ Feature: Questions with code from the change
 
   @adr-0007-d4 @adr-0007-d5
   Scenario: A question of kind explain_your_change shows a hunk from the pull request's diff, in its language
-    Given "github:1001" is a known Expert author
+    Given open questions are enabled
+    And "github:1001" is a known Expert author
     And a pull request "jvanbuel/soqrates#15" by "github:1001" at head "abc123" whose change to "src/billing.rs" is:
       """
       // concept: rust.errors.try-operator

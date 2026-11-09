@@ -116,6 +116,7 @@ type App = Soqrates<InMemoryStore, FakeExaminer, FakeClock>;
 
 fn setup(
     max_questions: usize,
+    open_questions: bool,
 ) -> (
     Arc<App>,
     SoqratesMcp<InMemoryStore, FakeExaminer, FakeClock>,
@@ -125,6 +126,7 @@ fn setup(
     )));
     let config = Config {
         max_questions,
+        open_questions,
         ..Config::default()
     };
     let app = Arc::new(Soqrates::new(
@@ -156,20 +158,21 @@ fn keys(value: &Value, out: &mut Vec<String>) {
 
 #[tokio::test]
 async fn start_session_never_reveals_the_answer_key() {
-    let (_, mcp) = setup(4);
+    // With open questions on, experts get open questions (ADR-0002 D5): the
+    // author answers correctly until promoted to Expert (ADR-0002 D4), and
+    // every session on the way, in either format, is checked.
+    let (_, mcp) = setup(4, true);
     let author = "github.com:1001";
-    // Raise the author to Intermediate (6 correct answers, ADR-0002 D4) so
-    // the last session mixes both formats.
+    let mut formats = std::collections::BTreeSet::new();
     // New concepts each round: a concept answered correctly isn't asked
     // again until it is due (ADR-0002 D10).
-    let mut out = Value::Null;
-    for round in 0..3 {
+    for round in 0..6 {
         let concepts: Vec<String> = ["a", "b", "c", "d"]
             .iter()
             .map(|c| format!("{c}{round}"))
             .collect();
         let concepts: Vec<&str> = concepts.iter().map(String::as_str).collect();
-        out = mcp
+        let out = mcp
             .call_tool(
                 "start_session",
                 json!({"author": author, "diff": diff(&concepts),
@@ -177,32 +180,36 @@ async fn start_session_never_reveals_the_answer_key() {
             )
             .await
             .expect("start_session");
-        let answers: Vec<Value> = out["questions"]
-            .as_array()
-            .unwrap()
+        assert_no_answer_key(&out);
+        let questions = out["questions"].as_array().unwrap();
+        let session: std::collections::BTreeSet<&str> = questions
+            .iter()
+            .map(|q| q["format"].as_str().unwrap())
+            .collect();
+        assert_eq!(session.len(), 1, "a session never mixes formats: {out}");
+        formats.extend(session.iter().map(|f| f.to_string()));
+        let answers: Vec<Value> = questions
             .iter()
             .map(|q| match q["format"].as_str().unwrap() {
                 "MultipleChoice" => json!({"question": q["id"], "choice": RIGHT}),
                 _ => json!({"question": q["id"], "text": "right"}),
             })
             .collect();
-        if round < 2 {
-            mcp.call_tool(
-                "submit_answers",
-                json!({"session_key": format!("k{round}"), "answers": answers}),
-            )
-            .await
-            .expect("submit_answers");
-        }
+        mcp.call_tool(
+            "submit_answers",
+            json!({"session_key": format!("k{round}"), "answers": answers}),
+        )
+        .await
+        .expect("submit_answers");
     }
+    assert!(formats.contains("MultipleChoice"), "{formats:?}");
+    assert!(formats.contains("Open"), "{formats:?}");
+}
 
+/// `out`, a `start_session` result, reveals no answer key: no correct
+/// option, rubric or explanation.
+fn assert_no_answer_key(out: &Value) {
     let questions = out["questions"].as_array().unwrap();
-    let formats: Vec<&str> = questions
-        .iter()
-        .map(|q| q["format"].as_str().unwrap())
-        .collect();
-    assert!(formats.contains(&"MultipleChoice"), "{out}");
-    assert!(formats.contains(&"Open"), "{out}");
     for q in questions {
         assert!(q["prompt"].is_string(), "{q}");
         if q["format"] == "MultipleChoice" {
@@ -216,7 +223,7 @@ async fn start_session_never_reveals_the_answer_key() {
     assert!(questions.iter().any(|q| q["code"].is_object()), "{out}");
 
     let mut all = Vec::new();
-    keys(&out, &mut all);
+    keys(out, &mut all);
     for leak in ["correct", "correct_option", "rubric", "answer", "body"] {
         assert!(!all.iter().any(|k| k == leak), "{leak:?} leaked in {out}");
     }
@@ -232,7 +239,7 @@ async fn start_session_never_reveals_the_answer_key() {
 
 #[tokio::test]
 async fn a_full_session_through_the_tools_matches_the_engine() {
-    let (app, mcp) = setup(3);
+    let (app, mcp) = setup(3, false);
     let author = "email:jan@example.com";
     let started = mcp
         .call_tool(
@@ -298,7 +305,7 @@ async fn a_full_session_through_the_tools_matches_the_engine() {
 
 #[tokio::test]
 async fn unknown_tools_and_bad_arguments_are_invalid() {
-    let (_, mcp) = setup(3);
+    let (_, mcp) = setup(3, false);
     let cases = [
         ("delete_everything", json!({})),
         ("get_learner_profile", json!({})),
@@ -327,7 +334,7 @@ async fn unknown_tools_and_bad_arguments_are_invalid() {
 
 #[tokio::test]
 async fn engine_errors_pass_through() {
-    let (_, mcp) = setup(3);
+    let (_, mcp) = setup(3, false);
     let r = mcp
         .call_tool(
             "submit_answers",

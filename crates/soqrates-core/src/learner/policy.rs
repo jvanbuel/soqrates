@@ -12,15 +12,13 @@ pub const PROMOTE_AFTER: usize = 6;
 /// an author one level (ADR-0002 D4).
 pub const DEMOTE_AFTER: usize = 3;
 
-/// The format of the `index`-th (0-based) question of a session for an
-/// author at `level` (ADR-0002 D5): Novice always multiple choice; Expert
-/// always open; Intermediate multiple choice on even and open on odd indices.
-pub fn format_for(level: Level, index: usize) -> QuestionFormat {
+/// The format of every question for an author at `level` (ADR-0002 D5):
+/// multiple choice, unless open questions are enabled and the author is an
+/// Expert. A session never alternates formats.
+pub fn format_for(level: Level, open_questions: bool) -> QuestionFormat {
     match level {
-        Level::Novice => QuestionFormat::MultipleChoice,
-        Level::Intermediate if index.is_multiple_of(2) => QuestionFormat::MultipleChoice,
-        Level::Intermediate => QuestionFormat::Open,
-        Level::Expert => QuestionFormat::Open,
+        Level::Expert if open_questions => QuestionFormat::Open,
+        _ => QuestionFormat::MultipleChoice,
     }
 }
 
@@ -34,15 +32,13 @@ pub fn kinds_for(
     format: QuestionFormat,
     asked: &[QuestionKind],
 ) -> Vec<QuestionKind> {
-    use QuestionFormat::{MultipleChoice, Open};
     use QuestionKind::*;
-    let preferred: &[QuestionKind] = match (level, format) {
-        (Level::Novice, _) => &[PredictOutcome, SpotTheBug, Scenario, ChooseTheFix],
-        (Level::Intermediate, MultipleChoice) => {
-            &[SpotTheBug, ChooseTheFix, PredictOutcome, Scenario]
-        }
-        (Level::Intermediate, Open) => &[ExplainYourChange, PredictOutcome, Scenario, SpotTheBug],
-        (Level::Expert, _) => &[ExplainYourChange, SpotTheBug, Scenario, PredictOutcome],
+    // One preference per level, whatever the format (ADR-0002 D5 no longer
+    // mixes formats); kinds that don't fit `format` are dropped below.
+    let preferred: &[QuestionKind] = match level {
+        Level::Novice => &[PredictOutcome, SpotTheBug, Scenario, ChooseTheFix],
+        Level::Intermediate => &[SpotTheBug, ChooseTheFix, PredictOutcome, Scenario],
+        Level::Expert => &[ExplainYourChange, SpotTheBug, Scenario, PredictOutcome],
     };
     let fitting = preferred.iter().copied().filter(|k| k.fits(format));
     let (fresh, repeated): (Vec<_>, Vec<_>) = fitting.partition(|k| !asked.contains(k));
@@ -109,8 +105,9 @@ mod tests {
             kinds_for(Level::Intermediate, MultipleChoice, &[])[0],
             SpotTheBug
         );
+        // An expert without open questions keeps the same preference.
         assert_eq!(
-            kinds_for(Level::Intermediate, Open, &[])[0],
+            kinds_for(Level::Expert, MultipleChoice, &[])[0],
             ExplainYourChange
         );
         // Choose the fix is never offered for an open question.
