@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 34
+  },
+  "rounds": [
+    {
+      "head": "4b37873b91284b34a488329705d8454f64fc1c3f",
+      "session": "jvanbuel/soqrates#34@4b37873b91284b34a488329705d8454f64fc1c3f",
+      "concepts": [
+        "github-actions.expressions.conditionals-secrets",
+        "github-actions.token.event-triggering",
+        "project.question-bank.reuse-selection",
+        "project.question-bank.bankability-and-placement",
+        "project.question-bank.stable-identity-versioning"
+      ],
+      "at": "2026-11-09T13:35:30.466910428Z"
+    }
+  ]
+}

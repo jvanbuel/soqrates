@@ -1,0 +1,160 @@
+{
+  "key": "jvanbuel/soqrates#34@4b37873b91284b34a488329705d8454f64fc1c3f",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.expressions.conditionals-secrets/mc",
+      "concept": "github-actions.expressions.conditionals-secrets",
+      "scope": "Project",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This job opens a release PR with a GitHub App token only when the app's credentials are configured. The author computed the secret's presence in a job-level `env` variable because secrets can't be read directly in `if:`. The step is never run, even when both the variable and the secret are set. Which explanation identifies the bug in the flagged line?",
+          "code": {
+            "language": "yaml",
+            "text": "jobs:\n  release-pr:\n    runs-on: ubuntu-latest\n    env:\n      HAS_APP_KEY: ${{ secrets.APP_PRIVATE_KEY != '' }}\n    steps:\n      - name: Get the app token\n        id: app\n        if: vars.APP_ID != '' && env.HAS_APP_KEY == true\n        uses: actions/create-github-app-token@v1\n        with:\n          app-id: ${{ vars.APP_ID }}\n          private-key: ${{ secrets.APP_PRIVATE_KEY }}",
+            "origin": "General"
+          },
+          "options": [
+            "The `if:` expression must be wrapped in `${{ }}` as well, otherwise it is treated as a literal string that is always truthy.",
+            "Secrets cannot be used in an `env:` block at job level, so `HAS_APP_KEY` is never defined.",
+            "Environment variables are always strings, so `env.HAS_APP_KEY` is the string 'true'. Comparing it to the boolean `true` coerces both to numbers, 'true' becomes NaN, and the step never runs even when the secret is set.",
+            "`vars.APP_ID != ''` is invalid because the `vars` context is not available in step-level `if:` conditions."
+          ],
+          "correct": 2,
+          "reasons": [
+            "`if:` expressions are evaluated automatically without `${{ }}`. Wrapping is optional, and omitting it doesn't make the condition always truthy here.",
+            "Secrets can be referenced in job-level `env`. That is the usual workaround for reading a secret's presence in `if:`, so this isn't the bug.",
+            "Values placed in `env` are stringified. The loose comparison with a boolean converts both sides to numbers, and the string 'true' becomes NaN, so the comparison is always false. The comparison should be against the string 'true'.",
+            "The `vars` context is available in step `if:` conditions. The problem is in the comparison of the env value, not in this clause."
+          ]
+        }
+      },
+      "explanation": "Values placed in `env` are stringified. The loose comparison with a boolean converts both sides to numbers, and the string 'true' becomes NaN, so the comparison is always false. The comparison should be against the string 'true'.",
+      "checked": true
+    },
+    {
+      "id": "github-actions.token.event-triggering/mc",
+      "concept": "github-actions.token.event-triggering",
+      "scope": "Project",
+      "kind": "ChooseTheFix",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This job opens a release pull request, and the repository's CI workflow runs on `pull_request`. After the job runs, the PR exists, but no CI run starts on it, so the required checks never report. The job's permissions are already sufficient to push the branch and open the PR. Assume an earlier step with id `app` created a GitHub App installation token. Which change to the flagged line fixes the missing CI run?",
+          "code": {
+            "language": "yaml",
+            "text": "on:\n  pull_request:\n\njobs:\n  release-pr:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      pull-requests: write\n    steps:\n      - uses: example/release-tool@v1\n        with:\n          command: release-pr   # opens a PR from a release branch\n        env:\n          GITHUB_TOKEN: ${{ github.token }}",
+            "origin": "General"
+          },
+          "options": [
+            "          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+            "          GITHUB_TOKEN: ${{ steps.app.outputs.token }}   # installation token from an earlier GitHub App token step",
+            "          GITHUB_TOKEN: ${{ github.token }}\n        # and raise the job to: permissions: write-all",
+            "          GH_TOKEN: ${{ github.token }}"
+          ],
+          "options_language": "yaml",
+          "correct": 1,
+          "reasons": [
+            "`secrets.GITHUB_TOKEN` is the same built-in workflow token as `github.token`, so the PR it opens still starts no workflow runs.",
+            "Events created with a GitHub App installation token (or a personal access token) do trigger workflows. The release PR then gets its `pull_request` CI run, which the built-in workflow token deliberately prevents.",
+            "Permissions control what the token may do, such as pushing a branch or opening a PR, not whether the resulting events start workflows. The built-in token's events are suppressed regardless of its scopes.",
+            "Renaming the variable does not change whose identity the token carries. It is still the built-in workflow token, so its events still do not trigger workflows, and the tool may not even read this variable."
+          ]
+        }
+      },
+      "explanation": "Events created with a GitHub App installation token (or a personal access token) do trigger workflows. The release PR then gets its `pull_request` CI run, which the built-in workflow token deliberately prevents.",
+      "checked": true
+    },
+    {
+      "id": "project.question-bank.reuse-selection/mc",
+      "concept": "project.question-bank.reuse-selection",
+      "scope": "Project",
+      "kind": "PredictOutcome",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This snippet mirrors how a question is chosen from a learner's bank in a round. What does it print, and why?",
+          "code": {
+            "language": "rust",
+            "text": "let (round, gap) = (5u64, 3u64);\n// (name, last_seen, kind_rank, added)\nlet bank = [\n    (\"a\", Some(2u64), 0, 1),\n    (\"b\", Some(1), 1, 2),\n    (\"c\", Some(4), 0, 3),\n];\nlet pick = bank\n    .iter()\n    .filter(|q| q.1.is_none_or(|s| round - s >= gap))\n    .min_by_key(|q| (q.1, q.2, q.3))\n    .map(|q| q.0);\nprintln!(\"{pick:?}\");",
+            "origin": "General"
+          },
+          "options": [
+            "Some(\"a\")",
+            "None",
+            "Some(\"b\")",
+            "Some(\"c\")"
+          ],
+          "correct": 2,
+          "reasons": [
+            "This assumes the preferred kind (rank 0) and the older entry decide first. They only break ties between equally recently seen questions, and a and b were last seen in different rounds.",
+            "Two entries (a and b) are at least 3 rounds past their last showing, so they stay eligible. None would only happen if every entry were inside the gap, and then the examiner would write a new question.",
+            "Entry c was shown only 1 round ago, which is under the gap of 3, so it is filtered out. Of a and b, b was seen longer ago, and last-seen is compared before kind rank and age, so b wins.",
+            "This ignores the re-ask spacing. c was last shown in round 4, so in round 5 it is only 1 round old, below the gap of 3, and it is filtered out before ranking."
+          ]
+        }
+      },
+      "explanation": "Entry c was shown only 1 round ago, which is under the gap of 3, so it is filtered out. Of a and b, b was seen longer ago, and last-seen is compared before kind rank and age, so b wins.",
+      "checked": true
+    },
+    {
+      "id": "project.question-bank.bankability-and-placement/mc",
+      "concept": "project.question-bank.bankability-and-placement",
+      "scope": "Project",
+      "kind": "Scenario",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A deployment turns the question bank on and configures two organisations, each with its own store. It configures no shared bank. An author whose forge host belongs to neither organisation opens a change, and the engine starts a round of questions for them. What happens with the question bank for this author's round?",
+          "options": [
+            "The author gets no bank for that round, so every question is written fresh by the examiner and no bank state is read or saved.",
+            "The bank is kept in the shared learner store, because that store is the default place for data that has no organisation.",
+            "The bank is placed in the store of whichever organisation was configured first, so the author still benefits from reuse.",
+            "The round fails with a configuration error, because the author's forge matches no organisation store."
+          ],
+          "correct": 0,
+          "reasons": [
+            "With the bank on but no shared bank, the store comes from the author's organisation. When the author is outside every organisation and organisation stores exist, the lookup returns no store, so the round falls back to writing each question new and skips the seen-questions record.",
+            "The shared learner store is never used for the bank when organisation stores exist. Banked questions are project-derived data and must not land in a store shared across organisations.",
+            "Nothing picks an arbitrary organisation's store. That would leak one organisation's questions into another's and break the isolation the organisation stores exist to give.",
+            "An error is raised only when a configured organisation has no store. An author whose forge maps to no organisation just resolves to no store, which is not an error here."
+          ]
+        }
+      },
+      "explanation": "With the bank on but no shared bank, the store comes from the author's organisation. When the author is outside every organisation and organisation stores exist, the lookup returns no store, so the round falls back to writing each question new and skips the seen-questions record.",
+      "checked": true
+    },
+    {
+      "id": "project.question-bank.stable-identity-versioning/mc",
+      "concept": "project.question-bank.stable-identity-versioning",
+      "scope": "Project",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "In a question bank, an entry's id is a content hash of the question's concept, kind, body and explanation. Revising an entry is meant to keep its id and bump its version. The `revise` method shown has one line that breaks this. Which line is flawed, and what goes wrong because of it?",
+          "code": {
+            "language": "rust",
+            "text": "pub fn revise(&mut self, question: &Question) {\n    if !Self::bankable(question) {\n        self.retire();\n        return;\n    }\n    let mut question = question.clone();\n    question.banked = None;\n    self.id = Self::id_of(&question);\n    self.question = question;\n    self.version += 1;\n}",
+            "origin": "General"
+          },
+          "options": [
+            "The id is a hash of the content, so recomputing it after a revision gives a different id. The revision is then saved as a separate entry, and the old entry stays in the bank, unrevised and still offered. Records that point at the old id and version, such as what a learner has seen, no longer match the live entry.",
+            "The id must be computed before `question.banked` is cleared. Otherwise the banked reference leaks into the hash.",
+            "Recomputing the id gives the same value as before, so the line does nothing. The bug is that the version is bumped without the id changing.",
+            "The hash is not deterministic across runs, so the same revised question could get a different id each time it is banked.",
+            "The assignment should happen after `self.version += 1`, so that the new version number is included in the id."
+          ],
+          "correct": 0,
+          "reasons": [
+            "A revision must keep the id and only bump the version. Because the id is derived from content, recomputing it breaks that stable identity, and the old wording stays in circulation next to the new one.",
+            "The `banked` field is not one of the hashed fields, which are concept, kind, body and explanation. Clearing it first does not affect the id, so the order is not the bug.",
+            "The id hashes the concept, kind, body and explanation. A revision changes the body or explanation, so the hash changes. Bumping the version without the id changing is also exactly what a revision should do.",
+            "The hash is FNV-1a over a JSON of fixed fields, which is deterministic. The problem is that the id changes with the revised content, not that it varies between runs.",
+            "The version is not part of the id, and it should not be. The id is meant to stay stable across versions, and putting the version in the hash would change it on every revision."
+          ]
+        }
+      },
+      "explanation": "A revision must keep the id and only bump the version. Because the id is derived from content, recomputing it breaks that stable identity, and the old wording stays in circulation next to the new one.",
+      "checked": true
+    }
+  ],
+  "created_at": "2026-11-09T13:35:30.466910428Z"
+}
