@@ -1,7 +1,7 @@
 {
   "learner": "learner-88c2e1c14d5497f4",
   "starting_level": "Novice",
-  "level": "Intermediate",
+  "level": "Expert",
   "cards": {
     "concurrency.atomic-claim.mutual-exclusion": {
       "card": {
@@ -122,15 +122,15 @@
     },
     "github-actions.expressions.conditionals-secrets": {
       "card": {
-        "due": "2026-11-10T15:17:08.872471769Z",
+        "due": "2026-11-12T15:27:19.008857369Z",
         "stability": 0.27491830347692675,
-        "difficulty": 9.198653481986167,
-        "elapsed_days": 1,
-        "scheduled_days": 1,
-        "reps": 2,
+        "difficulty": 9.060223832493858,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 3,
         "lapses": 1,
         "state": "Review",
-        "last_review": "2026-11-09T15:17:08.872471769Z"
+        "last_review": "2026-11-09T15:27:19.008857369Z"
       }
     },
     "github-actions.reusable-workflows.release-pipeline": {
@@ -148,15 +148,15 @@
     },
     "github-actions.token.event-triggering": {
       "card": {
-        "due": "2026-11-12T15:17:08.872471769Z",
+        "due": "2026-11-13T15:27:19.008857369Z",
         "stability": 2.60517702373931,
-        "difficulty": 7.118300161986166,
-        "elapsed_days": 1,
-        "scheduled_days": 3,
-        "reps": 2,
+        "difficulty": 7.028550780181856,
+        "elapsed_days": 0,
+        "scheduled_days": 4,
+        "reps": 3,
         "lapses": 0,
         "state": "Review",
-        "last_review": "2026-11-09T15:17:08.872471769Z"
+        "last_review": "2026-11-09T15:27:19.008857369Z"
       }
     },
     "github.actions.bot-identity-and-tokens": {
@@ -365,6 +365,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T16:24:56.473686819Z"
+      }
+    },
+    "project.store.postgres-conformance-suite": {
+      "card": {
+        "due": "2026-11-12T15:27:19.008857369Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T15:27:19.008857369Z"
       }
     },
     "project.testing.bdd-acceptance-steps": {
@@ -627,6 +640,19 @@
         "last_review": "2026-11-08T19:05:13.474387986Z"
       }
     },
+    "shell.pipefail.tee-grep": {
+      "card": {
+        "due": "2026-11-10T15:27:19.008857369Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T15:27:19.008857369Z"
+      }
+    },
     "soqrates.ci.answer-validity": {
       "card": {
         "due": "2026-11-09T17:46:07.459156615Z",
@@ -768,6 +794,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T07:35:32.673791591Z"
+      }
+    },
+    "testing.skipped-tests.silent-pass-guard": {
+      "card": {
+        "due": "2026-11-12T15:27:19.008857369Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-09T15:27:19.008857369Z"
       }
     }
   },
@@ -1219,7 +1258,42 @@
       "grade": "Good",
       "at": "2026-11-09T15:17:08.872471769Z",
       "via": "github.com:16427728"
+    },
+    {
+      "concept": "github-actions.expressions.conditionals-secrets",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-09T15:27:19.008857369Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "github-actions.token.event-triggering",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-09T15:27:19.008857369Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "testing.skipped-tests.silent-pass-guard",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-09T15:27:19.008857369Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.store.postgres-conformance-suite",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-09T15:27:19.008857369Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "shell.pipefail.tee-grep",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-09T15:27:19.008857369Z",
+      "via": "github.com:16427728"
     }
   ],
-  "level_since": 59
+  "level_since": 68
 }
