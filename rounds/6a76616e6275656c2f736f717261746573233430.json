@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 40
+  },
+  "rounds": [
+    {
+      "head": "fe3d1f3d216c0409f75ab1a2725aa1698ebcd68b",
+      "session": "jvanbuel/soqrates#40@fe3d1f3d216c0409f75ab1a2725aa1698ebcd68b",
+      "concepts": [
+        "github-actions.expressions.conditionals-secrets",
+        "github-actions.token.event-triggering",
+        "testing.skipped-tests.silent-pass-guard",
+        "project.store.postgres-conformance-suite",
+        "shell.pipefail.tee-grep"
+      ],
+      "at": "2026-11-09T14:01:26.292075600Z"
+    }
+  ]
+}
