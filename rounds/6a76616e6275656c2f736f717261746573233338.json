@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 38
+  },
+  "rounds": [
+    {
+      "head": "4c09f3c6693b9507ccb010d9814d40e895f14408",
+      "session": "jvanbuel/soqrates#38@4c09f3c6693b9507ccb010d9814d40e895f14408",
+      "concepts": [
+        "github-actions.expressions.conditionals-secrets",
+        "github-actions.token.event-triggering",
+        "validation.lenient-limit.soft-vs-hard-bound",
+        "llm.structured-output.validation-and-retry",
+        "rust.testing.async-tokio-boundary-tests"
+      ],
+      "at": "2026-11-09T13:59:30.229590084Z"
+    }
+  ]
+}

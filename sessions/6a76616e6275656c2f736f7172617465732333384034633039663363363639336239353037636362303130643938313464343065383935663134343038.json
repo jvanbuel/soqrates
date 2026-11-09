@@ -1,0 +1,155 @@
+{
+  "key": "jvanbuel/soqrates#38@4c09f3c6693b9507ccb010d9814d40e895f14408",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "github-actions.expressions.conditionals-secrets/mc",
+      "concept": "github-actions.expressions.conditionals-secrets",
+      "scope": "Project",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This workflow should create a GitHub App token only when both the app id variable and the private key secret are configured. Secrets can't be read directly in a step's `if:`, so the author copies a comparison on the secret into a job-level env var and tests that. In a repository where the private key secret is NOT set, the token step still runs and fails. What is the bug in the flagged line?",
+          "code": {
+            "language": "yaml",
+            "text": "jobs:\n  release-pr:\n    runs-on: ubuntu-latest\n    env:\n      HAS_APP_KEY: ${{ secrets.APP_PRIVATE_KEY != '' }}\n    steps:\n      - name: Get the app token\n        id: app\n        if: vars.APP_ID != '' && env.HAS_APP_KEY\n        uses: actions/create-github-app-token@v1\n        with:\n          app-id: ${{ vars.APP_ID }}\n          private-key: ${{ secrets.APP_PRIVATE_KEY }}",
+            "origin": "General"
+          },
+          "options": [
+            "A step `if:` must be wrapped in `${{ }}`, otherwise it is treated as a literal string and always evaluates to true.",
+            "The `vars` context can't be used in a step's `if:`, so the condition must read the variable through `env` instead.",
+            "The `secrets` context can't be used in a job-level `env:` value, so `HAS_APP_KEY` is always empty.",
+            "The condition uses `env.HAS_APP_KEY` as if it were a boolean, but an env var is always a string. When the secret is missing it holds the string 'false', which is non-empty and therefore truthy, so the step still runs. It should compare with `== 'true'`.",
+            "The `&&` operator can't combine a `vars` comparison with an `env` value, so the whole condition always evaluates to false."
+          ],
+          "correct": 3,
+          "reasons": [
+            "The `${{ }}` wrapper is optional in `if:`, because GitHub evaluates the value as an expression. The real bug is that `env.HAS_APP_KEY` is a string that is truthy even when it says 'false'.",
+            "The `vars` context is available in step `if:` conditions. Reading `vars.APP_ID` there is fine, so this is not the bug.",
+            "The `secrets` context is available in job-level `env`, and that is the usual workaround for reading secrets in conditions. The problem is how the resulting value is tested, not how it is set.",
+            "Environment variables are strings, so the boolean result of the secrets comparison is stored as 'true' or 'false'. A non-empty string such as 'false' is truthy in an `if:` expression, so the guard never blocks the step. An explicit `== 'true'` comparison fixes it.",
+            "`&&` works on any operands, and the expression doesn't error out. The condition is too permissive, not too strict: 'false' still counts as truthy."
+          ]
+        }
+      },
+      "explanation": "Environment variables are strings, so the boolean result of the secrets comparison is stored as 'true' or 'false'. A non-empty string such as 'false' is truthy in an `if:` expression, so the guard never blocks the step. An explicit `== 'true'` comparison fixes it."
+    },
+    {
+      "id": "github-actions.token.event-triggering/mc",
+      "concept": "github-actions.token.event-triggering",
+      "scope": "Project",
+      "kind": "ChooseTheFix",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This workflow runs on every push to main and opens a release pull request. The repository's CI workflow runs on `pull_request`, yet after the release PR is opened by this job, no CI checks appear on it, even though the job succeeded and has the needed write permissions. Which change to the flawed line makes CI run on the release PR?",
+          "code": {
+            "language": "yaml",
+            "text": "on:\n  push:\n    branches: [main]\n\njobs:\n  release-pr:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n      pull-requests: write\n    steps:\n      - uses: actions/checkout@v4\n      - name: Open the release PR\n        run: ./open-release-pr.sh\n        env:\n          GITHUB_TOKEN: ${{ github.token }}",
+            "origin": "General"
+          },
+          "options": [
+            "          GITHUB_TOKEN: ${{ steps.app.outputs.token }}\n# where an earlier step creates this token with actions/create-github-app-token from a GitHub App's credentials",
+            "          GITHUB_TOKEN: ${{ github.token }}\n          ACTIONS_RUNNER_DEBUG: true",
+            "          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+            "          GITHUB_TOKEN: ${{ github.token }}\n# and raise the job to permissions: write-all"
+          ],
+          "options_language": "yaml",
+          "correct": 0,
+          "reasons": [
+            "Events created with a GitHub App installation token do trigger workflows, so CI runs on the release PR. The built-in workflow token is deliberately exempt from this, to prevent workflows from recursively triggering other workflows.",
+            "Debug logging only adds output; it does not change which identity opens the PR, so events from the PR still won't start the pull_request workflow.",
+            "The secrets.GITHUB_TOKEN expression is the same built-in workflow token as github.token, so its events still won't trigger CI.",
+            "Broader permissions do not change the trigger rule. Events caused by the built-in workflow token are still suppressed, and write-all just grants needless privilege."
+          ]
+        }
+      },
+      "explanation": "Events created with a GitHub App installation token do trigger workflows, so CI runs on the release PR. The built-in workflow token is deliberately exempt from this, to prevent workflows from recursively triggering other workflows."
+    },
+    {
+      "id": "validation.lenient-limit.soft-vs-hard-bound/mc",
+      "concept": "validation.lenient-limit.soft-vs-hard-bound",
+      "scope": "Project",
+      "kind": "PredictOutcome",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A validator asks the model for snippets of about 15 lines but enforces a larger hard maximum. What do `ra` and `rb` hold after the two calls shown?",
+          "code": {
+            "language": "rust",
+            "text": "const ASKED: usize = 15;\nconst MAX: usize = 20;\n\nfn check(text: &str) -> Result<(), String> {\n    let lines = text.lines().count();\n    if lines > MAX {\n        return Err(format!(\"{lines} lines; write at most {ASKED}\"));\n    }\n    Ok(())\n}\n\n// a is a snippet of 18 lines, b is a snippet of 23 lines\nlet ra = check(&a);\nlet rb = check(&b);",
+            "origin": "General"
+          },
+          "options": [
+            "ra is Ok and rb is Err(\"23 lines; write at most 20\"), because the message reports the limit that was actually exceeded.",
+            "ra is Err(\"18 lines; write at most 15\") and rb is Err(\"23 lines; write at most 15\"), because anything above 15 lines is rejected.",
+            "Both ra and rb are Ok, because the code only counts lines and never rejects a snippet.",
+            "ra is Ok, so the 18-line snippet is kept; rb is Err(\"23 lines; write at most 15\"), so the model is told the length it was originally asked for."
+          ],
+          "correct": 3,
+          "reasons": [
+            "The message uses the requested length, not the hard maximum. If it said 20, the model would aim at the edge of the limit and often overshoot it, which defeats the slack.",
+            "This treats the requested length as the enforced limit. The condition compares against the larger maximum, so a snippet a few lines over 15 is accepted instead of failing the round.",
+            "The check does return an error when the line count is above the maximum of 20, so the 23-line snippet is rejected.",
+            "The check rejects only above the hard maximum of 20, so 18 passes. The 23-line snippet fails, and the message quotes the requested length of 15. That is the target the model should aim for, and it matches what the prompt asked."
+          ]
+        }
+      },
+      "explanation": "The check rejects only above the hard maximum of 20, so 18 passes. The 23-line snippet fails, and the message quotes the requested length of 15. That is the target the model should aim for, and it matches what the prompt asked."
+    },
+    {
+      "id": "llm.structured-output.validation-and-retry/mc",
+      "concept": "llm.structured-output.validation-and-retry",
+      "scope": "Project",
+      "kind": "Scenario",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "The examiner asks the model for code snippets of at most 15 lines, but its validator accepts up to 20 lines. The model returns a spot-the-bug question whose code has 27 lines. What should the validator do with this reply, and what would raising the accepted maximum to 30 change about that rule?",
+          "options": [
+            "Keep the first 20 lines and drop the rest, because the model's question is probably still answerable from the beginning of the snippet.",
+            "Truncate the 27-line snippet to 15 lines, since 15 is the requested size. Only reject when the code is empty.",
+            "Reject the reply and send a new request that includes the error, such as \"the code has 27 lines; write a snippet of at most 15\". A reply of 18 lines is accepted. Raising the accepted maximum would only reduce how many replies are rejected.",
+            "Accept the 27-line reply unchanged, since the line limit is only advice to the model and the author can scroll."
+          ],
+          "correct": 2,
+          "reasons": [
+            "Truncating can remove the very line that the question, the flawed_line or the options refer to. The author would then see code that does not match the question. Rejecting is chosen so the question stays about the code as shown.",
+            "Truncation is never used on model code, at 15 lines or any other size. Only an over-long reply triggers a rejection, and the rejection message asks the model for a shorter snippet instead of cutting it.",
+            "A cut snippet is no longer the code the question was written about, so an over-long reply is rejected and the model is asked again. The slack between the requested 15 lines and the accepted 20 lines cuts down on retries. Even if the limit were raised, anything above it would still be rejected rather than truncated.",
+            "The limit is enforced. Over-long code is an error that goes back to the model. Showing it unchanged would break the guarantee that snippets are small enough to read at a glance."
+          ]
+        }
+      },
+      "explanation": "A cut snippet is no longer the code the question was written about, so an over-long reply is rejected and the model is asked again. The slack between the requested 15 lines and the accepted 20 lines cuts down on retries. Even if the limit were raised, anything above it would still be rejected rather than truncated."
+    },
+    {
+      "id": "rust.testing.async-tokio-boundary-tests/mc",
+      "concept": "rust.testing.async-tokio-boundary-tests",
+      "scope": "General",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This test is meant to pin the behaviour just above the hard limit: a reply that is too long is rejected, and the writer makes a second request. The soft limit is what the model is asked for, and replies up to the hard limit are tolerated and kept. As written, the test fails when it runs. What is the bug?",
+          "code": {
+            "language": "rust",
+            "text": "const SOFT_LIMIT: usize = 15; // lines the model is asked for\nconst HARD_LIMIT: usize = 20; // lines above which a reply is rejected\n\n#[tokio::test]\nasync fn an_overlong_snippet_is_rejected_and_asked_again() {\n    let long = \"step();\\n\".repeat(SOFT_LIMIT + 1);\n    let client = Canned::new(&[&reply(&long), &reply(\"step();\")]);\n    let q = write_question(&client).await.unwrap();\n    assert_eq!(client.calls(), 2);\n    assert_eq!(q.code_text(), \"step();\");\n}",
+            "origin": "General"
+          },
+          "options": [
+            "The snippet length should be the literal 21 rather than a constant, so the test does not just repeat the implementation's own numbers.",
+            "An async test with a canned client needs a multi-threaded runtime, so `#[tokio::test]` should not be used here.",
+            "The snippet is built from the soft limit plus one, which is still accepted. The test needs HARD_LIMIT + 1 lines to cross the rejection boundary.",
+            "Using `repeat` with a trailing newline adds an empty extra line, so the snippet is one line longer than intended."
+          ],
+          "correct": 2,
+          "reasons": [
+            "A literal would silently go stale if the limit changed. Writing the boundary in terms of the constant keeps the test correct when the limits change.",
+            "The default `#[tokio::test]` runtime is enough for a canned client that returns immediately. The test fails because of the input length, not because of the runtime.",
+            "A snippet just over the soft limit is kept after one call. Only a snippet just above the hard limit is rejected and retried, so the test must build its input from the hard limit to reach that branch. The two calls it asserts would never happen as written.",
+            "`lines()` does not count the empty string after a final newline, so the snippet has exactly the intended count. The real problem is which limit it is measured against."
+          ]
+        }
+      },
+      "explanation": "A snippet just over the soft limit is kept after one call. Only a snippet just above the hard limit is rejected and retried, so the test must build its input from the hard limit to reach that branch. The two calls it asserts would never happen as written."
+    }
+  ],
+  "created_at": "2026-11-09T13:59:30.229590084Z"
+}
