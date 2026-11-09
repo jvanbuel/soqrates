@@ -295,6 +295,8 @@ mod tests {
                 reasons: vec![],
             },
             explanation: "E".into(),
+            checked: false,
+            banked: None,
         };
         let text = super::render_question(2, &q);
         assert_eq!(

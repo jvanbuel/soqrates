@@ -414,6 +414,8 @@ mod tests {
                 rubric: "R".into(),
             },
             explanation: "E".into(),
+            checked: false,
+            banked: None,
         };
         let qs = [open("a"), open("b")];
         let body = "/soqrates answer\n1. Like this:\n```\n2. not an answer\n/soqrates answer\n```\n2. The second.";

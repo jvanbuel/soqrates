@@ -11,9 +11,10 @@ use crate::Result;
 use crate::app::engine::SessionOutcome;
 use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionBrief};
 use crate::delivery::{
-    CheckStatus, GradedSession, GradingJournal, PrRef, PrRounds, PullRequest, Session,
+    BankedQuestion, CheckStatus, GradedSession, GradingJournal, PrRef, PrRounds, PullRequest,
+    SeenQuestions, Session,
 };
-use crate::ids::{Identity, LearnerId, SessionKey};
+use crate::ids::{ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 
 /// Persists learner profiles, identity links, link codes and pending
@@ -75,6 +76,25 @@ pub trait StateStore: Send + Sync {
     fn load_rounds(&self, pr: &PrRef) -> impl Future<Output = Result<Option<PrRounds>>> + Send;
     /// Create or replace the rounds of `rounds.pr()`.
     fn save_rounds(&self, rounds: &PrRounds) -> impl Future<Output = Result<()>> + Send;
+
+    /// The question bank's questions about `concept`, retired ones
+    /// included, in the order they were banked (ADR-0009 D1).
+    fn bank_questions(
+        &self,
+        concept: &ConceptId,
+    ) -> impl Future<Output = Result<Vec<BankedQuestion>>> + Send;
+    /// Create or replace the bank question `question.id()`.
+    fn save_bank_question(
+        &self,
+        question: &BankedQuestion,
+    ) -> impl Future<Output = Result<()>> + Send;
+    /// The bank questions `learner` was shown (ADR-0009 D5).
+    fn load_seen(
+        &self,
+        learner: &LearnerId,
+    ) -> impl Future<Output = Result<Option<SeenQuestions>>> + Send;
+    /// Create or replace what `seen.learner()` was shown.
+    fn save_seen(&self, seen: &SeenQuestions) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// The store holding the profiles of linked learners, reachable from several

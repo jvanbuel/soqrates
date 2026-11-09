@@ -1020,6 +1020,8 @@ mod tests {
                 reasons: options.iter().map(|_| "SECRET-REASON".into()).collect(),
             },
             explanation: "SECRET-EXPLANATION".into(),
+            checked: false,
+            banked: None,
         }
     }
 
@@ -1035,6 +1037,8 @@ mod tests {
                 rubric: "SECRET-RUBRIC mentions lifetimes".into(),
             },
             explanation: "SECRET-EXPLANATION".into(),
+            checked: false,
+            banked: None,
         }
     }
 
@@ -1851,6 +1855,8 @@ mod tests {
                 reasons: vec![NASTY.into(); 3],
             },
             explanation: NASTY.into(),
+            checked: false,
+            banked: None,
         };
         let open = Question {
             id: QuestionId("o".into()),
@@ -1863,6 +1869,8 @@ mod tests {
                 rubric: NASTY.into(),
             },
             explanation: NASTY.into(),
+            checked: false,
+            banked: None,
         };
         let qs = vec![nasty("n1", 0), open, nasty("n2", 2)];
         let session = Session::open(
@@ -2040,6 +2048,8 @@ mod tests {
                 rubric: "SECRET-RUBRIC".into(),
             },
             explanation: "SECRET-EXPLANATION".into(),
+            checked: false,
+            banked: None,
         };
         let fix = Question {
             id: QuestionId("f".into()),
@@ -2063,6 +2073,8 @@ mod tests {
                 reasons: vec!["SECRET-REASON".into(); 3],
             },
             explanation: "SECRET-EXPLANATION".into(),
+            checked: false,
+            banked: None,
         };
         let qs = vec![explain, fix];
         let session = Session::open(

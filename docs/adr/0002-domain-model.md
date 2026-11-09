@@ -56,6 +56,8 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Grading journal | `GradingJournal` | delivery | The graded record and learner profiles that grading one session writes, stored before any of them. While it is stored, the session is being graded. | |
 | Round | `Round` | delivery | What Soqrates asked about one head of a pull request: the session that answers for that head, and the concepts it asked. | |
 | Rounds | `PrRounds` | delivery | The rounds of one pull request, oldest first. | |
+| Question bank | `BankedQuestion` | delivery | The questions Soqrates wrote, kept per concept so that later rounds can ask them again instead of writing new ones. Holds only checked, general questions without code from a change (ADR-0009). | question pool |
+| Seen questions | `SeenQuestions` | delivery | Which bank questions one learner was shown, and in which of their rounds, so none is shown twice within a few rounds (ADR-0009). Kept with the bank, never in the learner store. | |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
 | Hook | `HookKind` | delivery | A local git `pre-commit` or jj `pre-push` invocation. | |
 | Mode | `Mode` | delivery | Advisory (never blocks) or Blocking. | |

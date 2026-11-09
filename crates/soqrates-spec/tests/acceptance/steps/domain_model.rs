@@ -98,6 +98,8 @@ fn mc_question(concept: &ConceptId) -> Question {
             reasons: Vec::new(),
         },
         explanation: FakeExaminer::explanation(concept),
+        checked: false,
+        banked: None,
     }
 }
 
@@ -113,6 +115,8 @@ fn open_question(concept: &ConceptId) -> Question {
             rubric: format!("Covers {}", concept.0),
         },
         explanation: FakeExaminer::explanation(concept),
+        checked: false,
+        banked: None,
     }
 }
 

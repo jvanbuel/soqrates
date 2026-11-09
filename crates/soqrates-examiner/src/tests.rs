@@ -103,6 +103,8 @@ fn mc_question(options: usize, correct: usize) -> Question {
                 .collect(),
         },
         explanation: SECRET_EXPLANATION.into(),
+        checked: false,
+        banked: None,
     }
 }
 
@@ -118,6 +120,8 @@ fn open_question() -> Question {
             rubric: "Must mention X.".into(),
         },
         explanation: SECRET_EXPLANATION.into(),
+        checked: false,
+        banked: None,
     }
 }
 
