@@ -122,15 +122,15 @@
     },
     "github-actions.expressions.conditionals-secrets": {
       "card": {
-        "due": "2026-11-12T15:27:19.008857369Z",
+        "due": "2026-11-13T05:29:22.171515045Z",
         "stability": 0.27491830347692675,
-        "difficulty": 9.060223832493858,
+        "difficulty": 8.925033436799668,
         "elapsed_days": 0,
         "scheduled_days": 3,
-        "reps": 3,
+        "reps": 4,
         "lapses": 1,
         "state": "Review",
-        "last_review": "2026-11-09T15:27:19.008857369Z"
+        "last_review": "2026-11-10T05:29:22.171515045Z"
       }
     },
     "github-actions.reusable-workflows.release-pipeline": {
@@ -148,15 +148,15 @@
     },
     "github-actions.token.event-triggering": {
       "card": {
-        "due": "2026-11-13T15:27:19.008857369Z",
+        "due": "2026-11-14T05:29:22.171515045Z",
         "stability": 2.60517702373931,
-        "difficulty": 7.028550780181856,
+        "difficulty": 6.940901533911767,
         "elapsed_days": 0,
         "scheduled_days": 4,
-        "reps": 3,
+        "reps": 4,
         "lapses": 0,
         "state": "Review",
-        "last_review": "2026-11-09T15:27:19.008857369Z"
+        "last_review": "2026-11-10T05:29:22.171515045Z"
       }
     },
     "github.actions.bot-identity-and-tokens": {
@@ -209,6 +209,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T17:28:17.414240934Z"
+      }
+    },
+    "llm.structured-output.validation-and-retry": {
+      "card": {
+        "due": "2026-11-13T05:29:22.171515045Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-10T05:29:22.171515045Z"
       }
     },
     "project.codebase.path-and-argument-sandboxing": {
@@ -562,6 +575,19 @@
         "last_review": "2026-11-08T17:18:45.049315465Z"
       }
     },
+    "rust.testing.async-tokio-boundary-tests": {
+      "card": {
+        "due": "2026-11-13T05:29:22.171515045Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-10T05:29:22.171515045Z"
+      }
+    },
     "rust.traits.async-ports-generic-dispatch": {
       "card": {
         "due": "2026-11-10T00:18:51.467874551Z",
@@ -807,6 +833,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-09T15:27:19.008857369Z"
+      }
+    },
+    "validation.lenient-limit.soft-vs-hard-bound": {
+      "card": {
+        "due": "2026-11-11T05:29:22.171515045Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-10T05:29:22.171515045Z"
       }
     }
   },
@@ -1292,6 +1331,41 @@
       "format": "MultipleChoice",
       "grade": "Again",
       "at": "2026-11-09T15:27:19.008857369Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "github-actions.expressions.conditionals-secrets",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-10T05:29:22.171515045Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "github-actions.token.event-triggering",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-10T05:29:22.171515045Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "validation.lenient-limit.soft-vs-hard-bound",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-10T05:29:22.171515045Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "llm.structured-output.validation-and-retry",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-10T05:29:22.171515045Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.testing.async-tokio-boundary-tests",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-10T05:29:22.171515045Z",
       "via": "github.com:16427728"
     }
   ],
