@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 39
+  },
+  "rounds": [
+    {
+      "head": "d1691af2133315ad30b78eb51750cbecc86562b2",
+      "session": "jvanbuel/soqrates#39@d1691af2133315ad30b78eb51750cbecc86562b2",
+      "concepts": [
+        "git.unified-diff.format",
+        "rust.control-flow.option-match-filter",
+        "github-actions.concurrency.queue-max",
+        "github-actions.concurrency.cancel-in-progress",
+        "soqrates.state-branch.serialized-writes"
+      ],
+      "at": "2026-11-10T05:33:46.023713296Z"
+    }
+  ]
+}

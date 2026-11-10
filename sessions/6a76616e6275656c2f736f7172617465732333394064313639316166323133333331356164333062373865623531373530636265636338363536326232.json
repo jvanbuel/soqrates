@@ -1,0 +1,154 @@
+{
+  "key": "jvanbuel/soqrates#39@d1691af2133315ad30b78eb51750cbecc86562b2",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "git.unified-diff.format/mc",
+      "concept": "git.unified-diff.format",
+      "scope": "Project",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This function should return the line number and text of every line of the new version of a file that appears in a unified diff, meaning the added lines and the unchanged context lines. For a file whose first hunk adds several lines, it reports wrong line numbers for the later hunks. Which flaw in the marked line causes this?",
+          "code": {
+            "language": "python",
+            "text": "def new_side(hunks_text):\n    # hunks_text holds only the hunks of one file; the\n    # ---/+++ file header lines were already removed.\n    n, out = 0, []\n    for line in hunks_text.splitlines():\n        if line.startswith(\"@@ \"):\n            n = int(line.split()[1][1:].split(\",\")[0])\n        elif line.startswith(\"+\") or line.startswith(\" \"):\n            out.append((n, line[1:]))\n            n += 1\n    return out",
+            "origin": "General"
+          },
+          "options": [
+            "Lines starting with a space should not be collected, because only added lines belong to the new side of the diff.",
+            "`n` should start at 1 rather than 0, since line numbers in a file are 1-based.",
+            "The header line is split so that the second word, the old-side range `-a,b`, supplies the start; the line numbers of the new file must come from the third word, the `+c,d` range.",
+            "The `[1:]` slice should be dropped, because the count after the comma is the real start of the hunk.",
+            "Removed lines starting with `-` must also increment `n`, because they occupy a line number in the diff."
+          ],
+          "correct": 2,
+          "reasons": [
+            "Context lines, which start with a space, exist in the new file as well as the old one, so they must be collected and counted. Dropping them would make every following line number too small.",
+            "The initial value of `n` is always overwritten by the first `@@ ` header before any line is collected, so it has no effect on the output.",
+            "In a hunk header `@@ -a,b +c,d @@`, the `-` range describes the old file and the `+` range the new file. Numbers for added and context lines must start at `c`. They are wrong whenever earlier hunks in the file added or removed lines, because then `a` and `c` differ.",
+            "The number before the comma is the start line and the number after it is the length of the range. The slice only removes the sign character so the number can be parsed. The problem is which range is read, not the slice.",
+            "Removed lines are not in the new file, so counting them would shift the numbers up. Skipping them without incrementing is correct for new-side numbering."
+          ]
+        }
+      },
+      "explanation": "In a hunk header `@@ -a,b +c,d @@`, the `-` range describes the old file and the `+` range the new file. Numbers for added and context lines must start at `c`. They are wrong whenever earlier hunks in the file added or removed lines, because then `a` and `c` differ."
+    },
+    {
+      "id": "rust.control-flow.option-match-filter/mc",
+      "concept": "rust.control-flow.option-match-filter",
+      "scope": "Project",
+      "kind": "PredictOutcome",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "The function below trims text back to the last line boundary, but only when that boundary is not at the very start. What does the program print, and why?",
+          "code": {
+            "language": "rust",
+            "text": "fn cut_at_line(head: &str) -> &str {\n    match head.rfind('\\n') {\n        Some(i) if i > 0 => &head[..=i],\n        _ => head,\n    }\n}\n\nfn main() {\n    let out = cut_at_line(\"\\nabcdef\");\n    println!(\"{:?}\", out);\n}",
+            "origin": "General"
+          },
+          "options": [
+            "It prints \"\\n\", because `Some(i)` matches with `i == 0` and the slice `..=0` keeps the first character.",
+            "It prints \"\\nabcdef\": the guard `i > 0` fails for the newline at index 0, so the match falls through to the wildcard arm and returns the whole input.",
+            "It panics, because a guard that fails inside a `match` on an `Option` is a runtime error when no other `Some` arm covers the value.",
+            "It prints \"\", because a newline at index 0 means there is no complete line to keep."
+          ],
+          "correct": 1,
+          "reasons": [
+            "This ignores the guard. A guard that evaluates to false makes the arm not apply, even though its pattern matched, so the slice is never taken.",
+            "`rfind` returns `Some(0)`, which matches the pattern `Some(i)`, but the guard `i > 0` is false. Matching then continues to the next arm, `_`, which returns the input unchanged. This stops the function from returning a result that is only a newline.",
+            "A false guard does not panic. The match simply tries the following arms, and the wildcard `_` arm covers every remaining case, including `Some(0)`.",
+            "Nothing in the code produces an empty string. The only slice, `..=i`, is in the arm whose guard fails, and the wildcard arm returns the input as is."
+          ]
+        }
+      },
+      "explanation": "`rfind` returns `Some(0)`, which matches the pattern `Some(i)`, but the guard `i > 0` is false. Matching then continues to the next arm, `_`, which returns the input unchanged. This stops the function from returning a result that is only a newline."
+    },
+    {
+      "id": "github-actions.concurrency.queue-max/mc",
+      "concept": "github-actions.concurrency.queue-max",
+      "scope": "General",
+      "kind": "ExplainYourChange",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "The author sets `queue: max` on the job-level concurrency group, alongside `cancel-in-progress: false`. What would break without `queue: max`?",
+          "code": {
+            "language": "yaml",
+            "text": "    # One run at a time, so state-branch updates never race. Job-level, so\n    # skipped runs (other bots' comments) never queue here. `queue: max`\n    # keeps every waiting run, in order: without it a group holds one\n    # running and one pending run, and a newer run cancels the pending one,\n    # so with several open PRs their checks were cancelled before running.\n    concurrency:\n      group: soqrates-state\n      cancel-in-progress: false\n      queue: max",
+            "origin": "Change"
+          },
+          "options": [
+            "Without it, a run that is waiting behind the active run is replaced by the next newer run, so with several open PRs some checks would be cancelled before ever starting.",
+            "Without it, two runs in the group would execute at the same time and race on the state branch.",
+            "Without it, the run currently in progress would be cancelled whenever a newer run arrives in the group.",
+            "Without it, runs skipped by the job-level condition, such as other bots' comments, would take a slot in the queue and delay real checks."
+          ],
+          "correct": 0,
+          "reasons": [
+            "A concurrency group holds one running and one pending run by default, and a newer arrival cancels the pending one. `queue: max` keeps every waiting run in order, so each PR's check still runs, one at a time.",
+            "A concurrency group already allows only one running run at a time, with or without `queue: max`. The option changes what happens to the waiting runs, not the one-at-a-time guarantee.",
+            "Cancelling the running run is controlled by `cancel-in-progress`, which is set to false here. `queue: max` concerns the pending runs, not the running one.",
+            "The comment says skipped runs never queue because the group is on the job, not the workflow. That is separate from `queue: max`, which only keeps every waiting run instead of just the newest."
+          ]
+        }
+      },
+      "explanation": "A concurrency group holds one running and one pending run by default, and a newer arrival cancels the pending one. `queue: max` keeps every waiting run in order, so each PR's check still runs, one at a time."
+    },
+    {
+      "id": "github-actions.concurrency.cancel-in-progress/mc",
+      "concept": "github-actions.concurrency.cancel-in-progress",
+      "scope": "General",
+      "kind": "ExplainYourChange",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "In this concurrency block the job's runs are serialised through one group, and `cancel-in-progress` is `false`. Suppose three PRs each trigger a run while an earlier run is still executing. What does this setting guarantee, and what does it not?",
+          "code": {
+            "language": "yaml",
+            "text": "    concurrency:\n      group: soqrates-state\n      cancel-in-progress: false",
+            "origin": "Change"
+          },
+          "options": [
+            "It keeps a newly queued run from cancelling the run that is executing. But the group still holds only one pending run, so a newer run replaces a waiting one and that run is cancelled before it starts.",
+            "It disables the concurrency group, so runs for different PRs execute in parallel and can race on the state branch.",
+            "It makes every run in the group wait its turn in order, so with several open PRs each push gets its own run, one at a time.",
+            "It stops any run in the group from being cancelled, whether it is running or pending."
+          ],
+          "correct": 0,
+          "reasons": [
+            "`cancel-in-progress: false` only protects the run that is already executing. Without `queue: max`, a group holds one running and one pending run, so when several runs arrive during one execution only the newest pending run survives and the rest are cancelled.",
+            "The group is still enforced. `cancel-in-progress: false` does not turn off serialisation, and `group: soqrates-state` still allows only one run at a time.",
+            "This describes the behaviour that needs `queue: max`. With only `cancel-in-progress: false`, runs waiting behind the active one are not all kept, because a newer pending run supersedes an older one.",
+            "It protects only the run in progress. A pending run can still be replaced and cancelled by a newer one, which is why a pending check can be lost."
+          ]
+        }
+      },
+      "explanation": "`cancel-in-progress: false` only protects the run that is already executing. Without `queue: max`, a group holds one running and one pending run, so when several runs arrive during one execution only the newest pending run survives and the rest are cancelled."
+    },
+    {
+      "id": "soqrates.state-branch.serialized-writes/mc",
+      "concept": "soqrates.state-branch.serialized-writes",
+      "scope": "Project",
+      "kind": "Scenario",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "A repository uses the Soqrates action, which keeps learner state on the `soqrates-state` branch. The maintainer removes the shared `concurrency` group from the workflow, because it looks like an unnecessary restriction. Several pull requests are then updated within the same minute. What is the most likely result?",
+          "options": [
+            "Some runs fail at the push step because they lose a race with another run. Their state update is not saved and their check reports an error, even though nothing is overwritten.",
+            "The runs that lose the push race overwrite the winner's state. Learner progress from the earlier runs is lost without any error.",
+            "Nothing changes for the state branch, because the push fails safely when it loses a race. Only the cost of the runs goes up, since several of them run at once.",
+            "GitHub automatically merges the learner state documents written by the parallel runs, so every run succeeds and the state ends up complete."
+          ],
+          "correct": 0,
+          "reasons": [
+            "The state branch expects one writer at a time, so a push that loses a race fails instead of overwriting. Without the shared concurrency group and its queue, overlapping runs would hit this failure. The group makes the runs take turns, so every push starts from the latest state.",
+            "A push that loses a race is rejected rather than overwriting the other run's state. The risk is failed runs, not silent data loss.",
+            "The failing push protects the data, but it also means the losing run errors and its learner state update is not saved. Without the shared group you would get failed runs, not just extra cost.",
+            "GitHub does not merge the pushes. A non-fast-forward push is simply rejected, and nothing combines the state documents."
+          ]
+        }
+      },
+      "explanation": "The state branch expects one writer at a time, so a push that loses a race fails instead of overwriting. Without the shared concurrency group and its queue, overlapping runs would hit this failure. The group makes the runs take turns, so every push starts from the latest state."
+    }
+  ],
+  "created_at": "2026-11-10T05:33:46.023713296Z"
+}
