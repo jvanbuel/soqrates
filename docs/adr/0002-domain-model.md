@@ -39,7 +39,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Question | `Question` | assessment | A question about one concept, in one format. | exercise |
 | Format | `QuestionFormat` | assessment | Multiple choice or open. | |
 | Kind | `QuestionKind` | assessment | What a question asks of the author, e.g. predict an outcome or explain their change (ADR-0007). Separate from the format. | |
-| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and at most 15 lines, from the change or written by the examiner (ADR-0007). | |
+| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and about 15 lines (at most 20), from the change or written by the examiner (ADR-0007). | |
 | Hunk | `Hunk` | assessment | A contiguous piece of a change in one file, as it is after the change. | |
 | Brief | `QuestionBrief` | assessment | What the examiner is asked to write for one concept: the format, the kinds allowed and the hunks (ADR-0007). | |
 | Answer | `Answer` | assessment | The author's response to a question. | reply |
