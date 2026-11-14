@@ -1,0 +1,39 @@
+{
+  "id": "bank-fc6d0e0efaffbc9a",
+  "version": 1,
+  "level": "Expert",
+  "question": {
+    "id": "architecture.ports-adapters.default-methods/mc",
+    "concept": "architecture.ports-adapters.default-methods",
+    "scope": "General",
+    "kind": "PredictOutcome",
+    "body": {
+      "MultipleChoice": {
+        "prompt": "A port trait gains a new optional method with a default body that returns `None`. An older implementor, which predates the method, implements only the required method. What happens when this program is compiled and run?",
+        "code": {
+          "language": "rust",
+          "text": "trait Prompter {\n    fn say(&mut self, text: &str);\n    fn ask_feedback(&mut self) -> Option<String> {\n        None\n    }\n}\n\nstruct Quiet;\n\nimpl Prompter for Quiet {\n    fn say(&mut self, text: &str) {\n        println!(\"{text}\");\n    }\n}\n\nfn main() {\n    let mut p = Quiet;\n    p.say(\"done\");\n    println!(\"{:?}\", p.ask_feedback());\n}",
+          "origin": "General"
+        },
+        "options": [
+          "It fails to compile because Quiet does not implement ask_feedback, and every trait method must be implemented.",
+          "It compiles and prints \"done\" and then \"None\", because Quiet inherits the default body of ask_feedback.",
+          "It compiles and prints only \"done\", because a default method on a type that did not override it is never called.",
+          "It compiles, prints \"done\", and then panics at runtime because the default method has no real implementation for Quiet."
+        ],
+        "correct": 1,
+        "reasons": [
+          "Only methods without a body are required. A method with a default body is optional, so the impl compiles and the trait can grow without breaking implementors.",
+          "A trait method with a default body does not have to be implemented. Types written before the method existed keep compiling and get the neutral behaviour. This is why the new optional port methods can be added without touching existing providers and prompters.",
+          "The call p.ask_feedback() dispatches to the default body like any other method, and the println! prints its result. The default is used exactly when there is no override.",
+          "The default body is real code that returns None. Rust does not insert a panic for unimplemented defaults. A panic would only happen if the body called unimplemented!()."
+        ]
+      }
+    },
+    "explanation": "A trait method with a default body does not have to be implemented. Types written before the method existed keep compiling and get the neutral behaviour. This is why the new optional port methods can be added without touching existing providers and prompters.",
+    "checked": true
+  },
+  "added_at": "2026-11-14T08:07:13.025418150Z",
+  "asked": 1,
+  "retired": false
+}

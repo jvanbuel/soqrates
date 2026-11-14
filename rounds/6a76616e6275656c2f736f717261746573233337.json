@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 37
+  },
+  "rounds": [
+    {
+      "head": "24ce7db56f2cd8d0e5095a30fbe9911aaf68124b",
+      "session": "jvanbuel/soqrates#37@24ce7db56f2cd8d0e5095a30fbe9911aaf68124b",
+      "concepts": [
+        "soqrates.ci.idempotent-retry-ordering",
+        "project.session.question-budget-cap",
+        "project.feedback.bank-dispute-lifecycle",
+        "project.feedback.idempotent-author-scoped",
+        "architecture.ports-adapters.default-methods"
+      ],
+      "at": "2026-11-14T08:07:13.025738999Z"
+    }
+  ]
+}
