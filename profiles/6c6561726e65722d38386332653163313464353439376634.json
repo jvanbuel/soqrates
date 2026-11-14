@@ -3,6 +3,19 @@
   "starting_level": "Novice",
   "level": "Expert",
   "cards": {
+    "architecture.facade.split-impl-blocks": {
+      "card": {
+        "due": "2026-11-17T11:42:08.879429975Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T11:42:08.879429975Z"
+      }
+    },
     "concurrency.atomic-claim.mutual-exclusion": {
       "card": {
         "due": "2026-11-09T17:37:59.141682093Z",
@@ -18,15 +31,15 @@
     },
     "delivery.answer-command.forgiving-parsing": {
       "card": {
-        "due": "2026-11-09T17:18:45.049315465Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
+        "due": "2026-11-15T11:42:08.879429975Z",
+        "stability": 0.5197046120754482,
+        "difficulty": 9.198653481986167,
+        "elapsed_days": 5,
         "scheduled_days": 1,
-        "reps": 1,
-        "lapses": 0,
+        "reps": 2,
+        "lapses": 1,
         "state": "Review",
-        "last_review": "2026-11-08T17:18:45.049315465Z"
+        "last_review": "2026-11-14T11:42:08.879429975Z"
       }
     },
     "design.validation.brief-check": {
@@ -549,6 +562,19 @@
         "last_review": "2026-11-14T07:45:38.265067052Z"
       }
     },
+    "rust.enums.state-modelling": {
+      "card": {
+        "due": "2026-11-17T11:42:08.879429975Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T11:42:08.879429975Z"
+      }
+    },
     "rust.error-handling.map-err-question-mark": {
       "card": {
         "due": "2026-11-10T12:25:42.551353684Z",
@@ -599,6 +625,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-09T08:58:28.977822508Z"
+      }
+    },
+    "rust.refactoring.struct-with-impl-bounds": {
+      "card": {
+        "due": "2026-11-17T11:42:08.879429975Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T11:42:08.879429975Z"
       }
     },
     "rust.serde.backward-compat-defaults": {
@@ -863,15 +902,15 @@
     },
     "soqrates.ci.submitted-answers-semantics": {
       "card": {
-        "due": "2026-11-09T17:12:25.279744332Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
+        "due": "2026-11-21T11:42:08.879429975Z",
+        "stability": 6.687684366074506,
+        "difficulty": 7.118300161986166,
+        "elapsed_days": 5,
+        "scheduled_days": 7,
+        "reps": 2,
         "lapses": 0,
         "state": "Review",
-        "last_review": "2026-11-08T17:12:25.279744332Z"
+        "last_review": "2026-11-14T11:42:08.879429975Z"
       }
     },
     "soqrates.ci.superseding-question-comments": {
@@ -1589,13 +1628,49 @@
       "grade": "Good",
       "at": "2026-11-14T09:56:09.147821157Z",
       "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.ci.submitted-answers-semantics",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T11:42:08.879429975Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "delivery.answer-command.forgiving-parsing",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-14T11:42:08.879429975Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.refactoring.struct-with-impl-bounds",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T11:42:08.879429975Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "architecture.facade.split-impl-blocks",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T11:42:08.879429975Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.enums.state-modelling",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T11:42:08.879429975Z",
+      "via": "github.com:16427728"
     }
   ],
   "level_since": 68,
-  "version": 3,
+  "version": 4,
   "applied": [
     "283f1237330d939c7cea0782b068e4b6",
     "2b7e606d084b6a23eefd4d4950b94915",
+    "7a813861d5851f111e3d69990410a907",
     "8fc0b22b22c83aba7743212de71634a4"
   ]
 }
