@@ -1,0 +1,161 @@
+{
+  "key": "jvanbuel/soqrates#35@dbf30bac1bcbf1c92ef17f6ea708e8d0b5223937",
+  "author": "github.com:16427728",
+  "questions": [
+    {
+      "id": "soqrates.ci.idempotent-retry-ordering/mc",
+      "concept": "soqrates.ci.idempotent-retry-ordering",
+      "scope": "Project",
+      "kind": "SpotTheBug",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "This function finishes a grading, and recovery may call it again after a crash at any point. The graded record is the marker that tells it the reviews were already recorded. One line is in the wrong place. Which line is it, and what goes wrong?",
+          "code": {
+            "language": "python",
+            "text": "def apply(store, journal):\n    # Safe to run again after a crash: recovery calls this for\n    # every journal left behind.\n    if store.load_graded(journal.key) is None:\n        store.save_graded(journal.graded)\n        record_reviews(journal)\n        store.delete_session(journal.key)\n    store.end_grading(journal.key)",
+            "origin": "General"
+          },
+          "options": [
+            "`load_graded` should be called after `end_grading`, so the check sees the final state of the grading.",
+            "The graded record is saved before the reviews are recorded. If the process crashes between the two, recovery finds the record, treats the grading as complete and skips recording, so the reviews are lost for good.",
+            "Saving the graded record is not idempotent, so a second run after a crash would store a duplicate record and double-count the reviews.",
+            "The graded record is saved while the session still exists. It should be saved only after the session is deleted, so that the two writes cannot overlap."
+          ],
+          "correct": 1,
+          "reasons": [
+            "Moving the check later would not make a retry safe. The check is only sound if the record it reads exists only once the reviews are recorded, and the flawed line breaks that.",
+            "The graded record is the only signal that the reviews were recorded, so it has to be written last. Written first, it can claim work that never happened, and a retry would trust it.",
+            "Saving a record under a fixed key just overwrites it, so a rerun adds no duplicate. The risk is the opposite: the record makes a rerun skip work that was never done.",
+            "The order of these two writes is not the problem. Deleting the session before the record is saved would not help, and the check is still wrong because the record is written before the reviews."
+          ]
+        }
+      },
+      "explanation": "The graded record is the only signal that the reviews were recorded, so it has to be written last. Written first, it can claim work that never happened, and a retry would trust it.",
+      "checked": true
+    },
+    {
+      "id": "project.session.question-budget-cap/mc",
+      "concept": "project.session.question-budget-cap",
+      "scope": "Project",
+      "kind": "Scenario",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "An author's earlier round on a pull request left 3 questions unanswered. Before the author pushes again, the team lowers `max_questions` from 5 to 2. The new push has a non-empty diff, and the author has due reviews and new concepts that would normally be asked. What does the new round contain?",
+          "options": [
+            "The new round opens with exactly the 3 carried questions and no new ones, because the carried questions use up the remaining room and are never dropped.",
+            "The round fails to open as invalid, because 3 questions exceed the session cap of 2.",
+            "The 3 carried questions are kept, and 2 more are added for due reviews and new concepts, because the budget applies to each kind separately.",
+            "The round opens with 2 questions: the cap is enforced strictly, so one carried question is dropped."
+          ],
+          "correct": 0,
+          "reasons": [
+            "The room left for new questions is the cap minus the carried count, and that saturates at zero. The session's own cap is raised to the carried count, so opening it succeeds and the carried questions stay.",
+            "The invalid-session error applies to a session that is given more questions than its cap. The cap used to open the session is the larger of the configured budget and the carried count, so carried questions never trigger it.",
+            "The budget is one cap shared by carried questions, due reviews and new concepts. New questions only fill the slots left after the carried ones, and here there are none.",
+            "Carried questions are never dropped, even when the cap has been lowered since they were asked. Dropping one would silently lose a question the author still owes an answer to."
+          ]
+        }
+      },
+      "explanation": "The room left for new questions is the cap minus the carried count, and that saturates at zero. The session's own cap is raised to the carried count, so opening it succeeds and the carried questions stay.",
+      "checked": true
+    },
+    {
+      "id": "parsing.markdown.delimited-region-scanning/mc",
+      "concept": "parsing.markdown.delimited-region-scanning",
+      "scope": "Project",
+      "kind": "ExplainYourChange",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "In this change, `scan_comment` says that a start marker without its end marker starts no field. Why does the scanner follow this rule instead of treating everything after the start marker as answer text?",
+          "code": {
+            "language": "rust",
+            "text": "    /// The answer fields: the number in their markers and the lines between\n    /// them, in order.\n    fields: Vec<(usize, Vec<&'a str>)>,\n}\n\n/// Split `body` as GitHub's markdown sees it. Only the renderer opens fenced\n/// blocks outside answer fields (prose has its backticks escaped), so this\n/// is how reading a comment ignores the code in it (ADR-0007 D5).\n///\n/// A field starts at a start marker line outside code and ends at the first\n/// end marker line with the same number. Everything between the two is the\n/// author's text, fences and markers included, so nothing typed there can\n/// tick a box, start a question or hide the rest of the comment (ADR-0004\n/// D11). A start marker without its end marker starts no field.\nfn scan_comment(body: &str) -> Scanned<'_> {",
+            "origin": "Change"
+          },
+          "options": [
+            "The scanner is a single pass and cannot look ahead. It has to decide at the start marker, so it treats the marker as plain text until it is sure.",
+            "It avoids storing a field with no closing line, which would make the field-number lookup in the grading step index out of bounds.",
+            "If an unterminated start marker opened a field, it would run to the end of the comment. A lost or mangled end marker would then swallow every later question, box and heading as answer text. Skipping the marker keeps the rest of the comment readable.",
+            "An unmatched marker usually means the author is still typing, so the scanner defers the field until the next time the comment is edited and re-read.",
+            "GitHub's markdown renderer drops a start marker without an end marker, so the scanner copies that behaviour to match what the reader sees."
+          ],
+          "correct": 2,
+          "reasons": [
+            "The scanner does look ahead: it searches the following lines for the matching end marker. The rule exists for safety, not because of a single-pass limit.",
+            "Field numbers are already checked against the question count with `checked_sub` and a bounds filter. An unclosed field would not cause an out-of-bounds index. It would cause swallowed content.",
+            "A field's text is opaque to the scanner. An unclosed field would therefore hide everything after it, which is the failure the doc comment calls hiding the rest of the comment. Starting no field confines the damage to that one marker line.",
+            "Nothing is deferred. The comment is scanned afresh on each read, and the rule is a deterministic way to bound what an unclosed marker can affect.",
+            "The markers are hidden HTML comments, and the renderer treats each line on its own. It has no field-pairing rule to mirror. The scanner's pairing is Soqrates' own, and its purpose is to stop typed text from hiding the rest of the comment."
+          ]
+        }
+      },
+      "explanation": "A field's text is opaque to the scanner. An unclosed field would therefore hide everything after it, which is the failure the doc comment calls hiding the rest of the comment. Starting no field confines the damage to that one marker line.",
+      "checked": true
+    },
+    {
+      "id": "project.answers.merge-precedence/mc",
+      "concept": "project.answers.merge-precedence",
+      "scope": "Project",
+      "kind": "PredictOutcome",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "Question 1 is open, question 2 is multiple choice and question 3 is open. The question comment's in-place state is: question 1 has the answer field \"mine\", question 2 has option 2 ticked, and question 3 has nothing. The author has not ticked the Grade box, so `done` is false. They have posted an answer comment that answers only question 1, with \"final\". The call is `merge(&[Some(\"mine\"), None, None], &[None, Some(2), None], Some(&[Some(\"final\"), None, None]), false)`. What does it return?",
+          "code": {
+            "language": "rust",
+            "text": "fn merge(\n    fields: &[Option<&str>],\n    ticked: &[Option<u32>],\n    comment: Option<&[Option<&str>]>,\n    done: bool,\n) -> Option<Vec<String>> {\n    if !done && comment.is_none() {\n        return None;\n    }\n    Some((0..fields.len()).filter_map(|i| {\n        if let Some(Some(c)) = comment.map(|c| c[i]) {\n            return Some(c.to_string());\n        }\n        if let Some(f) = fields[i] { return Some(f.to_string()); }\n        ticked[i].map(|t| format!(\"option {t}\"))\n    }).collect())\n}",
+            "origin": "General"
+          },
+          "options": [
+            "Some([\"mine\", \"option 2\"]), because the in-place field is the author's first answer",
+            "None, because done is false so the author has not submitted",
+            "Some([\"final\", \"option 2\"])",
+            "Some([\"final\"]), because once an answer comment exists the in-place boxes are ignored"
+          ],
+          "correct": 2,
+          "reasons": [
+            "The precedence is the other way round. An answer in the comment replaces the in-place field or boxes for that question, so question 1 gives \"final\", not \"mine\".",
+            "Submitting is either ticking the Grade box or posting an answer comment. The comment is present here, so the early return does not fire.",
+            "Posting an answer comment counts as submitting, so nothing is withheld. Question 1 takes the comment's text, which beats its in-place field. Question 2 has no comment answer, so its ticked box is still read. Question 3 has no answer anywhere and is left out.",
+            "The comment only wins per question, and only for the questions it answers. For question 2 the comment has nothing, so the ticked box is read. Ignoring all in-place answers would throw away work the author did."
+          ]
+        }
+      },
+      "explanation": "Posting an answer comment counts as submitting, so nothing is withheld. Question 1 takes the comment's text, which beats its in-place field. Question 2 has no comment answer, so its ticked box is still read. Question 3 has no answer anywhere and is left out.",
+      "checked": true
+    },
+    {
+      "id": "security.untrusted-input.injection-resistance/mc",
+      "concept": "security.untrusted-input.injection-resistance",
+      "scope": "Project",
+      "kind": "ExplainYourChange",
+      "body": {
+        "MultipleChoice": {
+          "prompt": "In the change, the author's open-question answer, whether it came from the answer field or an answer comment, is rendered with `inline(t)` instead of being pushed into the comment as is. What does this protect against, and why is it needed?",
+          "code": {
+            "language": "rust",
+            "text": "                out.push('\\n');\n            }\n            // The author's text, from the answer field or the answer\n            // comment, is shown inert like any other text (ADR-0004 D4,\n            // D11).\n            QuestionBody::Open { .. } if results.is_some() => match answer {\n                Some(AnswerBody::Text(t)) if !t.trim().is_empty() => {\n                    out.push_str(&format!(\"_Open question._ Your answer: {}\\n\\n\", inline(t)));\n                }\n                _ => out.push_str(\"_Open question, not answered._\\n\\n\"),\n            },\n            QuestionBody::Open { .. } => match drafts.get(i).and_then(Option::as_deref) {\n                Some(draft) => out.push_str(&format!(\n                    \"_Open question._ Left in its answer field: {}\\n\\n\",\n                    inline(draft)",
+            "origin": "Change"
+          },
+          "options": [
+            "It protects against SQL or shell injection, because the answer text is later passed to a query or command line.",
+            "It only needs to escape HTML angle brackets. Markdown such as a task box typed at the start of a line is harmless, because only the real box rendered by Soqrates is ever parsed.",
+            "It stops the answer from being too long for a GitHub comment, since `inline` trims and truncates the text to fit the size limit.",
+            "The author's text sits inside a comment that Soqrates parses line by line and GitHub renders. `inline` puts it on one physical line and escapes `<`, `[`, `]`, backticks and `@`. Text typed there then cannot start a line like a Grade box, `</details>` or a fence, and cannot add HTML or mentions.",
+            "It is only cosmetic. It makes the answer match the style of the other rendered text, and an unescaped answer would behave the same way."
+          ],
+          "correct": 3,
+          "reasons": [
+            "The hazard here is markup injection into a comment that is both parsed and rendered. The code shows no SQL or shell use of the text.",
+            "The parser reads task-box lines from the comment body, so a forged `- [x] **Grade my answers**` line in the text could tick grading. Putting the text on a single line and escaping brackets is what prevents that. Escaping angle brackets alone would not.",
+            "`inline` trims surrounding whitespace but does not truncate. Its purpose is neutralising markup, not enforcing a length limit.",
+            "A forged line such as a ticked Grade box, an opening fence or a `<details>` tag would otherwise be read as real structure, either by Soqrates' parser or by the renderer. Joining lines and escaping the markup characters keeps the text visible but inert. This is what the test with the forged field text checks.",
+            "Without it the text could open fences or `<details>`, forge boxes or mentions, and hide or alter the real Grade box, so behaviour would change."
+          ]
+        }
+      },
+      "explanation": "A forged line such as a ticked Grade box, an opening fence or a `<details>` tag would otherwise be read as real structure, either by Soqrates' parser or by the renderer. Joining lines and escaping the markup characters keeps the text visible but inert. This is what the test with the forged field text checks.",
+      "checked": true
+    }
+  ],
+  "created_at": "2026-11-14T08:01:25.117288341Z"
+}

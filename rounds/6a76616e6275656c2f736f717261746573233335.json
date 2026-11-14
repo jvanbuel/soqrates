@@ -1,0 +1,20 @@
+{
+  "pr": {
+    "repo": "jvanbuel/soqrates",
+    "number": 35
+  },
+  "rounds": [
+    {
+      "head": "dbf30bac1bcbf1c92ef17f6ea708e8d0b5223937",
+      "session": "jvanbuel/soqrates#35@dbf30bac1bcbf1c92ef17f6ea708e8d0b5223937",
+      "concepts": [
+        "soqrates.ci.idempotent-retry-ordering",
+        "project.session.question-budget-cap",
+        "parsing.markdown.delimited-region-scanning",
+        "project.answers.merge-precedence",
+        "security.untrusted-input.injection-resistance"
+      ],
+      "at": "2026-11-14T08:01:25.117288341Z"
+    }
+  ]
+}
