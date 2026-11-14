@@ -224,6 +224,32 @@
         "last_review": "2026-11-10T05:29:22.171515045Z"
       }
     },
+    "parsing.markdown.delimited-region-scanning": {
+      "card": {
+        "due": "2026-11-17T08:51:05.038464527Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T08:51:05.038464527Z"
+      }
+    },
+    "project.answers.merge-precedence": {
+      "card": {
+        "due": "2026-11-15T08:51:05.038464527Z",
+        "stability": 0.4072,
+        "difficulty": 7.2102,
+        "elapsed_days": 0,
+        "scheduled_days": 1,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T08:51:05.038464527Z"
+      }
+    },
     "project.codebase.path-and-argument-sandboxing": {
       "card": {
         "due": "2026-11-12T00:18:51.467874551Z",
@@ -382,15 +408,15 @@
     },
     "project.session.question-budget-cap": {
       "card": {
-        "due": "2026-11-09T16:24:56.473686819Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
+        "due": "2026-11-15T08:51:05.038464527Z",
+        "stability": 0.5197046120754482,
+        "difficulty": 9.198653481986167,
+        "elapsed_days": 5,
         "scheduled_days": 1,
-        "reps": 1,
-        "lapses": 0,
+        "reps": 2,
+        "lapses": 1,
         "state": "Review",
-        "last_review": "2026-11-08T16:24:56.473686819Z"
+        "last_review": "2026-11-14T08:51:05.038464527Z"
       }
     },
     "project.store.postgres-conformance-suite": {
@@ -705,6 +731,19 @@
         "last_review": "2026-11-08T19:05:13.474387986Z"
       }
     },
+    "security.untrusted-input.injection-resistance": {
+      "card": {
+        "due": "2026-11-17T08:51:05.038464527Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T08:51:05.038464527Z"
+      }
+    },
     "shell.pipefail.tee-grep": {
       "card": {
         "due": "2026-11-10T15:27:19.008857369Z",
@@ -759,15 +798,15 @@
     },
     "soqrates.ci.idempotent-retry-ordering": {
       "card": {
-        "due": "2026-11-09T15:09:26.049766993Z",
-        "stability": 0.27491830347692675,
-        "difficulty": 9.198653481986169,
-        "elapsed_days": 1,
-        "scheduled_days": 1,
-        "reps": 2,
+        "due": "2026-11-17T08:51:05.038464527Z",
+        "stability": 2.8358646659021205,
+        "difficulty": 9.060223832493858,
+        "elapsed_days": 5,
+        "scheduled_days": 3,
+        "reps": 3,
         "lapses": 1,
         "state": "Review",
-        "last_review": "2026-11-08T15:09:26.049766993Z"
+        "last_review": "2026-11-14T08:51:05.038464527Z"
       }
     },
     "soqrates.ci.round-carry-and-idempotency": {
@@ -1441,11 +1480,47 @@
       "grade": "Good",
       "at": "2026-11-14T07:45:38.265067052Z",
       "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.ci.idempotent-retry-ordering",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T08:51:05.038464527Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.session.question-budget-cap",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-14T08:51:05.038464527Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "parsing.markdown.delimited-region-scanning",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T08:51:05.038464527Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.answers.merge-precedence",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-14T08:51:05.038464527Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "security.untrusted-input.injection-resistance",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T08:51:05.038464527Z",
+      "via": "github.com:16427728"
     }
   ],
   "level_since": 68,
-  "version": 1,
+  "version": 2,
   "applied": [
-    "283f1237330d939c7cea0782b068e4b6"
+    "283f1237330d939c7cea0782b068e4b6",
+    "8fc0b22b22c83aba7743212de71634a4"
   ]
 }
