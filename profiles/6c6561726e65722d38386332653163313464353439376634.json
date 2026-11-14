@@ -96,15 +96,15 @@
     },
     "git.unified-diff.format": {
       "card": {
-        "due": "2026-11-09T12:41:36.866343819Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
+        "due": "2026-11-21T07:45:38.265067052Z",
+        "stability": 6.687684366074506,
+        "difficulty": 7.118300161986166,
+        "elapsed_days": 5,
+        "scheduled_days": 7,
+        "reps": 2,
         "lapses": 0,
         "state": "Review",
-        "last_review": "2026-11-08T12:41:36.866343819Z"
+        "last_review": "2026-11-14T07:45:38.265067052Z"
       }
     },
     "github-actions.composite-action.design": {
@@ -248,6 +248,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-09T05:54:08.679385522Z"
+      }
+    },
+    "project.engine.session-state-lookup-order": {
+      "card": {
+        "due": "2026-11-17T07:45:38.265067052Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T07:45:38.265067052Z"
       }
     },
     "project.examiner.correct-option-marking": {
@@ -473,15 +486,15 @@
     },
     "rust.control-flow.option-match-filter": {
       "card": {
-        "due": "2026-11-09T12:41:36.866343819Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
+        "due": "2026-11-21T07:45:38.265067052Z",
+        "stability": 6.687684366074506,
+        "difficulty": 7.118300161986166,
+        "elapsed_days": 5,
+        "scheduled_days": 7,
+        "reps": 2,
         "lapses": 0,
         "state": "Review",
-        "last_review": "2026-11-08T12:41:36.866343819Z"
+        "last_review": "2026-11-14T07:45:38.265067052Z"
       }
     },
     "rust.error-handling.map-err-question-mark": {
@@ -534,6 +547,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-08T19:05:13.474387986Z"
+      }
+    },
+    "rust.serde.backward-compatible-deserialization": {
+      "card": {
+        "due": "2026-11-17T07:45:38.265067052Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T07:45:38.265067052Z"
       }
     },
     "rust.serde.schema-and-required-fields": {
@@ -638,6 +664,19 @@
         "lapses": 0,
         "state": "Review",
         "last_review": "2026-11-07T12:25:42.551353684Z"
+      }
+    },
+    "rust.types.string-newtype-parsing": {
+      "card": {
+        "due": "2026-11-17T07:45:38.265067052Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T07:45:38.265067052Z"
       }
     },
     "security.ci.untrusted-pr-code-and-secrets": {
@@ -1367,7 +1406,46 @@
       "grade": "Good",
       "at": "2026-11-10T05:29:22.171515045Z",
       "via": "github.com:16427728"
+    },
+    {
+      "concept": "git.unified-diff.format",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T07:45:38.265067052Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.control-flow.option-match-filter",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T07:45:38.265067052Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.serde.backward-compatible-deserialization",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T07:45:38.265067052Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.types.string-newtype-parsing",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T07:45:38.265067052Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.engine.session-state-lookup-order",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T07:45:38.265067052Z",
+      "via": "github.com:16427728"
     }
   ],
-  "level_since": 68
+  "level_since": 68,
+  "version": 1,
+  "applied": [
+    "283f1237330d939c7cea0782b068e4b6"
+  ]
 }
