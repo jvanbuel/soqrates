@@ -7,7 +7,9 @@
 //! - [`assessment`]: concepts, questions, answers, grades
 //! - [`learner`]: learner profiles, levels, FSRS scheduling
 //! - [`delivery`]: sessions, checks, hooks
-//! - [`app`]: engine, CI and hook workflows, ports, events; uses everything
+//! - [`app`]: the engine (a facade over services for identities, composing
+//!   and grading, behind a store router), CI and hook workflows, ports,
+//!   events; uses everything
 //!
 //! The domain contexts are synchronous and pure. All I/O goes through the
 //! ports in [`app::ports`].

@@ -13,16 +13,14 @@ use soqrates_core::answer_command::{
     Command, hints_due, parse_answers, parse_feedback, read_command, read_feedback,
 };
 use soqrates_core::ports::{
-    BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, EarlierSessions, Examiner,
-    Frozen, LearnerStore, Prompter, ScmProvider, StateStore, Submission,
+    BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, Doc, DocumentStore,
+    EarlierSessions, Examiner, Frozen, Kind, Prompter, Removal, ScmProvider, Submission,
 };
 use soqrates_core::{
-    Answer, AnswerBody, AskedSession, AuthorId, BankedQuestion, CheckStatus, CodeLocation,
-    CodeSnippet, Concept, ConceptId, ConceptScope, Diff, Error, FeedbackCommand, FeedbackRequest,
-    Grade, GradedSession, Grading, GradingJournal, Identity, IdentityLink, LearnerId,
-    LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question, QuestionBody, QuestionBrief,
-    QuestionFormat, QuestionId, QuestionKind, Result, SeenQuestions, Session, SessionKey,
-    SessionOutcome, SnippetOrigin, Weight,
+    Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
+    ConceptScope, Diff, Error, FeedbackCommand, FeedbackRequest, Grade, Grading, PrRef,
+    PullRequest, Question, QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind,
+    Result, Session, SessionKey, SessionOutcome, SnippetOrigin, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -1224,130 +1222,92 @@ fn unreachable() -> Error {
     Error::Port("the learner store cannot be reached".into())
 }
 
-macro_rules! delegate {
-    ($self:ident, $method:ident($($arg:expr),*)) => {
-        match $self {
-            AnyStore::Memory(s) => s.$method($($arg),*).await,
-            AnyStore::File(s) => s.$method($($arg),*).await,
-            AnyStore::Sql(s) => s.$method($($arg),*).await,
-            AnyStore::Unreachable(_) => Err(unreachable()),
-            // Not recursive, so the futures stay nameable.
-            AnyStore::Faulty(s, _) => match &**s {
-                AnyStore::Memory(s) => s.$method($($arg),*).await,
-                AnyStore::File(s) => s.$method($($arg),*).await,
-                AnyStore::Sql(s) => s.$method($($arg),*).await,
-                _ => unreachable!("faults are injected into a base store"),
-            },
+/// Runs `$call` on the base store, whichever it is.
+macro_rules! on_base {
+    ($store:expr, $s:ident => $call:expr) => {
+        match $store {
+            AnyStore::Memory($s) => $call,
+            AnyStore::File($s) => $call,
+            AnyStore::Sql($s) => $call,
+            _ => unreachable!("faults are injected into a base store"),
         }
     };
 }
 
-/// A write: fails if injected faults say so, else is delegated.
-macro_rules! write {
-    ($self:ident, $method:ident($($arg:expr),*)) => {{
-        $self.fault(stringify!($method))?;
-        delegate!($self, $method($($arg),*))
-    }};
+/// Faults are injected by `StateStore` method, as scenarios name them. A
+/// `StateStore` is the core's one implementation over the document port, so
+/// each write on the port is the write of one such method.
+fn write_method(removals: &[Removal<'_>]) -> &'static str {
+    match removals {
+        [Removal::Key(Kind::Session, _)] => "delete_session",
+        [Removal::Key(Kind::Link, _)] => "delete_link",
+        [Removal::Key(Kind::Grading, _)] => "end_grading",
+        _ => "delete_learner",
+    }
 }
 
-impl StateStore for AnyStore {
-    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
-        delegate!(self, load_profile(learner))
+fn save_method(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Profile => "save_profile",
+        Kind::Link => "save_link",
+        Kind::LinkCode => "save_link_code",
+        Kind::Session => "save_session",
+        Kind::Grading => "begin_grading",
+        Kind::Graded => "save_graded",
+        Kind::Rounds => "save_rounds",
+        Kind::Bank => "save_bank_question",
+        Kind::Seen => "save_seen",
+        Kind::Asked => "save_asked",
     }
-    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        write!(self, save_profile(profile))
+}
+
+macro_rules! delegate {
+    ($self:ident, $method:ident($($arg:expr),*)) => {
+        match $self {
+            AnyStore::Unreachable(_) => Err(unreachable()),
+            // Not recursive, so the futures stay nameable.
+            AnyStore::Faulty(s, _) => on_base!(&**s, s => s.$method($($arg),*).await),
+            base => on_base!(base, s => s.$method($($arg),*).await),
+        }
+    };
+}
+
+impl DocumentStore for AnyStore {
+    async fn load(&self, kind: Kind, key: &str) -> Result<Option<Doc>> {
+        delegate!(self, load(kind, key))
     }
-    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
-        // The same write to the learner as `save_profile`, for faults.
-        self.fault("save_profile")?;
+    async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        self.fault(save_method(kind))?;
+        delegate!(self, save(kind, key, doc))
+    }
+    async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
+        delegate!(self, list(kind, group))
+    }
+    async fn remove(&self, removals: &[Removal<'_>]) -> Result<()> {
+        self.fault(write_method(removals))?;
+        delegate!(self, remove(removals))
+    }
+    async fn swap(&self, kind: Kind, key: &str, expected: Option<&Doc>, new: &Doc) -> Result<bool> {
+        // The conditional save of a profile is the same write to the
+        // learner as `save_profile`, for faults.
+        self.fault(save_method(kind))?;
         let meet = match self {
-            AnyStore::Faulty(_, faults) => faults.lock().unwrap().meet.clone(),
+            AnyStore::Faulty(_, faults) if kind == Kind::Profile => {
+                faults.lock().unwrap().meet.clone()
+            }
             _ => None,
         };
         if let Some(meet) = &meet {
             meet.arrive().await;
         }
-        let saved = delegate!(self, save_profile_if_current(profile))?;
-        if let (false, Some(meet)) = (saved, &meet) {
+        let swapped = delegate!(self, swap(kind, key, expected, new))?;
+        if let (false, Some(meet)) = (swapped, &meet) {
             meet.refused.fetch_add(1, Ordering::SeqCst);
         }
-        Ok(saved)
+        Ok(swapped)
     }
-    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        write!(self, delete_learner(learner))
-    }
-    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
-        delegate!(self, learner_of(identity))
-    }
-    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        write!(self, save_link(link))
-    }
-    async fn delete_link(&self, identity: &Identity) -> Result<()> {
-        write!(self, delete_link(identity))
-    }
-    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
-        delegate!(self, links_of(learner))
-    }
-    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        write!(self, save_link_code(code))
-    }
-    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
-        delegate!(self, load_link_code(code))
-    }
-    async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        delegate!(self, load_session(key))
-    }
-    async fn save_session(&self, session: &Session) -> Result<()> {
-        write!(self, save_session(session))
-    }
-    async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        write!(self, delete_session(key))
-    }
-    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
-        write!(self, begin_grading(journal))
-    }
-    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
-        delegate!(self, load_grading(key))
-    }
-    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
-        delegate!(self, gradings())
-    }
-    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
-        write!(self, end_grading(key))
-    }
-    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
-        write!(self, save_graded(graded))
-    }
-    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
-        delegate!(self, load_graded(key))
-    }
-    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
-        delegate!(self, load_rounds(pr))
-    }
-    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        write!(self, save_rounds(rounds))
-    }
-    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
-        delegate!(self, bank_questions(concept))
-    }
-    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
-        write!(self, save_bank_question(question))
-    }
-    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
-        delegate!(self, load_seen(learner))
-    }
-    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
-        write!(self, save_seen(seen))
-    }
-    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
-        delegate!(self, load_asked(key))
-    }
-    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
-        write!(self, save_asked(asked))
-    }
-    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
-        delegate!(self, asked_sessions())
+    async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
+        self.fault(save_method(to))?;
+        delegate!(self, claim(from, to, key, doc))
     }
 }
-
-impl LearnerStore for AnyStore {}

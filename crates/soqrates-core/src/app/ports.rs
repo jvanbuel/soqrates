@@ -17,8 +17,166 @@ use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 use crate::{Error, Result};
 
-/// Persists learner profiles, identity links, link codes and pending
-/// sessions (ADR-0001 D5, ADR-0003).
+/// The kinds of record a [`DocumentStore`] holds. Each is a collection of
+/// JSON documents addressed by a key that is unique within the kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Kind {
+    /// Learner profiles, keyed by learner.
+    Profile,
+    /// Identity links, keyed by identity; grouped by learner.
+    Link,
+    /// Link codes, keyed by code.
+    LinkCode,
+    /// Pending sessions, keyed by session key.
+    Session,
+    /// Grading journals of sessions being graded, keyed by session key.
+    Grading,
+    /// Graded-session records, keyed by session key.
+    Graded,
+    /// The rounds asked on a pull request, keyed by its id.
+    Rounds,
+    /// Bank questions, keyed by bank id; grouped by concept.
+    Bank,
+    /// What a learner was shown from the bank, keyed by learner.
+    Seen,
+    /// Asked sessions kept for feedback, keyed by session key; grouped by
+    /// learner (ADR-0011 D1).
+    Asked,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 10] = [
+        Kind::Profile,
+        Kind::Link,
+        Kind::LinkCode,
+        Kind::Session,
+        Kind::Grading,
+        Kind::Graded,
+        Kind::Rounds,
+        Kind::Bank,
+        Kind::Seen,
+        Kind::Asked,
+    ];
+
+    /// What a record of this kind is called in messages.
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Profile => "profile",
+            Kind::Link => "link",
+            Kind::LinkCode => "link code",
+            Kind::Session => "session",
+            Kind::Grading => "grading journal",
+            Kind::Graded => "graded session",
+            Kind::Rounds => "rounds",
+            Kind::Bank => "bank question",
+            Kind::Seen => "seen questions",
+            Kind::Asked => "asked session",
+        }
+    }
+
+    /// Where in a document of this kind its group is (a JSON pointer);
+    /// `None` for kinds that are not grouped. Backends that index the
+    /// group use [`Kind::group_of`] to read it.
+    pub fn group_pointer(self) -> Option<&'static str> {
+        match self {
+            Kind::Link | Kind::Asked => Some("/learner"),
+            Kind::Bank => Some("/question/concept"),
+            _ => None,
+        }
+    }
+
+    /// The group `doc` belongs to: the learner of a link, the concept of a
+    /// bank question. `None` for kinds that are not grouped; an error for
+    /// a document of a grouped kind that has no group.
+    pub fn group_of(self, doc: &Doc) -> Result<Option<String>> {
+        let Some(pointer) = self.group_pointer() else {
+            return Ok(None);
+        };
+        doc.pointer(pointer)
+            .and_then(|g| g.as_str())
+            .map(|g| Some(g.to_string()))
+            .ok_or_else(|| Error::Port(format!("corrupt {}: no group at {pointer}", self.label())))
+    }
+}
+
+/// A stored document: the JSON the domain type serialises to.
+pub type Doc = serde_json::Value;
+
+/// What [`DocumentStore::remove`] removes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal<'a> {
+    /// The document of `kind` with this key, if there is one.
+    Key(Kind, &'a str),
+    /// Every document of `kind` in this group (see [`Kind::group_of`]); none
+    /// for a kind that is not grouped.
+    Group(Kind, &'a str),
+}
+
+/// The storage port that backends implement (ADR-0001 D5): JSON documents
+/// by kind and key, with the two atomic steps the engine relies on. Records
+/// are typed, serialised and queried by the [`StateStore`] implemented once
+/// on top of it, so a backend knows nothing about learners or sessions.
+///
+/// Every method is atomic for the one document it names, and a backend that
+/// is shared between processes keeps that between processes. Failures are
+/// [`Error::Port`].
+pub trait DocumentStore: Send + Sync {
+    /// The document of `kind` with `key`, if any.
+    fn load(&self, kind: Kind, key: &str) -> impl Future<Output = Result<Option<Doc>>> + Send;
+
+    /// Create or replace the document of `kind` with `key`. Atomic: a
+    /// reader sees the old or the new document, never a mix, and a failure
+    /// leaves the old one. For a grouped kind the group is
+    /// [`Kind::group_of`] `doc`, replaced along with it.
+    fn save(&self, kind: Kind, key: &str, doc: &Doc) -> impl Future<Output = Result<()>> + Send;
+
+    /// The documents of `kind`, or only those of `group` (see
+    /// [`Kind::group_of`]; a kind that is not grouped has none), in any
+    /// order. A snapshot per document, not across documents.
+    fn list(
+        &self,
+        kind: Kind,
+        group: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<Doc>>> + Send;
+
+    /// Remove what `removals` name; what isn't there is skipped. All or
+    /// nothing where the backend has transactions (memory, SQL); one by one,
+    /// in order, in the file store, where a failure part-way leaves the
+    /// rest.
+    fn remove(&self, removals: &[Removal<'_>]) -> impl Future<Output = Result<()>> + Send;
+
+    /// Compare and swap: replace the document of `kind` with `key` by `new`
+    /// only if it is still `expected` (`None`: there is none), as one
+    /// step. Returns `false`, changing nothing, when it is not. Of several
+    /// concurrent swaps from one `expected`, exactly one returns `true`.
+    fn swap(
+        &self,
+        kind: Kind,
+        key: &str,
+        expected: Option<&Doc>,
+        new: &Doc,
+    ) -> impl Future<Output = Result<bool>> + Send;
+
+    /// Claim the document of kind `from` with `key`: remove it and store
+    /// `doc` as the document of kind `to` with the same key, as one step.
+    /// Returns `false`, changing nothing, when there is no such `from`
+    /// document or a `to` document with that key already exists. Of several
+    /// concurrent claims, at most one returns `true`. A backend without
+    /// transactions writes `to` before it removes `from`, so a stop in
+    /// between leaves both, never neither.
+    fn claim(
+        &self,
+        from: Kind,
+        to: Kind,
+        key: &str,
+        doc: &Doc,
+    ) -> impl Future<Output = Result<bool>> + Send;
+}
+
+/// Persists the records of Soqrates: learner profiles, identity links, link
+/// codes, sessions, grading journals, graded records, PR rounds and the
+/// question bank (ADR-0001 D5, ADR-0003). The engine and every other caller
+/// use this port; it is implemented once, for every [`DocumentStore`].
 pub trait StateStore: Send + Sync {
     fn load_profile(
         &self,
@@ -118,11 +276,6 @@ pub trait StateStore: Send + Sync {
     /// Every asked session in this store, in any order (ADR-0011 D9).
     fn asked_sessions(&self) -> impl Future<Output = Result<Vec<AskedSession>>> + Send;
 }
-
-/// The store holding the profiles of linked learners, reachable from several
-/// forges and owned by the learner or by an organisation (ADR-0003 D4). It
-/// stores only general concepts (D5). A port failure means "unreachable".
-pub trait LearnerStore: StateStore {}
 
 /// A line that [`Codebase::grep`] found.
 #[derive(Debug, Clone, PartialEq, Eq)]

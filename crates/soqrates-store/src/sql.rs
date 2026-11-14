@@ -1,4 +1,4 @@
-//! A `StateStore` in a SQL database: SQLite or PostgreSQL, chosen by the
+//! A `DocumentStore` in a SQL database: SQLite or PostgreSQL, chosen by the
 //! connection URL (ADR-0005).
 //!
 //! Every record is a JSON document in a table of its kind, keyed by the same
@@ -9,16 +9,10 @@
 
 use std::time::Duration;
 
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use soqrates_core::ports::{LearnerStore, StateStore};
-use soqrates_core::{
-    AskedSession, BankedQuestion, ConceptId, Error, GradedSession, GradingJournal, Identity,
-    IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result, SeenQuestions,
-    Session, SessionKey,
-};
+use soqrates_core::ports::{Doc, DocumentStore, Kind, Removal};
+use soqrates_core::{Error, Result};
 use sqlx::any::{AnyPoolOptions, install_default_drivers};
-use sqlx::{AnyConnection, AnyPool, Connection, Row};
+use sqlx::{AnyConnection, AnyPool, AssertSqlSafe, Connection, Row};
 
 /// The schema version this build writes. A database at a newer version was
 /// written by a newer Soqrates and is refused rather than misread (D3).
@@ -99,12 +93,76 @@ fn db(e: sqlx::Error) -> Error {
     Error::Port(format!("database: {e}"))
 }
 
-fn to_json<T: Serialize>(value: &T) -> Result<String> {
-    serde_json::to_string(value).map_err(|e| Error::Port(e.to_string()))
+fn to_json(doc: &Doc) -> Result<String> {
+    serde_json::to_string(doc).map_err(|e| Error::Port(e.to_string()))
 }
 
-fn from_json<T: DeserializeOwned>(kind: &str, key: &str, doc: &str) -> Result<T> {
-    serde_json::from_str(doc).map_err(|e| Error::Port(format!("corrupt {kind} {key:?}: {e}")))
+fn from_json(kind: Kind, key: &str, text: &str) -> Result<Doc> {
+    serde_json::from_str(text)
+        .map_err(|e| Error::Port(format!("corrupt {} {key:?}: {e}", kind.label())))
+}
+
+/// Where the documents of a kind are: the table, the column of the key and,
+/// for a grouped kind, the column of the group (ADR-0005 D2). These names
+/// are the stored schema: changing one orphans data.
+struct Table {
+    name: &'static str,
+    key: &'static str,
+    group: Option<&'static str>,
+}
+
+fn table(kind: Kind) -> Table {
+    let (name, key, group) = match kind {
+        Kind::Profile => ("soqrates_profiles", "learner", None),
+        Kind::Link => ("soqrates_links", "identity", Some("learner")),
+        Kind::LinkCode => ("soqrates_link_codes", "code", None),
+        Kind::Session => ("soqrates_sessions", "session_key", None),
+        Kind::Grading => ("soqrates_gradings", "session_key", None),
+        Kind::Graded => ("soqrates_graded", "session_key", None),
+        Kind::Rounds => ("soqrates_rounds", "pr", None),
+        Kind::Bank => ("soqrates_bank", "id", Some("concept")),
+        Kind::Seen => ("soqrates_seen", "learner", None),
+        Kind::Asked => ("soqrates_asked", "session_key", Some("learner")),
+    };
+    Table { name, key, group }
+}
+
+impl Table {
+    /// `INSERT` of a row; replaces the row of the key if `replace`, else
+    /// does nothing then. Parameters: key, group if any, document.
+    fn insert(&self, replace: bool) -> String {
+        let (key, name) = (self.key, self.name);
+        let (columns, values, update) = match self.group {
+            Some(group) => (
+                format!("{key}, {group}, doc"),
+                "$1, $2, $3",
+                format!("{group} = excluded.{group}, doc = excluded.doc"),
+            ),
+            None => (
+                format!("{key}, doc"),
+                "$1, $2",
+                "doc = excluded.doc".to_string(),
+            ),
+        };
+        let conflict = if replace {
+            format!("DO UPDATE SET {update}")
+        } else {
+            "DO NOTHING".to_string()
+        };
+        format!("INSERT INTO {name} ({columns}) VALUES ({values}) ON CONFLICT ({key}) {conflict}")
+    }
+}
+
+fn sql(text: String) -> AssertSqlSafe<String> {
+    AssertSqlSafe(text)
+}
+
+/// The parameters of [`Table::insert`] for `doc` of `kind` with `key`.
+fn insert_params(kind: Kind, key: &str, doc: &Doc) -> Result<Vec<String>> {
+    let mut params = vec![key.to_string()];
+    params.extend(kind.group_of(doc)?);
+    params.push(to_json(doc)?);
+    Ok(params)
 }
 
 impl SqlStore {
@@ -183,37 +241,6 @@ impl SqlStore {
         }
         tx.commit().await.map_err(db)
     }
-
-    /// The document in `sql`'s single result column, if a row matched.
-    async fn fetch_doc<T: DeserializeOwned>(
-        &self,
-        sql: &'static str,
-        kind: &str,
-        key: &str,
-    ) -> Result<Option<T>> {
-        let row = sqlx::query(sql)
-            .bind(key.to_string())
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?;
-        match row {
-            Some(row) => {
-                let doc: String = row.try_get(0).map_err(db)?;
-                from_json(kind, key, &doc).map(Some)
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Run `sql` with `binds`, in order.
-    async fn exec(&self, sql: &'static str, binds: &[&str]) -> Result<()> {
-        let mut query = sqlx::query(sql);
-        for b in binds {
-            query = query.bind(b.to_string());
-        }
-        query.execute(&self.pool).await.map_err(db)?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -240,6 +267,31 @@ impl SqlStore {
         .unwrap()
         .try_get(0)
         .unwrap()
+    }
+
+    /// The key and group of every row of `table`, in key order.
+    #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    pub(crate) async fn raw_rows_for_test(
+        &self,
+        table: &str,
+        key_column: &str,
+        group_column: Option<&str>,
+    ) -> Vec<(String, Option<String>)> {
+        let group = group_column.unwrap_or("NULL");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT {key_column}, {group}, doc FROM {table} ORDER BY {key_column}"
+        )))
+        .fetch_all(&self.pool)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row.try_get(0).unwrap(),
+                group_column.map(|_| row.try_get(1).unwrap()),
+            )
+        })
+        .collect()
     }
 
     /// Empty every table, for tests sharing one database.
@@ -294,194 +346,161 @@ fn backend_of(url: &str) -> &str {
     }
 }
 
-impl StateStore for SqlStore {
-    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_profiles WHERE learner = $1",
-            "profile",
-            &learner.0,
-        )
+impl DocumentStore for SqlStore {
+    async fn load(&self, kind: Kind, key: &str) -> Result<Option<Doc>> {
+        let t = table(kind);
+        let row = sqlx::query(sql(format!(
+            "SELECT doc FROM {} WHERE {} = $1",
+            t.name, t.key
+        )))
+        .bind(key.to_string())
+        .fetch_optional(&self.pool)
         .await
+        .map_err(db)?;
+        match row {
+            Some(row) => from_json(kind, key, &row.try_get::<String, _>(0).map_err(db)?).map(Some),
+            None => Ok(None),
+        }
     }
-    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_profiles (learner, doc) VALUES ($1, $2)
-             ON CONFLICT (learner) DO UPDATE SET doc = excluded.doc",
-            &[&profile.learner().0, &to_json(profile)?],
-        )
-        .await
+
+    async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        let mut query = sqlx::query(sql(table(kind).insert(true)));
+        for param in insert_params(kind, key, doc)? {
+            query = query.bind(param);
+        }
+        query.execute(&self.pool).await.map_err(db)?;
+        Ok(())
     }
-    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
+
+    async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
+        let t = table(kind);
+        let query = match (group, t.group) {
+            (None, _) => sqlx::query(sql(format!(
+                "SELECT {}, doc FROM {} ORDER BY {}",
+                t.key, t.name, t.key
+            ))),
+            (Some(group), Some(column)) => sqlx::query(sql(format!(
+                "SELECT {}, doc FROM {} WHERE {column} = $1 ORDER BY {}",
+                t.key, t.name, t.key
+            )))
+            .bind(group.to_string()),
+            // A kind that is not grouped has no group to match.
+            (Some(_), None) => return Ok(Vec::new()),
+        };
+        let rows = query.fetch_all(&self.pool).await.map_err(db)?;
+        rows.iter()
+            .map(|row| {
+                let key: String = row.try_get(0).map_err(db)?;
+                let doc: String = row.try_get(1).map_err(db)?;
+                from_json(kind, &key, &doc)
+            })
+            .collect()
+    }
+
+    async fn remove(&self, removals: &[Removal<'_>]) -> Result<()> {
+        // All or nothing (ADR-0003 D6, ADR-0009 D5).
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        for removal in removals {
+            let (kind, column, value) = match *removal {
+                Removal::Key(kind, key) => (kind, Some(table(kind).key), key),
+                Removal::Group(kind, group) => (kind, table(kind).group, group),
+            };
+            // A kind that is not grouped has no group to remove.
+            let Some(column) = column else { continue };
+            sqlx::query(sql(format!(
+                "DELETE FROM {} WHERE {column} = $1",
+                table(kind).name
+            )))
+            .bind(value.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
+        tx.commit().await.map_err(db)
+    }
+
+    async fn swap(&self, kind: Kind, key: &str, expected: Option<&Doc>, new: &Doc) -> Result<bool> {
         // Compare and swap, as one statement: insert only if there is no
-        // row, or replace the document only if it is still the one whose
-        // version was checked. No schema change: the version is in the
-        // document.
-        let key = profile.learner().0.clone();
-        let stored: Option<String> =
-            sqlx::query("SELECT doc FROM soqrates_profiles WHERE learner = $1")
-                .bind(key.clone())
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db)?
-                .map(|row| row.try_get(0).map_err(db))
-                .transpose()?;
-        let next = to_json(&profile.clone().with_version(profile.version() + 1))?;
-        let changed = match stored {
-            None if profile.version() != 0 => return Ok(false),
-            None => {
-                sqlx::query(
-                    "INSERT INTO soqrates_profiles (learner, doc) VALUES ($1, $2)
-                     ON CONFLICT (learner) DO NOTHING",
-                )
-                .bind(key)
-                .bind(next)
-                .execute(&self.pool)
-                .await
+        // row, or replace the document only if it is still the stored text
+        // that was compared, whatever its formatting.
+        let t = table(kind);
+        let stored: Option<String> = sqlx::query(sql(format!(
+            "SELECT doc FROM {} WHERE {} = $1",
+            t.name, t.key
+        )))
+        .bind(key.to_string())
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db)?
+        .map(|row| row.try_get(0).map_err(db))
+        .transpose()?;
+        let params = insert_params(kind, key, new)?;
+        let changed = match (stored, expected) {
+            (None, None) => {
+                let mut insert = sqlx::query(sql(t.insert(false)));
+                for param in params {
+                    insert = insert.bind(param);
+                }
+                insert.execute(&self.pool).await
             }
-            Some(doc) => {
-                let current: LearnerProfile = from_json("profile", &key, &doc)?;
-                if current.version() != profile.version() {
+            (Some(text), Some(expected)) => {
+                if &from_json(kind, key, &text)? != expected {
                     return Ok(false);
                 }
-                sqlx::query("UPDATE soqrates_profiles SET doc = $1 WHERE learner = $2 AND doc = $3")
-                    .bind(next)
-                    .bind(key)
-                    .bind(doc)
+                let set = match t.group {
+                    Some(group) => format!("doc = $1, {group} = $2"),
+                    None => "doc = $1".to_string(),
+                };
+                let n = params.len();
+                let sql_text = format!(
+                    "UPDATE {} SET {set} WHERE {} = ${} AND doc = ${}",
+                    t.name,
+                    t.key,
+                    n,
+                    n + 1
+                );
+                // Parameters: document, group if any, key, stored text.
+                let mut update = sqlx::query(sql(sql_text)).bind(params[n - 1].clone());
+                if t.group.is_some() {
+                    update = update.bind(params[1].clone());
+                }
+                update
+                    .bind(key.to_string())
+                    .bind(text)
                     .execute(&self.pool)
                     .await
             }
+            _ => return Ok(false),
         }
         .map_err(db)?
         .rows_affected();
         Ok(changed == 1)
     }
-    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        // All or nothing (ADR-0003 D6, ADR-0009 D5, ADR-0011 D8).
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        for sql in [
-            "DELETE FROM soqrates_links WHERE learner = $1",
-            "DELETE FROM soqrates_seen WHERE learner = $1",
-            "DELETE FROM soqrates_asked WHERE learner = $1",
-            "DELETE FROM soqrates_profiles WHERE learner = $1",
-        ] {
-            sqlx::query(sql)
-                .bind(learner.0.clone())
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
-        }
-        tx.commit().await.map_err(db)
-    }
 
-    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
-        let link: Option<IdentityLink> = self
-            .fetch_doc(
-                "SELECT doc FROM soqrates_links WHERE identity = $1",
-                "link",
-                &identity.to_string(),
-            )
-            .await?;
-        Ok(link.map(|l| l.learner))
-    }
-    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_links (identity, learner, doc) VALUES ($1, $2, $3)
-             ON CONFLICT (identity) DO UPDATE SET learner = excluded.learner, doc = excluded.doc",
-            &[&link.identity.to_string(), &link.learner.0, &to_json(link)?],
-        )
-        .await
-    }
-    async fn delete_link(&self, identity: &Identity) -> Result<()> {
-        self.exec(
-            "DELETE FROM soqrates_links WHERE identity = $1",
-            &[&identity.to_string()],
-        )
-        .await
-    }
-    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
-        let rows = sqlx::query(
-            "SELECT identity, doc FROM soqrates_links WHERE learner = $1 ORDER BY identity",
-        )
-        .bind(learner.0.clone())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
-        rows.iter()
-            .map(|row| {
-                let identity: String = row.try_get(0).map_err(db)?;
-                let doc: String = row.try_get(1).map_err(db)?;
-                from_json("link", &identity, &doc)
-            })
-            .collect()
-    }
-
-    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_link_codes (code, doc) VALUES ($1, $2)
-             ON CONFLICT (code) DO UPDATE SET doc = excluded.doc",
-            &[code.code(), &to_json(code)?],
-        )
-        .await
-    }
-    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_link_codes WHERE code = $1",
-            "link code",
-            code,
-        )
-        .await
-    }
-
-    async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_sessions WHERE session_key = $1",
-            "session",
-            &key.0,
-        )
-        .await
-    }
-    async fn save_session(&self, session: &Session) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_sessions (session_key, doc) VALUES ($1, $2)
-             ON CONFLICT (session_key) DO UPDATE SET doc = excluded.doc",
-            &[&session.key().0, &to_json(session)?],
-        )
-        .await
-    }
-    async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        self.exec(
-            "DELETE FROM soqrates_sessions WHERE session_key = $1",
-            &[&key.0],
-        )
-        .await
-    }
-    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
-        // One transaction: the session row is deleted, which of several
-        // concurrent callers only one can do, and the journal inserted
+    async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
+        // One transaction: the `from` row is deleted, which of several
+        // concurrent callers only one can do, and the `to` row inserted
         // (ADR-0002 D6, ADR-0005 D4).
-        let key = journal.key().0.clone();
+        let source = table(from);
         let mut tx = self.pool.begin().await.map_err(db)?;
-        let claimed =
-            sqlx::query("DELETE FROM soqrates_sessions WHERE session_key = $1 RETURNING doc")
-                .bind(key.clone())
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .is_some();
+        let claimed = sqlx::query(sql(format!(
+            "DELETE FROM {} WHERE {} = $1 RETURNING doc",
+            source.name, source.key
+        )))
+        .bind(key.to_string())
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?
+        .is_some();
         if !claimed {
             tx.rollback().await.map_err(db)?;
             return Ok(false);
         }
-        let inserted = sqlx::query(
-            "INSERT INTO soqrates_gradings (session_key, doc) VALUES ($1, $2)
-             ON CONFLICT (session_key) DO NOTHING",
-        )
-        .bind(key)
-        .bind(to_json(journal)?)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?
-        .rows_affected();
+        let mut insert = sqlx::query(sql(table(to).insert(false)));
+        for param in insert_params(to, key, doc)? {
+            insert = insert.bind(param);
+        }
+        let inserted = insert.execute(&mut *tx).await.map_err(db)?.rows_affected();
         if inserted != 1 {
             tx.rollback().await.map_err(db)?;
             return Ok(false);
@@ -489,143 +508,7 @@ impl StateStore for SqlStore {
         tx.commit().await.map_err(db)?;
         Ok(true)
     }
-    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_gradings WHERE session_key = $1",
-            "grading journal",
-            &key.0,
-        )
-        .await
-    }
-    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
-        let rows =
-            sqlx::query("SELECT session_key, doc FROM soqrates_gradings ORDER BY session_key")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(db)?;
-        rows.iter()
-            .map(|row| {
-                let key: String = row.try_get(0).map_err(db)?;
-                let doc: String = row.try_get(1).map_err(db)?;
-                from_json("grading journal", &key, &doc)
-            })
-            .collect()
-    }
-    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
-        self.exec(
-            "DELETE FROM soqrates_gradings WHERE session_key = $1",
-            &[&key.0],
-        )
-        .await
-    }
-
-    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_graded (session_key, doc) VALUES ($1, $2)
-             ON CONFLICT (session_key) DO UPDATE SET doc = excluded.doc",
-            &[&graded.key.0, &to_json(graded)?],
-        )
-        .await
-    }
-    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_graded WHERE session_key = $1",
-            "graded session",
-            &key.0,
-        )
-        .await
-    }
-
-    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_rounds WHERE pr = $1",
-            "rounds",
-            &pr.id(),
-        )
-        .await
-    }
-    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_rounds (pr, doc) VALUES ($1, $2)
-             ON CONFLICT (pr) DO UPDATE SET doc = excluded.doc",
-            &[&rounds.pr().id(), &to_json(rounds)?],
-        )
-        .await
-    }
-
-    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
-        let rows = sqlx::query("SELECT id, doc FROM soqrates_bank WHERE concept = $1")
-            .bind(concept.0.clone())
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-        let mut questions = rows
-            .iter()
-            .map(|row| {
-                let id: String = row.try_get(0).map_err(db)?;
-                let doc: String = row.try_get(1).map_err(db)?;
-                from_json::<BankedQuestion>("bank question", &id, &doc)
-            })
-            .collect::<Result<Vec<_>>>()?;
-        questions.sort_by(|a, b| (a.added_at(), a.id()).cmp(&(b.added_at(), b.id())));
-        Ok(questions)
-    }
-    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_bank (id, concept, doc) VALUES ($1, $2, $3)
-             ON CONFLICT (id) DO UPDATE SET concept = excluded.concept, doc = excluded.doc",
-            &[&question.id().0, &question.concept().0, &to_json(question)?],
-        )
-        .await
-    }
-    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_seen WHERE learner = $1",
-            "seen questions",
-            &learner.0,
-        )
-        .await
-    }
-    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_seen (learner, doc) VALUES ($1, $2)
-             ON CONFLICT (learner) DO UPDATE SET doc = excluded.doc",
-            &[&seen.learner().0, &to_json(seen)?],
-        )
-        .await
-    }
-    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
-        self.fetch_doc(
-            "SELECT doc FROM soqrates_asked WHERE session_key = $1",
-            "asked session",
-            &key.0,
-        )
-        .await
-    }
-    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
-        self.exec(
-            "INSERT INTO soqrates_asked (session_key, learner, doc) VALUES ($1, $2, $3)
-             ON CONFLICT (session_key) DO UPDATE SET learner = excluded.learner, doc = excluded.doc",
-            &[&asked.key().0, &asked.learner().0, &to_json(asked)?],
-        )
-        .await
-    }
-    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
-        let rows = sqlx::query("SELECT session_key, doc FROM soqrates_asked")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-        rows.iter()
-            .map(|row| {
-                let key: String = row.try_get(0).map_err(db)?;
-                let doc: String = row.try_get(1).map_err(db)?;
-                from_json::<AskedSession>("asked session", &key, &doc)
-            })
-            .collect()
-    }
 }
-
-impl LearnerStore for SqlStore {}
 
 #[cfg(test)]
 mod tests {
