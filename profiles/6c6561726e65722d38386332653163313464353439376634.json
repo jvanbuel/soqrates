@@ -1,1676 +1,1751 @@
 {
-  "learner": "learner-88c2e1c14d5497f4",
-  "starting_level": "Novice",
-  "level": "Expert",
+  "applied": [
+    "266af793782e39a3e73da30c23e9d3ed",
+    "283f1237330d939c7cea0782b068e4b6",
+    "2b7e606d084b6a23eefd4d4950b94915",
+    "7a813861d5851f111e3d69990410a907",
+    "8fc0b22b22c83aba7743212de71634a4"
+  ],
   "cards": {
     "architecture.facade.split-impl-blocks": {
       "card": {
-        "due": "2026-11-17T11:42:08.879429975Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T11:42:08.879429975Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T11:42:08.879429975Z"
+        "last_review": "2026-11-14T11:42:08.879429975Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
+      }
+    },
+    "architecture.ports-adapters.default-methods": {
+      "card": {
+        "difficulty": 5.314577829570867,
+        "due": "2026-11-17T12:17:44.947843785Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-14T12:17:44.947843785Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "concurrency.atomic-claim.mutual-exclusion": {
       "card": {
-        "due": "2026-11-09T17:37:59.141682093Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-09T17:37:59.141682093Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:37:59.141682093Z"
+        "last_review": "2026-11-08T17:37:59.141682093Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "delivery.answer-command.forgiving-parsing": {
       "card": {
+        "difficulty": 9.198653481986169,
         "due": "2026-11-15T11:42:08.879429975Z",
-        "stability": 0.5197046120754482,
-        "difficulty": 9.198653481986167,
         "elapsed_days": 5,
-        "scheduled_days": 1,
-        "reps": 2,
         "lapses": 1,
-        "state": "Review",
-        "last_review": "2026-11-14T11:42:08.879429975Z"
+        "last_review": "2026-11-14T11:42:08.879429975Z",
+        "reps": 2,
+        "scheduled_days": 1,
+        "stability": 0.5197046120754482,
+        "state": "Review"
       }
     },
     "design.validation.brief-check": {
       "card": {
-        "due": "2026-11-11T19:05:13.474387986Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T19:05:13.474387986Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T19:05:13.474387986Z"
+        "last_review": "2026-11-08T19:05:13.474387986Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "diff.unified.new-side-hunks": {
       "card": {
-        "due": "2026-11-09T19:05:13.474387986Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-09T19:05:13.474387986Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T19:05:13.474387986Z"
+        "last_review": "2026-11-08T19:05:13.474387986Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "distributed.write-ahead-journal.recovery": {
       "card": {
-        "due": "2026-11-11T17:37:59.141682093Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:37:59.141682093Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:37:59.141682093Z"
+        "last_review": "2026-11-08T17:37:59.141682093Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "examiner.multiple-choice.option-check": {
       "card": {
-        "due": "2026-11-09T17:28:17.414240934Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-09T17:28:17.414240934Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:28:17.414240934Z"
+        "last_review": "2026-11-08T17:28:17.414240934Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "git.object-database.reading-revisions": {
       "card": {
-        "due": "2026-11-10T00:18:51.467874551Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T00:18:51.467874551Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T00:18:51.467874551Z"
+        "last_review": "2026-11-09T00:18:51.467874551Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "git.unified-diff.format": {
       "card": {
-        "due": "2026-11-21T07:45:38.265067052Z",
-        "stability": 6.687684366074506,
         "difficulty": 7.118300161986166,
+        "due": "2026-11-21T07:45:38.265067052Z",
         "elapsed_days": 5,
-        "scheduled_days": 7,
-        "reps": 2,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T07:45:38.265067052Z"
+        "last_review": "2026-11-14T07:45:38.265067052Z",
+        "reps": 2,
+        "scheduled_days": 7,
+        "stability": 6.687684366074506,
+        "state": "Review"
       }
     },
     "github-actions.composite-action.design": {
       "card": {
-        "due": "2026-11-11T07:35:32.673791591Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T07:35:32.673791591Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T07:35:32.673791591Z"
+        "last_review": "2026-11-08T07:35:32.673791591Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "github-actions.expressions.conditionals-secrets": {
       "card": {
-        "due": "2026-11-13T05:29:22.171515045Z",
-        "stability": 0.27491830347692675,
         "difficulty": 8.925033436799668,
+        "due": "2026-11-13T05:29:22.171515045Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 4,
         "lapses": 1,
-        "state": "Review",
-        "last_review": "2026-11-10T05:29:22.171515045Z"
+        "last_review": "2026-11-10T05:29:22.171515045Z",
+        "reps": 4,
+        "scheduled_days": 3,
+        "stability": 0.27491830347692675,
+        "state": "Review"
       }
     },
     "github-actions.reusable-workflows.release-pipeline": {
       "card": {
-        "due": "2026-11-11T07:35:32.673791591Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T07:35:32.673791591Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T07:35:32.673791591Z"
+        "last_review": "2026-11-08T07:35:32.673791591Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "github-actions.token.event-triggering": {
       "card": {
-        "due": "2026-11-14T05:29:22.171515045Z",
-        "stability": 2.60517702373931,
         "difficulty": 6.940901533911767,
+        "due": "2026-11-14T05:29:22.171515045Z",
         "elapsed_days": 0,
-        "scheduled_days": 4,
-        "reps": 4,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-10T05:29:22.171515045Z"
+        "last_review": "2026-11-10T05:29:22.171515045Z",
+        "reps": 4,
+        "scheduled_days": 4,
+        "stability": 2.60517702373931,
+        "state": "Review"
       }
     },
     "github.actions.bot-identity-and-tokens": {
       "card": {
-        "due": "2026-11-10T21:59:16.462401418Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T21:59:16.462401418Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T21:59:16.462401418Z"
+        "last_review": "2026-11-07T21:59:16.462401418Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "github.actions.composite-action": {
       "card": {
-        "due": "2026-11-10T21:59:16.462401418Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T21:59:16.462401418Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T21:59:16.462401418Z"
+        "last_review": "2026-11-07T21:59:16.462401418Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "github.api.compare-files-patch": {
       "card": {
-        "due": "2026-11-11T12:41:36.866343819Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T12:41:36.866343819Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T12:41:36.866343819Z"
+        "last_review": "2026-11-08T12:41:36.866343819Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "llm.output.validate-and-retry": {
       "card": {
-        "due": "2026-11-11T17:28:17.414240934Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:28:17.414240934Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:28:17.414240934Z"
+        "last_review": "2026-11-08T17:28:17.414240934Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "llm.structured-output.validation-and-retry": {
       "card": {
-        "due": "2026-11-13T05:29:22.171515045Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-13T05:29:22.171515045Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-10T05:29:22.171515045Z"
+        "last_review": "2026-11-10T05:29:22.171515045Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "markdown.fenced-code-blocks.delimiters": {
       "card": {
-        "due": "2026-11-17T09:56:09.147821157Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T09:56:09.147821157Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T09:56:09.147821157Z"
+        "last_review": "2026-11-14T09:56:09.147821157Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "parsing.markdown.delimited-region-scanning": {
       "card": {
-        "due": "2026-11-17T08:51:05.038464527Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T08:51:05.038464527Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T08:51:05.038464527Z"
+        "last_review": "2026-11-14T08:51:05.038464527Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.answers.merge-precedence": {
       "card": {
-        "due": "2026-11-15T08:51:05.038464527Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-15T08:51:05.038464527Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T08:51:05.038464527Z"
+        "last_review": "2026-11-14T08:51:05.038464527Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "project.codebase.path-and-argument-sandboxing": {
       "card": {
-        "due": "2026-11-12T00:18:51.467874551Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T00:18:51.467874551Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T00:18:51.467874551Z"
+        "last_review": "2026-11-09T00:18:51.467874551Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.config.layered-settings": {
       "card": {
-        "due": "2026-11-10T05:54:08.679385522Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T05:54:08.679385522Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T05:54:08.679385522Z"
+        "last_review": "2026-11-09T05:54:08.679385522Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "project.engine.session-state-lookup-order": {
       "card": {
-        "due": "2026-11-17T07:45:38.265067052Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T07:45:38.265067052Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T07:45:38.265067052Z"
+        "last_review": "2026-11-14T07:45:38.265067052Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.examiner.correct-option-marking": {
       "card": {
-        "due": "2026-11-12T08:58:28.977822508Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T08:58:28.977822508Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T08:58:28.977822508Z"
+        "last_review": "2026-11-09T08:58:28.977822508Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.examiner.llm-output-validation-retry": {
       "card": {
-        "due": "2026-11-12T08:58:28.977822508Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T08:58:28.977822508Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T08:58:28.977822508Z"
+        "last_review": "2026-11-09T08:58:28.977822508Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
+      }
+    },
+    "project.feedback.bank-dispute-lifecycle": {
+      "card": {
+        "difficulty": 5.314577829570867,
+        "due": "2026-11-17T12:17:44.947843785Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-14T12:17:44.947843785Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
+      }
+    },
+    "project.feedback.idempotent-author-scoped": {
+      "card": {
+        "difficulty": 5.314577829570867,
+        "due": "2026-11-17T12:17:44.947843785Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-14T12:17:44.947843785Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.grading.session-state-machine": {
       "card": {
-        "due": "2026-11-11T17:37:59.141682093Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:37:59.141682093Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:37:59.141682093Z"
+        "last_review": "2026-11-08T17:37:59.141682093Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.learner.question-format-policy": {
       "card": {
-        "due": "2026-11-10T05:54:08.679385522Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T05:54:08.679385522Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T05:54:08.679385522Z"
+        "last_review": "2026-11-09T05:54:08.679385522Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "project.question-bank.bankability-and-placement": {
       "card": {
-        "due": "2026-11-12T15:17:08.872471769Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T15:17:08.872471769Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T15:17:08.872471769Z"
+        "last_review": "2026-11-09T15:17:08.872471769Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.question-bank.reuse-selection": {
       "card": {
-        "due": "2026-11-10T15:17:08.872471769Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T15:17:08.872471769Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T15:17:08.872471769Z"
+        "last_review": "2026-11-09T15:17:08.872471769Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "project.question-bank.stable-identity-versioning": {
       "card": {
-        "due": "2026-11-12T15:17:08.872471769Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T15:17:08.872471769Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T15:17:08.872471769Z"
+        "last_review": "2026-11-09T15:17:08.872471769Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.release.rebuild-from-tag-guard": {
       "card": {
-        "due": "2026-11-11T11:19:21.919639663Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T11:19:21.919639663Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T11:19:21.919639663Z"
+        "last_review": "2026-11-08T11:19:21.919639663Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.scm-github.comment-scanning.fenced-fields": {
       "card": {
-        "due": "2026-11-17T09:56:09.147821157Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T09:56:09.147821157Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T09:56:09.147821157Z"
+        "last_review": "2026-11-14T09:56:09.147821157Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.scm.hint-and-acknowledge-ports": {
       "card": {
-        "due": "2026-11-11T17:18:45.049315465Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:18:45.049315465Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:18:45.049315465Z"
+        "last_review": "2026-11-08T17:18:45.049315465Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.session.question-budget-cap": {
       "card": {
-        "due": "2026-11-15T08:51:05.038464527Z",
-        "stability": 0.5197046120754482,
-        "difficulty": 9.198653481986169,
-        "elapsed_days": 5,
-        "scheduled_days": 1,
-        "reps": 2,
+        "difficulty": 9.060223832493858,
+        "due": "2026-11-17T12:17:44.947843785Z",
+        "elapsed_days": 0,
         "lapses": 1,
-        "state": "Review",
-        "last_review": "2026-11-14T08:51:05.038464527Z"
+        "last_review": "2026-11-14T12:17:44.947843785Z",
+        "reps": 3,
+        "scheduled_days": 3,
+        "stability": 0.5197046120754482,
+        "state": "Review"
       }
     },
     "project.store.postgres-conformance-suite": {
       "card": {
-        "due": "2026-11-12T15:27:19.008857369Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T15:27:19.008857369Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T15:27:19.008857369Z"
+        "last_review": "2026-11-09T15:27:19.008857369Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "project.testing.bdd-acceptance-steps": {
       "card": {
-        "due": "2026-11-12T05:54:08.679385522Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T05:54:08.679385522Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T05:54:08.679385522Z"
+        "last_review": "2026-11-09T05:54:08.679385522Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rig.agent.hooks-tool-limiting": {
       "card": {
-        "due": "2026-11-10T00:18:51.467874551Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T00:18:51.467874551Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T00:18:51.467874551Z"
+        "last_review": "2026-11-09T00:18:51.467874551Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "rust.async.channel-bridge-static-tools": {
       "card": {
-        "due": "2026-11-10T00:18:51.467874551Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T00:18:51.467874551Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T00:18:51.467874551Z"
+        "last_review": "2026-11-09T00:18:51.467874551Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "rust.async.closures-futures-generics": {
       "card": {
-        "due": "2026-11-11T17:28:17.414240934Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:28:17.414240934Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:28:17.414240934Z"
+        "last_review": "2026-11-08T17:28:17.414240934Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.async.enum-dispatch-trait": {
       "card": {
-        "due": "2026-11-10T15:40:54.957182562Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T15:40:54.957182562Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T15:40:54.957182562Z"
+        "last_review": "2026-11-07T15:40:54.957182562Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.cargo.optional-features": {
       "card": {
-        "due": "2026-11-11T16:24:56.473686819Z",
-        "stability": 2.60517702373931,
         "difficulty": 7.118300161986166,
+        "due": "2026-11-11T16:24:56.473686819Z",
         "elapsed_days": 1,
-        "scheduled_days": 3,
-        "reps": 2,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T16:24:56.473686819Z"
+        "last_review": "2026-11-08T16:24:56.473686819Z",
+        "reps": 2,
+        "scheduled_days": 3,
+        "stability": 2.60517702373931,
+        "state": "Review"
       }
     },
     "rust.control-flow.option-match-filter": {
       "card": {
-        "due": "2026-11-21T07:45:38.265067052Z",
-        "stability": 6.687684366074506,
         "difficulty": 7.118300161986166,
+        "due": "2026-11-21T07:45:38.265067052Z",
         "elapsed_days": 5,
-        "scheduled_days": 7,
-        "reps": 2,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T07:45:38.265067052Z"
+        "last_review": "2026-11-14T07:45:38.265067052Z",
+        "reps": 2,
+        "scheduled_days": 7,
+        "stability": 6.687684366074506,
+        "state": "Review"
       }
     },
     "rust.enums.state-modelling": {
       "card": {
-        "due": "2026-11-17T11:42:08.879429975Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T11:42:08.879429975Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T11:42:08.879429975Z"
+        "last_review": "2026-11-14T11:42:08.879429975Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.error-handling.map-err-question-mark": {
       "card": {
-        "due": "2026-11-10T12:25:42.551353684Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T12:25:42.551353684Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T12:25:42.551353684Z"
+        "last_review": "2026-11-07T12:25:42.551353684Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.iterators.match-guards": {
       "card": {
-        "due": "2026-11-12T05:54:08.679385522Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T05:54:08.679385522Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T05:54:08.679385522Z"
+        "last_review": "2026-11-09T05:54:08.679385522Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.pattern-matching.guards-and-option-state": {
       "card": {
-        "due": "2026-11-17T09:56:09.147821157Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T09:56:09.147821157Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T09:56:09.147821157Z"
+        "last_review": "2026-11-14T09:56:09.147821157Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.pattern-matching.slice-patterns": {
       "card": {
-        "due": "2026-11-12T08:58:28.977822508Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T08:58:28.977822508Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T08:58:28.977822508Z"
+        "last_review": "2026-11-09T08:58:28.977822508Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.refactoring.struct-with-impl-bounds": {
       "card": {
-        "due": "2026-11-17T11:42:08.879429975Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T11:42:08.879429975Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T11:42:08.879429975Z"
+        "last_review": "2026-11-14T11:42:08.879429975Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.serde.backward-compat-defaults": {
       "card": {
-        "due": "2026-11-10T19:05:13.474387986Z",
-        "stability": 1.1829,
         "difficulty": 6.508547223894037,
+        "due": "2026-11-10T19:05:13.474387986Z",
         "elapsed_days": 0,
-        "scheduled_days": 2,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T19:05:13.474387986Z"
+        "last_review": "2026-11-08T19:05:13.474387986Z",
+        "reps": 1,
+        "scheduled_days": 2,
+        "stability": 1.1829,
+        "state": "Review"
       }
     },
     "rust.serde.backward-compatible-deserialization": {
       "card": {
-        "due": "2026-11-17T07:45:38.265067052Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T07:45:38.265067052Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T07:45:38.265067052Z"
+        "last_review": "2026-11-14T07:45:38.265067052Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.serde.schema-and-required-fields": {
       "card": {
-        "due": "2026-11-12T08:58:28.977822508Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T08:58:28.977822508Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T08:58:28.977822508Z"
+        "last_review": "2026-11-09T08:58:28.977822508Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.sqlx.any-driver": {
       "card": {
-        "due": "2026-11-15T09:56:09.147821157Z",
-        "stability": 0.41677304153694217,
         "difficulty": 10.0,
+        "due": "2026-11-15T09:56:09.147821157Z",
         "elapsed_days": 5,
-        "scheduled_days": 1,
-        "reps": 3,
         "lapses": 2,
-        "state": "Review",
-        "last_review": "2026-11-14T09:56:09.147821157Z"
+        "last_review": "2026-11-14T09:56:09.147821157Z",
+        "reps": 3,
+        "scheduled_days": 1,
+        "stability": 0.41677304153694217,
+        "state": "Review"
       }
     },
     "rust.string.fuzzy-matching": {
       "card": {
-        "due": "2026-11-11T17:18:45.049315465Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:18:45.049315465Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:18:45.049315465Z"
+        "last_review": "2026-11-08T17:18:45.049315465Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.testing.async-tokio-boundary-tests": {
       "card": {
-        "due": "2026-11-13T05:29:22.171515045Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-13T05:29:22.171515045Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-10T05:29:22.171515045Z"
+        "last_review": "2026-11-10T05:29:22.171515045Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.traits.async-ports-generic-dispatch": {
       "card": {
-        "due": "2026-11-10T00:18:51.467874551Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T00:18:51.467874551Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T00:18:51.467874551Z"
+        "last_review": "2026-11-09T00:18:51.467874551Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "rust.traits.default-methods-async": {
       "card": {
-        "due": "2026-11-09T17:46:07.459156615Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-09T17:46:07.459156615Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:46:07.459156615Z"
+        "last_review": "2026-11-08T17:46:07.459156615Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "rust.traits.from_str": {
       "card": {
-        "due": "2026-11-10T12:25:42.551353684Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T12:25:42.551353684Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T12:25:42.551353684Z"
+        "last_review": "2026-11-07T12:25:42.551353684Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.type-inference.parse-annotation": {
       "card": {
-        "due": "2026-11-10T12:25:42.551353684Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T12:25:42.551353684Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T12:25:42.551353684Z"
+        "last_review": "2026-11-07T12:25:42.551353684Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "rust.types.string-newtype-parsing": {
       "card": {
-        "due": "2026-11-17T07:45:38.265067052Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T07:45:38.265067052Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T07:45:38.265067052Z"
+        "last_review": "2026-11-14T07:45:38.265067052Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "security.ci.untrusted-pr-code-and-secrets": {
       "card": {
-        "due": "2026-11-10T21:59:16.462401418Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T21:59:16.462401418Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T21:59:16.462401418Z"
+        "last_review": "2026-11-07T21:59:16.462401418Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "security.untrusted-input.inert-code": {
       "card": {
-        "due": "2026-11-09T19:05:13.474387986Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-09T19:05:13.474387986Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T19:05:13.474387986Z"
+        "last_review": "2026-11-08T19:05:13.474387986Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "security.untrusted-input.injection-resistance": {
       "card": {
-        "due": "2026-11-17T08:51:05.038464527Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-17T08:51:05.038464527Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T08:51:05.038464527Z"
+        "last_review": "2026-11-14T08:51:05.038464527Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "shell.pipefail.tee-grep": {
       "card": {
-        "due": "2026-11-10T15:27:19.008857369Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-10T15:27:19.008857369Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T15:27:19.008857369Z"
+        "last_review": "2026-11-09T15:27:19.008857369Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "soqrates.ci.answer-validity": {
       "card": {
-        "due": "2026-11-09T17:46:07.459156615Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-09T17:46:07.459156615Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:46:07.459156615Z"
+        "last_review": "2026-11-08T17:46:07.459156615Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "soqrates.ci.grade-before-new-round": {
       "card": {
-        "due": "2026-11-11T17:12:25.279744332Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:12:25.279744332Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:12:25.279744332Z"
+        "last_review": "2026-11-08T17:12:25.279744332Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "soqrates.ci.idempotent-rerun": {
       "card": {
-        "due": "2026-11-21T09:56:09.147821157Z",
-        "stability": 6.687684366074506,
         "difficulty": 7.118300161986166,
+        "due": "2026-11-21T09:56:09.147821157Z",
         "elapsed_days": 5,
-        "scheduled_days": 7,
-        "reps": 2,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T09:56:09.147821157Z"
+        "last_review": "2026-11-14T09:56:09.147821157Z",
+        "reps": 2,
+        "scheduled_days": 7,
+        "stability": 6.687684366074506,
+        "state": "Review"
       }
     },
     "soqrates.ci.idempotent-retry-ordering": {
       "card": {
-        "due": "2026-11-17T08:51:05.038464527Z",
-        "stability": 2.8358646659021205,
-        "difficulty": 9.060223832493858,
-        "elapsed_days": 5,
-        "scheduled_days": 3,
-        "reps": 3,
+        "difficulty": 8.925033436799668,
+        "due": "2026-11-18T12:17:44.947843785Z",
+        "elapsed_days": 0,
         "lapses": 1,
-        "state": "Review",
-        "last_review": "2026-11-14T08:51:05.038464527Z"
+        "last_review": "2026-11-14T12:17:44.947843785Z",
+        "reps": 4,
+        "scheduled_days": 4,
+        "stability": 2.8358646659021205,
+        "state": "Review"
       }
     },
     "soqrates.ci.round-carry-and-idempotency": {
       "card": {
-        "due": "2026-11-11T17:46:07.459156615Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:46:07.459156615Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:46:07.459156615Z"
+        "last_review": "2026-11-08T17:46:07.459156615Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "soqrates.ci.submitted-answers-semantics": {
       "card": {
-        "due": "2026-11-21T11:42:08.879429975Z",
-        "stability": 6.687684366074506,
         "difficulty": 7.118300161986166,
+        "due": "2026-11-21T11:42:08.879429975Z",
         "elapsed_days": 5,
-        "scheduled_days": 7,
-        "reps": 2,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-14T11:42:08.879429975Z"
+        "last_review": "2026-11-14T11:42:08.879429975Z",
+        "reps": 2,
+        "scheduled_days": 7,
+        "stability": 6.687684366074506,
+        "state": "Review"
       }
     },
     "soqrates.ci.superseding-question-comments": {
       "card": {
-        "due": "2026-11-10T14:37:58.663945921Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T14:37:58.663945921Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T14:37:58.663945921Z"
+        "last_review": "2026-11-07T14:37:58.663945921Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "soqrates.delivery.answer-feedback-lifecycle": {
       "card": {
-        "due": "2026-11-09T17:46:07.459156615Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-09T17:46:07.459156615Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:46:07.459156615Z"
+        "last_review": "2026-11-08T17:46:07.459156615Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     },
     "soqrates.scm.marker-trust-boundary": {
       "card": {
-        "due": "2026-11-10T14:37:58.663945921Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-10T14:37:58.663945921Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-07T14:37:58.663945921Z"
+        "last_review": "2026-11-07T14:37:58.663945921Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "soqrates.testing.fake-scm-port": {
       "card": {
-        "due": "2026-11-11T17:46:07.459156615Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T17:46:07.459156615Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T17:46:07.459156615Z"
+        "last_review": "2026-11-08T17:46:07.459156615Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "supply-chain.release-artifacts.checksum-provenance": {
       "card": {
-        "due": "2026-11-11T07:35:32.673791591Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-11T07:35:32.673791591Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-08T07:35:32.673791591Z"
+        "last_review": "2026-11-08T07:35:32.673791591Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "testing.skipped-tests.silent-pass-guard": {
       "card": {
-        "due": "2026-11-12T15:27:19.008857369Z",
-        "stability": 3.1262,
         "difficulty": 5.314577829570867,
+        "due": "2026-11-12T15:27:19.008857369Z",
         "elapsed_days": 0,
-        "scheduled_days": 3,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-09T15:27:19.008857369Z"
+        "last_review": "2026-11-09T15:27:19.008857369Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
       }
     },
     "validation.lenient-limit.soft-vs-hard-bound": {
       "card": {
-        "due": "2026-11-11T05:29:22.171515045Z",
-        "stability": 0.4072,
         "difficulty": 7.2102,
+        "due": "2026-11-11T05:29:22.171515045Z",
         "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
         "lapses": 0,
-        "state": "Review",
-        "last_review": "2026-11-10T05:29:22.171515045Z"
+        "last_review": "2026-11-10T05:29:22.171515045Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
       }
     }
   },
   "history": [
     {
+      "at": "2026-11-07T12:25:42.551353684Z",
       "concept": "rust.traits.from_str",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T12:25:42.551353684Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T12:25:42.551353684Z",
       "concept": "rust.type-inference.parse-annotation",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T12:25:42.551353684Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T12:25:42.551353684Z",
       "concept": "rust.error-handling.map-err-question-mark",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T12:25:42.551353684Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T14:37:58.663945921Z",
       "concept": "soqrates.ci.superseding-question-comments",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T14:37:58.663945921Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T14:37:58.663945921Z",
       "concept": "soqrates.ci.idempotent-retry-ordering",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-07T14:37:58.663945921Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T14:37:58.663945921Z",
       "concept": "soqrates.scm.marker-trust-boundary",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T14:37:58.663945921Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T15:40:54.957182562Z",
       "concept": "rust.cargo.optional-features",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-07T15:40:54.957182562Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T15:40:54.957182562Z",
       "concept": "rust.async.enum-dispatch-trait",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T15:40:54.957182562Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T15:40:54.957182562Z",
       "concept": "rust.sqlx.any-driver",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-07T15:40:54.957182562Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T21:59:16.462401418Z",
       "concept": "github.actions.composite-action",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T21:59:16.462401418Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T21:59:16.462401418Z",
       "concept": "security.ci.untrusted-pr-code-and-secrets",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T21:59:16.462401418Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-07T21:59:16.462401418Z",
       "concept": "github.actions.bot-identity-and-tokens",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-07T21:59:16.462401418Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T07:35:32.673791591Z",
       "concept": "github-actions.composite-action.design",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T07:35:32.673791591Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T07:35:32.673791591Z",
       "concept": "github-actions.reusable-workflows.release-pipeline",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T07:35:32.673791591Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T07:35:32.673791591Z",
       "concept": "supply-chain.release-artifacts.checksum-provenance",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T07:35:32.673791591Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T11:19:21.919639663Z",
       "concept": "github-actions.token.event-triggering",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-08T11:19:21.919639663Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T11:19:21.919639663Z",
       "concept": "github-actions.expressions.conditionals-secrets",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T11:19:21.919639663Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T11:19:21.919639663Z",
       "concept": "project.release.rebuild-from-tag-guard",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T11:19:21.919639663Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T12:41:36.866343819Z",
       "concept": "git.unified-diff.format",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-08T12:41:36.866343819Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T12:41:36.866343819Z",
       "concept": "rust.control-flow.option-match-filter",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T12:41:36.866343819Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T12:41:36.866343819Z",
       "concept": "github.api.compare-files-patch",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T12:41:36.866343819Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T15:09:26.049766993Z",
       "concept": "soqrates.ci.idempotent-retry-ordering",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-08T15:09:26.049766993Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T16:24:56.473686819Z",
       "concept": "rust.cargo.optional-features",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T16:24:56.473686819Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T16:24:56.473686819Z",
       "concept": "rust.sqlx.any-driver",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T16:24:56.473686819Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T16:24:56.473686819Z",
       "concept": "project.session.question-budget-cap",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-08T16:24:56.473686819Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:12:25.279744332Z",
       "concept": "soqrates.ci.grade-before-new-round",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:12:25.279744332Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:12:25.279744332Z",
       "concept": "soqrates.ci.submitted-answers-semantics",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T17:12:25.279744332Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:12:25.279744332Z",
       "concept": "soqrates.ci.idempotent-rerun",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-08T17:12:25.279744332Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:18:45.049315465Z",
       "concept": "rust.string.fuzzy-matching",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:18:45.049315465Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:18:45.049315465Z",
       "concept": "delivery.answer-command.forgiving-parsing",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T17:18:45.049315465Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:18:45.049315465Z",
       "concept": "project.scm.hint-and-acknowledge-ports",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:18:45.049315465Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:28:17.414240934Z",
       "concept": "llm.output.validate-and-retry",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:28:17.414240934Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:28:17.414240934Z",
       "concept": "examiner.multiple-choice.option-check",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T17:28:17.414240934Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:28:17.414240934Z",
       "concept": "rust.async.closures-futures-generics",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:28:17.414240934Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:37:59.141682093Z",
       "concept": "distributed.write-ahead-journal.recovery",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:37:59.141682093Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:37:59.141682093Z",
       "concept": "concurrency.atomic-claim.mutual-exclusion",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T17:37:59.141682093Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:37:59.141682093Z",
       "concept": "project.grading.session-state-machine",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:37:59.141682093Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:46:07.459156615Z",
       "concept": "rust.traits.default-methods-async",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-08T17:46:07.459156615Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:46:07.459156615Z",
       "concept": "soqrates.delivery.answer-feedback-lifecycle",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T17:46:07.459156615Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:46:07.459156615Z",
       "concept": "soqrates.testing.fake-scm-port",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:46:07.459156615Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:46:07.459156615Z",
       "concept": "soqrates.ci.answer-validity",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T17:46:07.459156615Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T17:46:07.459156615Z",
       "concept": "soqrates.ci.round-carry-and-idempotency",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T17:46:07.459156615Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T19:05:13.474387986Z",
       "concept": "design.validation.brief-check",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-08T19:05:13.474387986Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T19:05:13.474387986Z",
       "concept": "diff.unified.new-side-hunks",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-08T19:05:13.474387986Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T19:05:13.474387986Z",
       "concept": "security.untrusted-input.inert-code",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-08T19:05:13.474387986Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-08T19:05:13.474387986Z",
       "concept": "rust.serde.backward-compat-defaults",
       "format": "Open",
       "grade": "Hard",
-      "at": "2026-11-08T19:05:13.474387986Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T00:18:51.467874551Z",
       "concept": "git.object-database.reading-revisions",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-09T00:18:51.467874551Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T00:18:51.467874551Z",
       "concept": "rust.traits.async-ports-generic-dispatch",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-09T00:18:51.467874551Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T00:18:51.467874551Z",
       "concept": "project.codebase.path-and-argument-sandboxing",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T00:18:51.467874551Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T00:18:51.467874551Z",
       "concept": "rust.async.channel-bridge-static-tools",
       "format": "Open",
       "grade": "Again",
-      "at": "2026-11-09T00:18:51.467874551Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T00:18:51.467874551Z",
       "concept": "rig.agent.hooks-tool-limiting",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-09T00:18:51.467874551Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T05:54:08.679385522Z",
       "concept": "project.learner.question-format-policy",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-09T05:54:08.679385522Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T05:54:08.679385522Z",
       "concept": "project.config.layered-settings",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-09T05:54:08.679385522Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T05:54:08.679385522Z",
       "concept": "rust.iterators.match-guards",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T05:54:08.679385522Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T05:54:08.679385522Z",
       "concept": "project.testing.bdd-acceptance-steps",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T05:54:08.679385522Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T08:58:28.977822508Z",
       "concept": "project.examiner.correct-option-marking",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T08:58:28.977822508Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T08:58:28.977822508Z",
       "concept": "rust.pattern-matching.slice-patterns",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T08:58:28.977822508Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T08:58:28.977822508Z",
       "concept": "rust.serde.schema-and-required-fields",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T08:58:28.977822508Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T08:58:28.977822508Z",
       "concept": "project.examiner.llm-output-validation-retry",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T08:58:28.977822508Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:17:08.872471769Z",
       "concept": "github-actions.expressions.conditionals-secrets",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-09T15:17:08.872471769Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:17:08.872471769Z",
       "concept": "github-actions.token.event-triggering",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T15:17:08.872471769Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:17:08.872471769Z",
       "concept": "project.question-bank.reuse-selection",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-09T15:17:08.872471769Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:17:08.872471769Z",
       "concept": "project.question-bank.bankability-and-placement",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T15:17:08.872471769Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:17:08.872471769Z",
       "concept": "project.question-bank.stable-identity-versioning",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T15:17:08.872471769Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:27:19.008857369Z",
       "concept": "github-actions.expressions.conditionals-secrets",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T15:27:19.008857369Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:27:19.008857369Z",
       "concept": "github-actions.token.event-triggering",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T15:27:19.008857369Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:27:19.008857369Z",
       "concept": "testing.skipped-tests.silent-pass-guard",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T15:27:19.008857369Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:27:19.008857369Z",
       "concept": "project.store.postgres-conformance-suite",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-09T15:27:19.008857369Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-09T15:27:19.008857369Z",
       "concept": "shell.pipefail.tee-grep",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-09T15:27:19.008857369Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-10T05:29:22.171515045Z",
       "concept": "github-actions.expressions.conditionals-secrets",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-10T05:29:22.171515045Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-10T05:29:22.171515045Z",
       "concept": "github-actions.token.event-triggering",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-10T05:29:22.171515045Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-10T05:29:22.171515045Z",
       "concept": "validation.lenient-limit.soft-vs-hard-bound",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-10T05:29:22.171515045Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-10T05:29:22.171515045Z",
       "concept": "llm.structured-output.validation-and-retry",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-10T05:29:22.171515045Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-10T05:29:22.171515045Z",
       "concept": "rust.testing.async-tokio-boundary-tests",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-10T05:29:22.171515045Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T07:45:38.265067052Z",
       "concept": "git.unified-diff.format",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T07:45:38.265067052Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T07:45:38.265067052Z",
       "concept": "rust.control-flow.option-match-filter",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T07:45:38.265067052Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T07:45:38.265067052Z",
       "concept": "rust.serde.backward-compatible-deserialization",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T07:45:38.265067052Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T07:45:38.265067052Z",
       "concept": "rust.types.string-newtype-parsing",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T07:45:38.265067052Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T07:45:38.265067052Z",
       "concept": "project.engine.session-state-lookup-order",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T07:45:38.265067052Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T08:51:05.038464527Z",
       "concept": "soqrates.ci.idempotent-retry-ordering",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T08:51:05.038464527Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T08:51:05.038464527Z",
       "concept": "project.session.question-budget-cap",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-14T08:51:05.038464527Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T08:51:05.038464527Z",
       "concept": "parsing.markdown.delimited-region-scanning",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T08:51:05.038464527Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T08:51:05.038464527Z",
       "concept": "project.answers.merge-precedence",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-14T08:51:05.038464527Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T08:51:05.038464527Z",
       "concept": "security.untrusted-input.injection-resistance",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T08:51:05.038464527Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T09:56:09.147821157Z",
       "concept": "rust.sqlx.any-driver",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-14T09:56:09.147821157Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T09:56:09.147821157Z",
       "concept": "soqrates.ci.idempotent-rerun",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T09:56:09.147821157Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T09:56:09.147821157Z",
       "concept": "markdown.fenced-code-blocks.delimiters",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T09:56:09.147821157Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T09:56:09.147821157Z",
       "concept": "project.scm-github.comment-scanning.fenced-fields",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T09:56:09.147821157Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T09:56:09.147821157Z",
       "concept": "rust.pattern-matching.guards-and-option-state",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T09:56:09.147821157Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T11:42:08.879429975Z",
       "concept": "soqrates.ci.submitted-answers-semantics",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T11:42:08.879429975Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T11:42:08.879429975Z",
       "concept": "delivery.answer-command.forgiving-parsing",
       "format": "MultipleChoice",
       "grade": "Again",
-      "at": "2026-11-14T11:42:08.879429975Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T11:42:08.879429975Z",
       "concept": "rust.refactoring.struct-with-impl-bounds",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T11:42:08.879429975Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T11:42:08.879429975Z",
       "concept": "architecture.facade.split-impl-blocks",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T11:42:08.879429975Z",
       "via": "github.com:16427728"
     },
     {
+      "at": "2026-11-14T11:42:08.879429975Z",
       "concept": "rust.enums.state-modelling",
       "format": "MultipleChoice",
       "grade": "Good",
-      "at": "2026-11-14T11:42:08.879429975Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T12:17:44.947843785Z",
+      "concept": "soqrates.ci.idempotent-retry-ordering",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T12:17:44.947843785Z",
+      "concept": "project.session.question-budget-cap",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T12:17:44.947843785Z",
+      "concept": "project.feedback.bank-dispute-lifecycle",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T12:17:44.947843785Z",
+      "concept": "project.feedback.idempotent-author-scoped",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T12:17:44.947843785Z",
+      "concept": "architecture.ports-adapters.default-methods",
+      "format": "MultipleChoice",
+      "grade": "Good",
       "via": "github.com:16427728"
     }
   ],
+  "learner": "learner-88c2e1c14d5497f4",
+  "level": "Expert",
   "level_since": 68,
-  "version": 4,
-  "applied": [
-    "283f1237330d939c7cea0782b068e4b6",
-    "2b7e606d084b6a23eefd4d4950b94915",
-    "7a813861d5851f111e3d69990410a907",
-    "8fc0b22b22c83aba7743212de71634a4"
-  ]
+  "starting_level": "Novice",
+  "version": 5
 }

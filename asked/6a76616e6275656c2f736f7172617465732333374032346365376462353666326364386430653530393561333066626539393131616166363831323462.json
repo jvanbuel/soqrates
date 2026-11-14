@@ -1,0 +1,201 @@
+{
+  "at": "2026-11-14T12:17:44.947843785Z",
+  "key": "jvanbuel/soqrates#37@24ce7db56f2cd8d0e5095a30fbe9911aaf68124b",
+  "learner": "learner-88c2e1c14d5497f4",
+  "questions": [
+    {
+      "answer": {
+        "Choice": 1
+      },
+      "grade": "Good",
+      "number": 1,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "fn apply(store: &Store, journal: &Journal) -> Result<()> {\n    let key = journal.key();\n    // Re-run after a crash until it completes.\n    if store.load_graded(key)?.is_none() {\n        store.save_graded(&journal.graded)?;\n        record_reviews(store, journal)?;\n        store.delete_session(key)?;\n    }\n    store.end_grading(key)?;\n    Ok(())\n}"
+            },
+            "correct": 1,
+            "options": [
+              "`delete_session` should come before `record_reviews`, so a retry has no leftover session to confuse it.",
+              "The graded record is saved before the reviews are recorded. A crash between the two leaves the marker in place, so the re-run skips the block and the reviews are never recorded.",
+              "`end_grading` should be inside the `if` block, so it runs only when the graded record was missing.",
+              "The graded record should not be checked at all. The block should always run, because every write is idempotent."
+            ],
+            "prompt": "This function finishes a grading, and it can be re-run any number of times after a crash. Each write is idempotent, and the graded record is what lets a re-run recognise that the work is already done. One line is in the wrong place. Which one is it, and why does it matter?",
+            "reasons": [
+              "Deleting the session before the reviews are recorded would also lose state if a crash came in between. That is the same ordering mistake, now with the session as the casualty.",
+              "The graded record acts as the \"done\" marker that the re-run checks. It must be written last, once every other write has happened. Then a crash at any earlier point leaves no marker, and the re-run repeats the idempotent writes.",
+              "`end_grading` must run on every attempt, including a re-run that finds the marker already there. Otherwise the grading stays marked as in progress forever.",
+              "Running the block every time would be safe for writes that are idempotent in themselves. But the marker still has a job: it stops stale journal data from being applied again, for example whole profiles saved over later reviews. The bug is the order of the writes, not the check."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "soqrates.ci.idempotent-retry-ordering",
+        "explanation": "The graded record acts as the \"done\" marker that the re-run checks. It must be written last, once every other write has happened. Then a crash at any earlier point leaves no marker, and the re-run repeats the idempotent writes.",
+        "id": "soqrates.ci.idempotent-retry-ordering/mc",
+        "kind": "SpotTheBug",
+        "scope": "Project"
+      },
+      "shown": "The graded record acts as the \"done\" marker that the re-run checks. It must be written last, once every other write has happened. Then a crash at any earlier point leaves no marker, and the re-run repeats the idempotent writes."
+    },
+    {
+      "answer": {
+        "Choice": 0
+      },
+      "grade": "Good",
+      "number": 2,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "correct": 0,
+            "options": [
+              "The session opens with the three carried questions and no new ones, because carried questions are never dropped and no slots remain for reviews or new concepts.",
+              "Opening the session fails as invalid, because three questions exceed the configured cap of two.",
+              "The carried questions are kept and two fresh questions are added on top, because the cap applies only to new questions.",
+              "The session opens with only two of the carried questions, because the cap of two is a hard limit and the third is dropped."
+            ],
+            "prompt": "A project's `max_questions` setting was 5. On a pull request, a first round asked 3 questions and the author left all 3 unanswered. Before the next round, the team lowers `max_questions` to 2. The author pushes more commits, and the tool starts a new round with those 3 questions carried over. The new diff has several new concepts and some reviews are due. What happens in the new round?",
+            "reasons": [
+              "The number of open slots is the cap minus the carried count, saturating at zero, so nothing new is composed. The session cap is the larger of the configured cap and the carried count, so the three carried questions still fit.",
+              "A session is rejected for exceeding the cap only when the excess is not carried. Here the cap is raised to the carried count, so the session is valid.",
+              "Carried questions use up slots in the cap. With three carried and a cap of two, no slots remain, so no fresh questions are added.",
+              "The cap is deliberately not hard for carried questions. The session cap is raised to the carried count, so none are dropped even if the cap was lowered after they were asked."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "project.session.question-budget-cap",
+        "explanation": "The number of open slots is the cap minus the carried count, saturating at zero, so nothing new is composed. The session cap is the larger of the configured cap and the carried count, so the three carried questions still fit.",
+        "id": "project.session.question-budget-cap/mc",
+        "kind": "Scenario",
+        "scope": "Project"
+      },
+      "shown": "The number of open slots is the cap minus the carried count, saturating at zero, so nothing new is composed. The session cap is the larger of the configured cap and the carried count, so the three carried questions still fit."
+    },
+    {
+      "answer": {
+        "Choice": 3
+      },
+      "grade": "Good",
+      "number": 3,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "Change",
+              "text": "                (store, asked, learner)\n            }\n        };\n        let given = asked.give(&learner, request, source, self.clock.now())?;\n        if !given.new {\n            return Ok(given);\n        }\n        // The bank first: noting the same feedback again is harmless, and\n        // once the asked session is saved, the same source isn't noted again.\n        let number = given.number;\n        let question = &asked.questions()[number - 1];\n        let id = given.feedback.id.clone();\n        match given.feedback.kind {\n            kind if kind.disputes() => {\n                Self::change_bank_entry(self.bank_of(store), question, |e| e.dispute(&id)).await?"
+            },
+            "correct": 3,
+            "options": [
+              "The bank update has to come first because the asked session's saved state is built from the bank entry. Saving the session first would store a stale question.",
+              "Disputes must reach the bank before the session is saved so the learner's grade can be changed to match. The saved session then holds the corrected grade.",
+              "Writing the bank first lets the bank write lock out other learners before the session is saved. Two learners then can't dispute the same question at once.",
+              "If the process fails between the two writes, a retry still sees the feedback as new and notes it in the bank again. Each entry keeps feedback ids in a set, so noting it twice changes nothing. Saving the asked session first would risk a retry that returns early, so the bank would never hear of the dispute."
+            ],
+            "prompt": "In this change, the feedback handler notes a dispute or praise in the question bank before it saves the asked session. Why is that order important?",
+            "reasons": [
+              "The asked session holds its own copy of the question and does not read from the bank entry. The order is about retry safety, not data dependency.",
+              "Feedback never changes grades. Resolving feedback leaves grades and review cards as they are, so no grade is adjusted here.",
+              "The code takes no cross-learner lock, and concurrent feedback on one question is allowed. Entries record each feedback id separately, so there is nothing to lock out. The order only makes retries safe.",
+              "A retry after a crash re-runs the bank update, and the id sets make that harmless. Once the session is saved, the early return for non-new feedback skips the bank for good, so the order closes that gap."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "project.feedback.bank-dispute-lifecycle",
+        "explanation": "A retry after a crash re-runs the bank update, and the id sets make that harmless. Once the session is saved, the early return for non-new feedback skips the bank for good, so the order closes that gap.",
+        "id": "project.feedback.bank-dispute-lifecycle/mc",
+        "kind": "ExplainYourChange",
+        "scope": "Project"
+      },
+      "shown": "A retry after a crash re-runs the bank update, and the id sets make that harmless. Once the session is saved, the early return for non-new feedback skips the bank for good, so the order closes that gap."
+    },
+    {
+      "answer": {
+        "Choice": 0
+      },
+      "grade": "Good",
+      "number": 4,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "Change",
+              "text": "            kind if kind.disputes() => {\n                Self::change_bank_entry(self.bank_of(store), question, |e| e.dispute(&id)).await?\n            }\n            FeedbackKind::Good => {\n                Self::change_bank_entry(self.bank_of(store), question, |e| e.commend(&id)).await?\n            }\n            _ => {}\n        }\n        store.save_asked(&asked).await?;\n        Ok(given)\n    }\n\n    /// A maintainer accepts or rejects the feedback `id` (ADR-0011 D7). It\n    /// no longer keeps its bank question from being reused; accepting a\n    /// dispute retires that question. Grades and review cards stay as they"
+            },
+            "correct": 0,
+            "options": [
+              "If the run fails between the two steps, the feedback is not yet saved on the session. The retry sees it as new and applies the bank change again, which is harmless because it is keyed by the feedback id. Saving first would make a retry see it as already recorded and skip the bank update for good.",
+              "Saving last is a guard against feedback from anyone but the session's author, since the author check happens when the session is saved.",
+              "Saving the session last makes the two writes one atomic transaction, so either both happen or neither does.",
+              "The bank update has to run first because it computes the feedback id that `save_asked` then stores."
+            ],
+            "prompt": "In this part of `give_feedback`, the bank entry is disputed or commended first, and `store.save_asked(&asked)` runs only afterwards. A repeated CI run passes the same forge-comment source id. Why does the order matter?",
+            "reasons": [
+              "Saving the session is what makes the source count as already recorded. Doing the idempotent bank update first means a crash can only cause a repeat of it, never a loss of it.",
+              "The author check happens earlier, when the session is placed and `give` is called, and it is unrelated to this order. The order concerns retries after partial failure.",
+              "They are two separate stores with no shared transaction. The order only makes a partial failure safe to retry, not impossible.",
+              "The id is already set on the feedback by the earlier `give` call, and the bank closure only reads it. Order is not about data flow here."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "project.feedback.idempotent-author-scoped",
+        "explanation": "Saving the session is what makes the source count as already recorded. Doing the idempotent bank update first means a crash can only cause a repeat of it, never a loss of it.",
+        "id": "project.feedback.idempotent-author-scoped/mc",
+        "kind": "ExplainYourChange",
+        "scope": "Project"
+      },
+      "shown": "Saving the session is what makes the source count as already recorded. Doing the idempotent bank update first means a crash can only cause a repeat of it, never a loss of it."
+    },
+    {
+      "answer": {
+        "Choice": 1
+      },
+      "grade": "Good",
+      "number": 5,
+      "question": {
+        "banked": {
+          "id": "bank-fc6d0e0efaffbc9a",
+          "version": 1
+        },
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "trait Prompter {\n    fn say(&mut self, text: &str);\n    fn ask_feedback(&mut self) -> Option<String> {\n        None\n    }\n}\n\nstruct Quiet;\n\nimpl Prompter for Quiet {\n    fn say(&mut self, text: &str) {\n        println!(\"{text}\");\n    }\n}\n\nfn main() {\n    let mut p = Quiet;\n    p.say(\"done\");\n    println!(\"{:?}\", p.ask_feedback());\n}"
+            },
+            "correct": 1,
+            "options": [
+              "It fails to compile because Quiet does not implement ask_feedback, and every trait method must be implemented.",
+              "It compiles and prints \"done\" and then \"None\", because Quiet inherits the default body of ask_feedback.",
+              "It compiles and prints only \"done\", because a default method on a type that did not override it is never called.",
+              "It compiles, prints \"done\", and then panics at runtime because the default method has no real implementation for Quiet."
+            ],
+            "prompt": "A port trait gains a new optional method with a default body that returns `None`. An older implementor, which predates the method, implements only the required method. What happens when this program is compiled and run?",
+            "reasons": [
+              "Only methods without a body are required. A method with a default body is optional, so the impl compiles and the trait can grow without breaking implementors.",
+              "A trait method with a default body does not have to be implemented. Types written before the method existed keep compiling and get the neutral behaviour. This is why the new optional port methods can be added without touching existing providers and prompters.",
+              "The call p.ask_feedback() dispatches to the default body like any other method, and the println! prints its result. The default is used exactly when there is no override.",
+              "The default body is real code that returns None. Rust does not insert a panic for unimplemented defaults. A panic would only happen if the body called unimplemented!()."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "architecture.ports-adapters.default-methods",
+        "explanation": "A trait method with a default body does not have to be implemented. Types written before the method existed keep compiling and get the neutral behaviour. This is why the new optional port methods can be added without touching existing providers and prompters.",
+        "id": "architecture.ports-adapters.default-methods/mc",
+        "kind": "PredictOutcome",
+        "scope": "General"
+      },
+      "shown": "A trait method with a default body does not have to be implemented. Types written before the method existed keep compiling and get the neutral behaviour. This is why the new optional port methods can be added without touching existing providers and prompters."
+    }
+  ]
+}

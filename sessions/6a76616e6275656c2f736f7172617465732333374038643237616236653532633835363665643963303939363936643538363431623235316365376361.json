@@ -1,0 +1,157 @@
+{
+  "author": "github.com:16427728",
+  "created_at": "2026-11-14T12:19:33.607872011Z",
+  "key": "jvanbuel/soqrates#37@8d27ab6e52c8566ed9c099696d58641b251ce7ca",
+  "questions": [
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "enum Check { Passed, Unknown, Failed(String) }\n\n// `reply` is the raw text of a second model call that lists passages\n// of a question's reasons that discuss answers which are not offered.\nfn judge(reply: &str) -> Check {\n    match parse::<Unlisted>(reply) {\n        Err(_) => Check::Failed(\"check reply unreadable\".into()),\n        Ok(out) if out.unlisted.is_empty() => Check::Passed,\n        Ok(out) => Check::Failed(format!(\"unlisted answers: {:?}\", out.unlisted)),\n    }\n}\n\n// On Failed, the caller discards the question and asks the writer again.\n// On Unknown, it keeps the question and records that the check didn't run."
+          },
+          "correct": 0,
+          "options": [
+            "The unreadable-reply arm returns Failed. The check is only a safeguard on a question that is already valid, so a reply that can't be parsed should return Unknown and keep the question.",
+            "An empty `unlisted` list should return Failed, because a check that finds nothing has probably not looked properly at the reasons.",
+            "The unreadable-reply arm returns Failed. It should return Passed, so an unparseable reply is silently counted as a successful check.",
+            "The final arm reports every quoted passage. It should drop the passages and return a bare Failed, because the writer must not see which reasons were flagged."
+          ],
+          "prompt": "The snippet turns the reply of an option check into a verdict. The check is a second, short model call made after a multiple-choice question has already passed validation. Which line is the bug, and why?",
+          "reasons": [
+            "A garbled reply from the check says nothing about the question. Treating it as a failure throws away valid questions and spends retries because of a fault in the safeguard. Unknown keeps the question and records that the check didn't run.",
+            "An empty list is the intended signal that every reason discusses only the listed options, so it should pass. Failing it would reject every good question.",
+            "Passed would claim the question was verified when the check never produced a result. The caller couldn't tell a verified question from an unchecked one, so a separate Unknown state is needed.",
+            "The quoted passages are the useful part of a failure. They tell the writer exactly what to remove when it is asked again, so dropping them would make the retry less effective."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "examiner.multiple-choice.option-check",
+      "explanation": "A garbled reply from the check says nothing about the question. Treating it as a failure throws away valid questions and spends retries because of a fault in the safeguard. Unknown keeps the question and records that the check didn't run.",
+      "id": "examiner.multiple-choice.option-check/mc",
+      "kind": "SpotTheBug",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "correct": 2,
+          "options": [
+            "The database rejects the second caller because the grading document is inserted with the same key. That uniqueness conflict is what decides the winner, so the delete is only cleanup.",
+            "Each process holds an in-memory lock around the claim call, so two submissions are never inside it at once.",
+            "The claim deletes the pending session and returns the deleted row in a single statement. Only one concurrent transaction can delete a given row, so only one gets a row back and goes on to store the grading document.",
+            "The claim first reads the pending session to check that it exists, and only then writes the grading document. Since the read happens inside a transaction, a second caller cannot also see the session."
+          ],
+          "prompt": "A store backed by a shared SQL database lets a learner submit answers to a pending session. Two submissions of the same session arrive at the same moment, handled by different server processes. Each calls `claim` to move the session from pending to grading, and the system must grade it exactly once. Which mechanism in the SQL implementation of `claim` gives that mutual exclusion?",
+          "reasons": [
+            "The delete comes first and is what decides the winner. A caller that fails to delete returns false before it ever reaches the insert. Relying on a uniqueness conflict alone would let a loser remove or act on the session before failing.",
+            "An in-process lock does not protect against several processes or machines sharing one database, which is the reason for a networked SQL backend. The exclusion has to come from the database.",
+            "Removing the source row is the atomic test-and-set. The database lets only one transaction delete it, and the others see no row and return false. Because the insert of the grading document is in the same transaction, the claim either fully happens or changes nothing.",
+            "A plain read does not exclude anyone. Two transactions can both read the pending session before either writes, so both would think they won. Exclusion needs a write, such as the delete, that only one transaction can succeed at."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "concurrency.atomic-claim.mutual-exclusion",
+      "explanation": "Removing the source row is the atomic test-and-set. The database lets only one transaction delete it, and the others see no row and return false. Because the insert of the grading document is in the same transaction, the claim either fully happens or changes nothing.",
+      "id": "concurrency.atomic-claim.mutual-exclusion/mc",
+      "kind": "Scenario",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "        // latest round is graded rather than carried (ADR-0002 D9); also\n        // those to a follow-up round, which then asks no further one\n        // (ADR-0010 D6).\n        self.grade_submitted(pr, &rounds).await?;\n        // From the latest round that asked its own questions: a round that\n        // carried an earlier session forward asked nothing about its head,\n        // e.g. because carried questions filled the budget (ADR-0002 D10).\n        let base = rounds.rounds().iter().rev().find(|r| !r.carried);\n        let diff = match base {\n            // Only the files the PR changes: a merge of the base branch\n            // brings in changes by others.\n            Some(prev) => scm\n                .diff_between(pr, &prev.head, &pull.head_sha)\n                .await?\n                .map(|d| d.restricted_to_files_of(&pull.diff)),"
+          },
+          "correct": 0,
+          "options": [
+            "Its answers are graded and the results posted, but no check is set and no further follow-up is asked. The check for the new head then comes from the new head's own round.",
+            "Its answers are graded and the check is set to pass or fail from that result, which the new head's round then overwrites.",
+            "The answers are ignored: the follow-up session is superseded by the new head's round and its pending questions are carried forward unanswered.",
+            "Its answers are graded, and if some are wrong another follow-up round is asked on the old head, which keeps the check Pending until the author answers it."
+          ],
+          "prompt": "A pull request has a first round whose wrong answers produced a follow-up round on the same commit, so the check is Pending. The author submits answers to the follow-up, then pushes a new commit before CI has picked them up. CI runs `start_round` for the new head, and the highlighted code runs after `grade_submitted`. What does `grade_submitted` do with the follow-up's submitted answers?",
+          "reasons": [
+            "`grade_submitted` finds the latest round by walking the follow-up session keys and grades it if it is pending and has answers. It deliberately skips `ask_follow_up` and does not set a check, because the check for the new head is about that head's round. So the old round is settled without a new follow-up or a stale status. Because it is a follow-up, grading it also records no reviews.",
+            "No check is set when grading before a push. Setting one would briefly report a status for the old round on the new head. The new head's check is set by its own round.",
+            "Ignoring them would throw away work the author already submitted. The code grades submitted answers first, so the latest round is graded rather than carried.",
+            "The grading before a push does not ask a further follow-up. The old head is no longer the head, and a follow-up on it would leave a round for a stale commit open. Follow-ups are asked only from `ask_follow_up` on the normal grading path."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "project.ci.follow-up-rounds",
+      "explanation": "`grade_submitted` finds the latest round by walking the follow-up session keys and grades it if it is pending and has answers. It deliberately skips `ask_follow_up` and does not set a check, because the check for the new head is about that head's round. So the old round is settled without a new follow-up or a stale status. Because it is a follow-up, grading it also records no reviews.",
+      "id": "project.ci.follow-up-rounds/mc",
+      "kind": "ExplainYourChange",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "fn state(s: &Store, key: &Key) -> State {\n    if s.pending(key).is_some() {\n        return State::Pending;\n    }\n    if let Some(g) = s.graded(key) {\n        return State::Graded(g);\n    }\n    // <- another run finishes grading here: it writes the graded\n    //    record, then deletes the journal\n    if s.journal_exists(key) {\n        return State::Grading;\n    }\n    State::Absent\n}"
+          },
+          "correct": 0,
+          "options": [
+            "It returns Absent, although the session was just graded. The graded record was missed before it existed, and the journal was gone by the time it was checked, so a caller may open a new session for the key.",
+            "It returns Grading, because the journal is still found and an in-progress grading takes priority over the graded record.",
+            "It returns Pending, because the pending session is only deleted after the journal is removed.",
+            "It returns Graded, because the graded record was written before the function returned."
+          ],
+          "prompt": "A grading moves a session through these stages: pending, then a journal (grading in progress), then a graded record, with the journal removed at the end. A session has just finished moving out of pending, and its grading is in progress. A second run calls `state` for the same key. Its check for the graded record finds nothing. Then the first run writes the graded record and deletes the journal, exactly at the marked comment. What does `state` return?",
+          "reasons": [
+            "The two lookups straddle the transition, and each one sees the state that does not hold the session. Looking up the journal first and the graded record second closes the gap. A grading that finishes in between is then found as graded.",
+            "By the time the journal is checked, the other run has already deleted it. Nothing in this code gives the journal priority, because the graded record was looked up earlier.",
+            "The scenario says the pending session is already gone, and the first check already failed. Nothing in the snippet can bring it back.",
+            "The graded record was looked up before it was written, and the function never looks it up again. A result written after the lookup is not seen."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "project.session.state-machine",
+      "explanation": "The two lookups straddle the transition, and each one sees the state that does not hold the session. Looking up the journal first and the graded record second closes the gap. A grading that finishes in between is then found as graded.",
+      "id": "project.session.state-machine/mc",
+      "kind": "PredictOutcome",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "    pub async fn submit(\n        &self,\n        key: &SessionKey,\n        answers: &[Answer],\n        code: &impl Codebase,\n    ) -> Result<SessionOutcome> {\n        let stores = self.stores().strict().await?;\n        let not_found = || Error::NotFound(format!(\"session {:?}\", key.0));\n        let (session, session_store) = stores.find_session(key).await?.ok_or_else(not_found)?;\n        let (journal, mut outcome, primary) = self.grade(&stores, session, answers, code).await?;\n        // Of several concurrent submissions, exactly one claims the session.\n        if !session_store.begin_grading(&journal).await? {\n            return Err(not_found());\n        }\n        if let Some(recorded) = stores.apply(session_store, &journal).await? {"
+          },
+          "correct": 0,
+          "options": [
+            "`find_session` is only a read, so two concurrent submissions can both get past it. The atomic claim lets only one continue and returns `NotFound` to the other, so the same session's reviews are recorded once.",
+            "It lets a failed apply be rolled back. If recording the reviews fails, the claim is undone and the session goes back to being gradable.",
+            "It makes the outcome match what was recorded. If `begin_grading` returns false, the outcome is recomputed from the profiles as they are now.",
+            "It stops a learner from submitting answers to a session that has expired. The `NotFound` return reports that the session's time limit has passed."
+          ],
+          "prompt": "In `submit`, grading is computed first and then `begin_grading(&journal)` is called. If it returns false, `submit` returns `NotFound` and records nothing. Why is this atomic claim needed here, instead of just applying the reviews after `find_session` succeeds?",
+          "reasons": [
+            "The claim and the journal are written in one atomic step, so only one submission sees `true`. The others stop before any review is applied. Without it, both would record the same reviews on the learner's profile.",
+            "The journal is written ahead so a failed apply is not rolled back. The journal stays and a later operation finishes it. The claim is never undone.",
+            "Correcting the outcome is done later by `correct_by`, which uses what `apply` actually recorded. When the claim is lost, the code returns an error and computes no outcome.",
+            "The check does not look at expiry. `begin_grading` returns false when another submission has already claimed the session, and `NotFound` is the same error used for a missing or already graded session."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "project.grading.write-ahead-journal",
+      "explanation": "The claim and the journal are written in one atomic step, so only one submission sees `true`. The others stop before any review is applied. Without it, both would record the same reviews on the learner's profile.",
+      "id": "project.grading.write-ahead-journal/mc",
+      "kind": "ExplainYourChange",
+      "scope": "Project"
+    }
+  ]
+}

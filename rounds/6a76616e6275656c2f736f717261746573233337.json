@@ -1,12 +1,12 @@
 {
   "pr": {
-    "repo": "jvanbuel/soqrates",
-    "number": 37
+    "number": 37,
+    "repo": "jvanbuel/soqrates"
   },
   "rounds": [
     {
-      "head": "24ce7db56f2cd8d0e5095a30fbe9911aaf68124b",
-      "session": "jvanbuel/soqrates#37@24ce7db56f2cd8d0e5095a30fbe9911aaf68124b",
+      "at": "2026-11-14T08:07:13.025738999Z",
+      "carried": false,
       "concepts": [
         "soqrates.ci.idempotent-retry-ordering",
         "project.session.question-budget-cap",
@@ -14,13 +14,28 @@
         "project.feedback.idempotent-author-scoped",
         "architecture.ports-adapters.default-methods"
       ],
-      "at": "2026-11-14T08:07:13.025738999Z"
+      "head": "24ce7db56f2cd8d0e5095a30fbe9911aaf68124b",
+      "session": "jvanbuel/soqrates#37@24ce7db56f2cd8d0e5095a30fbe9911aaf68124b"
     },
     {
-      "head": "5ae6fb0ffeadce24e0170e38eb66de9fed61eb3e",
-      "session": "jvanbuel/soqrates#37@24ce7db56f2cd8d0e5095a30fbe9911aaf68124b",
+      "at": "2026-11-14T10:04:06.200703526Z",
+      "carried": true,
       "concepts": [],
-      "at": "2026-11-14T10:04:06.200703526Z"
+      "head": "5ae6fb0ffeadce24e0170e38eb66de9fed61eb3e",
+      "session": "jvanbuel/soqrates#37@24ce7db56f2cd8d0e5095a30fbe9911aaf68124b"
+    },
+    {
+      "at": "2026-11-14T12:19:33.607872011Z",
+      "carried": false,
+      "concepts": [
+        "examiner.multiple-choice.option-check",
+        "concurrency.atomic-claim.mutual-exclusion",
+        "project.ci.follow-up-rounds",
+        "project.session.state-machine",
+        "project.grading.write-ahead-journal"
+      ],
+      "head": "8d27ab6e52c8566ed9c099696d58641b251ce7ca",
+      "session": "jvanbuel/soqrates#37@8d27ab6e52c8566ed9c099696d58641b251ce7ca"
     }
   ]
 }
