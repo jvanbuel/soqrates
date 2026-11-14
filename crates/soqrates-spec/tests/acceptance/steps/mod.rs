@@ -8,6 +8,7 @@ mod common;
 mod domain_model;
 mod feedback;
 mod follow_ups;
+mod grading_journal;
 mod learner_identity;
 mod learner_state;
 mod local_hooks;

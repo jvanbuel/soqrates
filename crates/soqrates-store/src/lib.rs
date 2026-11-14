@@ -66,6 +66,19 @@ impl StateStore for InMemoryStore {
         });
         Ok(())
     }
+    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
+        Ok(self.with(|d| {
+            let stored = d.profiles.get(profile.learner()).map_or(0, |p| p.version());
+            if stored != profile.version() {
+                return false;
+            }
+            d.profiles.insert(
+                profile.learner().clone(),
+                profile.clone().with_version(stored + 1),
+            );
+            true
+        }))
+    }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
         self.with(|d| {
             d.profiles.remove(learner);
@@ -257,6 +270,32 @@ impl StateStore for FileStore {
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
         self.write("profiles", &profile.learner().0, profile)
     }
+    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
+        // Between processes, an advisory lock makes checking the version
+        // and writing one step. The OS releases it if the process stops.
+        let dir = self.root.join("profiles");
+        std::fs::create_dir_all(&dir).map_err(io)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(".lock"))
+            .map_err(io)?;
+        lock.lock().map_err(io)?;
+        let learner = &profile.learner().0;
+        let stored = self
+            .read::<LearnerProfile>("profiles", learner)?
+            .map_or(0, |p| p.version());
+        if stored != profile.version() {
+            return Ok(false);
+        }
+        self.write(
+            "profiles",
+            learner,
+            &profile.clone().with_version(stored + 1),
+        )?;
+        Ok(true)
+    }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
         for link in self.links_of(learner).await? {
             self.delete_link(&link.identity).await?;
@@ -403,6 +442,9 @@ impl StateStore for Store {
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
         delegate!(self, save_profile(profile))
     }
+    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
+        delegate!(self, save_profile_if_current(profile))
+    }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
         delegate!(self, delete_learner(learner))
     }
@@ -504,6 +546,7 @@ mod tests {
                 passed: true,
                 at: s.created_at(),
             },
+            reviews: Vec::new(),
             profiles: vec![(
                 StoreId::LearnerStore,
                 LearnerProfile::new(LearnerId(learner.into())),
@@ -532,6 +575,82 @@ mod tests {
         assert_eq!(won, 1);
         assert!(store.load_session(&key).await.unwrap().is_none());
         assert_eq!(store.gradings().await.unwrap().len(), 1);
+    }
+
+    /// One graded answer, for the reviews of session `i`.
+    fn review(i: usize) -> soqrates_core::GradedAnswer {
+        soqrates_core::GradedAnswer {
+            concept: ConceptId(format!("concept-{i}")),
+            format: soqrates_core::QuestionFormat::MultipleChoice,
+            grade: soqrates_core::Grade::Good,
+            at: chrono::Utc::now(),
+            via: Identity::Email("ada@example.com".into()),
+        }
+    }
+
+    /// Record the review of session `i` the way the engine does: load the
+    /// profile, record, save if nobody saved since, else load again.
+    async fn record_session<S: StateStore>(store: &S, learner: &LearnerId, i: usize) -> usize {
+        let mut conflicts = 0;
+        loop {
+            let profile = store
+                .load_profile(learner)
+                .await
+                .unwrap()
+                .unwrap_or_else(|| LearnerProfile::new(learner.clone()));
+            let (next, _) = profile
+                .with_session_reviews(&format!("session-{i}"), &[review(i)])
+                .expect("each session is recorded once");
+            if store.save_profile_if_current(&next).await.unwrap() {
+                return conflicts;
+            }
+            conflicts += 1;
+        }
+    }
+
+    /// A conditional save is refused once the profile was saved since it was
+    /// loaded, and of many writers of one profile, each one's review ends up
+    /// on it: none overwrites another (ADR-0002 D6).
+    async fn concurrent_writers_keep_every_review<S: StateStore + 'static>(store: Arc<S>) {
+        let ada = LearnerId("ada".into());
+
+        // A profile is new at version 0; saving it makes the next one.
+        let fresh = LearnerProfile::new(ada.clone());
+        assert!(store.save_profile_if_current(&fresh).await.unwrap());
+        let stored = store.load_profile(&ada).await.unwrap().unwrap();
+        assert_eq!(stored.version(), 1);
+        // The same version again: someone saved in between.
+        assert!(!store.save_profile_if_current(&fresh).await.unwrap());
+        assert_eq!(store.load_profile(&ada).await.unwrap().unwrap(), stored);
+        // A learner who has no profile yet cannot be saved at version 1.
+        let other = LearnerProfile::new(LearnerId("bob".into())).with_version(1);
+        assert!(!store.save_profile_if_current(&other).await.unwrap());
+        assert!(
+            store
+                .load_profile(&LearnerId("bob".into()))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        const SESSIONS: usize = 16;
+        let handles: Vec<_> = (0..SESSIONS)
+            .map(|i| {
+                let store = store.clone();
+                let ada = ada.clone();
+                tokio::spawn(async move { record_session(&*store, &ada, i).await })
+            })
+            .collect();
+        for h in handles {
+            h.await.unwrap();
+        }
+        let profile = store.load_profile(&ada).await.unwrap().unwrap();
+        assert_eq!(profile.history().len(), SESSIONS, "no review was lost");
+        assert_eq!(profile.cards().len(), SESSIONS);
+        assert_eq!(profile.version(), 1 + SESSIONS as u64, "one save each");
+        for i in 0..SESSIONS {
+            assert!(profile.has_applied(&format!("session-{i}")));
+        }
     }
 
     fn json<T: Serialize>(v: &T) -> serde_json::Value {
@@ -802,6 +921,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    // @adr-0002-d6
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn in_memory_writers_keep_every_review() {
+        concurrent_writers_keep_every_review(Arc::new(InMemoryStore::new())).await;
+    }
+
+    // @adr-0002-d6
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn file_writers_keep_every_review() {
+        let dir = temp_dir("writers");
+        concurrent_writers_keep_every_review(Arc::new(FileStore::new(&dir))).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // @adr-0002-d6
+    #[tokio::test]
+    async fn a_profile_document_without_version_or_marks_loads_and_saves() {
+        let dir = temp_dir("old-profile");
+        let store = FileStore::new(&dir);
+        let ada = LearnerId("ada".into());
+        store
+            .save_profile(&LearnerProfile::new(ada.clone()))
+            .await
+            .unwrap();
+        let path = store.path("profiles", "ada");
+        let mut doc: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let fields = doc.as_object_mut().unwrap();
+        fields.remove("version");
+        fields.remove("applied");
+        std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+
+        let old = store.load_profile(&ada).await.unwrap().unwrap();
+        assert_eq!(old.version(), 0);
+        assert!(store.save_profile_if_current(&old).await.unwrap());
+        assert_eq!(
+            store.load_profile(&ada).await.unwrap().unwrap().version(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     // --- SQL database store (ADR-0005) -------------------------------------
 
     #[cfg(feature = "sqlite")]
@@ -842,6 +1003,18 @@ mod tests {
             // Connecting again finds the schema and the data.
             let store = SqlStore::connect(&url(&dir)).await.unwrap();
             assert!(store.load_session(session().key()).await.unwrap().is_some());
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        // @adr-0002-d6
+        #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+        async fn sqlite_writers_keep_every_review() {
+            let dir = temp_dir("sqlite-writers");
+            std::fs::create_dir_all(&dir).unwrap();
+            concurrent_writers_keep_every_review(Arc::new(
+                SqlStore::connect(&url(&dir)).await.unwrap(),
+            ))
+            .await;
             let _ = std::fs::remove_dir_all(dir);
         }
 
@@ -925,7 +1098,11 @@ mod tests {
             };
             conforms(&store).await;
             store.clear_for_test().await;
-            exactly_one_claim(Arc::new(store)).await;
+            let store = Arc::new(store);
+            // @adr-0002-d6
+            concurrent_writers_keep_every_review(store.clone()).await;
+            store.clear_for_test().await;
+            exactly_one_claim(store).await;
             // Concurrent connects (e.g. two CI runners) create the schema once.
             let url = std::env::var("SOQRATES_TEST_POSTGRES_URL").unwrap();
             let connects: Vec<_> = (0..8)

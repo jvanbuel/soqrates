@@ -109,7 +109,7 @@ sequenceDiagram
     Author->>GH: reply with answers
     GH->>CI: workflow run (issue_comment)
     CI->>Core: run_check(pr)
-    Core->>GH: fetch_answers
+    Core->>GH: collect_answers
     Core->>LLM: grade(question, answer)
     Core->>Store: update FSRS cards and level, save profile
     Core->>GH: check = Success / Failure (Neutral if Advisory)
@@ -163,8 +163,11 @@ It is the only crate that may depend on `rig-core`.
 ### D4: SCM/CI providers behind `ScmProvider`; GitHub first
 **Enforcement:** automated
 
-CI and SCM interaction goes through the `ScmProvider` port (fetch a PR, post
-questions, read answers, set a check status). The first adapter is
+CI and SCM interaction goes through the `ScmProvider` port (fetch a PR,
+publish questions, collect answers, set a check status). The port says what
+the check wants to happen, not how a forge does it, and the provider keeps no
+state between calls: what a later call needs, such as the receipt of a
+submission, is a value the core passes along. The first adapter is
 `soqrates-scm-github`, using `octocrab`. It is the only crate that may depend
 on `octocrab`. Other providers (GitLab, Forgejo, ...) are new adapter crates.
 

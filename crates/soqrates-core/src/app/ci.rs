@@ -6,7 +6,8 @@ use crate::Result;
 use crate::app::engine::{ProfileLocation, SessionOutcome, Soqrates};
 use crate::app::events::DomainEvent;
 use crate::app::ports::{
-    Clock, CodeSource, Codebase, Examiner, NoCodebase, ScmProvider, StateStore,
+    Clock, CodeSource, Codebase, EarlierSessions, Examiner, Frozen, NoCodebase, ScmProvider,
+    StateStore, Submission,
 };
 use crate::assessment::Question;
 use crate::delivery::{
@@ -121,7 +122,7 @@ where
     K: CodeSource,
 {
     // Already graded: report the result again, ask nothing.
-    if let Some(status) = report_graded(app, scm, pr, key).await? {
+    if let Some(status) = report_graded(app, scm, pull, key).await? {
         return Ok(Some(status));
     }
     let Some(session) = app.pending_session(key).await? else {
@@ -130,10 +131,10 @@ where
         // no new session is opened for its key (ADR-0002 D6).
         if app.being_graded(key).await? {
             let summary = "The answers are being graded.";
-            scm.set_check(pr, CheckStatus::Pending, summary).await?;
+            scm.set_check(pull, CheckStatus::Pending, summary).await?;
             return Ok(Some(CheckStatus::Pending));
         }
-        return report_graded(app, scm, pr, key).await;
+        return report_graded(app, scm, pull, key).await;
     };
 
     // Also on later runs, so that a run that failed to freeze the earlier
@@ -141,31 +142,31 @@ where
     supersede_earlier(app, scm, pr, &session).await?;
     if session.questions().is_empty() {
         let outcome = app.submit(key, &[], &NoCodebase).await?;
-        return finish(app, scm, pr, &outcome).await.map(Some);
+        return finish(app, scm, pull, &outcome).await.map(Some);
     }
-    scm.hint_commands(pr, &session).await?;
-    match scm.fetch_answers(pr, &session).await? {
+    match scm.collect_answers(pr, &session).await? {
         None => {
             let summary = format!(
                 "Waiting for answers.{}",
                 location_note(&app.profile_location(&pull.author).await?)
             );
-            scm.set_check(pr, CheckStatus::Pending, &summary).await?;
+            scm.set_check(pull, CheckStatus::Pending, &summary).await?;
             Ok(Some(CheckStatus::Pending))
         }
-        Some(answers) => {
+        Some(Submission { answers, receipt }) => {
             // Grading takes a while: show the author it has started
             // (ADR-0004 D9).
-            scm.acknowledge_answers(pr, &session).await?;
-            scm.set_check(pr, CheckStatus::Pending, GRADING).await?;
+            let receipt = scm.acknowledge_answers(pr, &session, receipt).await?;
+            scm.set_check(pull, CheckStatus::Pending, GRADING).await?;
             let codebase = codebase_of(code, pr, key, &pull.head_sha);
             let outcome = app.submit(key, &answers, &codebase).await?;
-            scm.post_results(pr, &session, &outcome).await?;
-            if let Some(status) = ask_follow_up(app, scm, pr, &session, &outcome, &codebase).await?
+            scm.post_results(pr, &session, &outcome, &receipt).await?;
+            if let Some(status) =
+                ask_follow_up(app, scm, pull, &session, &outcome, &codebase).await?
             {
                 return Ok(Some(status));
             }
-            finish(app, scm, pr, &outcome).await.map(Some)
+            finish(app, scm, pull, &outcome).await.map(Some)
         }
     }
 }
@@ -177,7 +178,7 @@ where
 async fn ask_follow_up<S, E, C, P>(
     app: &Soqrates<S, E, C>,
     scm: &P,
-    pr: &PrRef,
+    pull: &PullRequest,
     session: &Session,
     outcome: &SessionOutcome,
     code: &impl Codebase,
@@ -191,7 +192,7 @@ where
     let Some(follow_up) = app.follow_up(session, outcome, code).await? else {
         return Ok(None);
     };
-    if let Err(e) = scm.post_questions(pr, &follow_up).await {
+    if let Err(e) = scm.publish_questions(&pull.pr, &follow_up).await {
         let _ = app.discard_session(follow_up.key()).await;
         return Err(e);
     }
@@ -201,7 +202,7 @@ where
         follow_up.questions().len(),
         location_note(&outcome.profile_location)
     );
-    scm.set_check(pr, CheckStatus::Pending, &summary).await?;
+    scm.set_check(pull, CheckStatus::Pending, &summary).await?;
     Ok(Some(CheckStatus::Pending))
 }
 
@@ -209,7 +210,7 @@ where
 async fn report_graded<S, E, C, P>(
     app: &Soqrates<S, E, C>,
     scm: &P,
-    pr: &PrRef,
+    pull: &PullRequest,
     key: &SessionKey,
 ) -> Result<Option<CheckStatus>>
 where
@@ -223,7 +224,7 @@ where
     };
     let status = final_status(graded.passed, app.config.mode);
     let summary = result_summary(graded.correct, graded.total, graded.passed, key);
-    scm.set_check(pr, status, &summary).await?;
+    scm.set_check(pull, status, &summary).await?;
     Ok(Some(status))
 }
 
@@ -312,7 +313,7 @@ where
         .await?;
     // Also when there is nothing to ask: the comment then says so, and
     // earlier question comments can point to it (ADR-0004 D7).
-    if let Err(e) = scm.post_questions(pr, &session).await {
+    if let Err(e) = scm.publish_questions(pr, &session).await {
         // Don't leave a session whose questions nobody can see.
         let _ = app.discard_session(&key).await;
         return Err(e);
@@ -322,14 +323,14 @@ where
         // Nothing to ask: grade the empty session right away.
         supersede_earlier(app, scm, pr, &session).await?;
         let outcome = app.submit(&key, &[], &NoCodebase).await?;
-        return finish(app, scm, pr, &outcome).await;
+        return finish(app, scm, pull, &outcome).await;
     }
     let summary = format!(
         "Soqrates asked {} question(s) about this change. Answer them in the Soqrates comment.{}",
         session.questions().len(),
         location_note(&app.profile_location(&pull.author).await?)
     );
-    scm.set_check(pr, CheckStatus::Pending, &summary).await?;
+    scm.set_check(pull, CheckStatus::Pending, &summary).await?;
     supersede_earlier(app, scm, pr, &session).await?;
     Ok(CheckStatus::Pending)
 }
@@ -363,15 +364,15 @@ where
     if session.questions().is_empty() {
         return Ok(());
     }
-    let Some(answers) = scm.fetch_answers(pr, &session).await? else {
+    let Some(Submission { answers, receipt }) = scm.collect_answers(pr, &session).await? else {
         return Ok(());
     };
     // Acknowledged like any pickup (ADR-0004 D9), but the status is left
     // to the new head's round.
-    scm.acknowledge_answers(pr, &session).await?;
+    let receipt = scm.acknowledge_answers(pr, &session, receipt).await?;
     let codebase = codebase_of(code, pr, session.key(), &prev.head);
     let outcome = app.submit(session.key(), &answers, &codebase).await?;
-    scm.post_results(pr, &session, &outcome).await
+    scm.post_results(pr, &session, &outcome, &receipt).await
 }
 
 /// The concepts a later round on the PR doesn't ask again (ADR-0002 D9):
@@ -438,21 +439,40 @@ where
     C: Clock,
     P: ScmProvider,
 {
-    let prefix = key_prefix(pr);
-    for key in scm.superseded_questions(pr, current).await? {
-        if key == *current.key() || !key.0.starts_with(&prefix) {
-            continue;
-        }
-        let session = app.pending_session(&key).await?;
-        // Freeze first: if that fails, the session stays and the next run
-        // tries again.
-        scm.supersede_questions(pr, &key, session.as_ref(), current)
-            .await?;
-        if session.is_some() {
-            app.discard_session(&key).await?;
-        }
+    let sessions = PrSessions {
+        app,
+        prefix: key_prefix(pr),
+        current: current.key(),
+    };
+    let Frozen { frozen, failure } = scm.freeze_superseded(pr, current, &sessions).await?;
+    // Freeze first, discard after: a session whose comment could not be
+    // frozen stays, and the next run tries again.
+    for key in &frozen {
+        app.discard_session(key).await?;
     }
-    Ok(())
+    failure.map_or(Ok(()), Err)
+}
+
+/// The sessions of one pull request, for [`ScmProvider::freeze_superseded`].
+struct PrSessions<'a, S, E, C> {
+    app: &'a Soqrates<S, E, C>,
+    prefix: String,
+    current: &'a SessionKey,
+}
+
+impl<S, E, C> EarlierSessions for PrSessions<'_, S, E, C>
+where
+    S: StateStore,
+    E: Examiner,
+    C: Clock,
+{
+    fn may_freeze(&self, key: &SessionKey) -> bool {
+        key != self.current && key.0.starts_with(&self.prefix)
+    }
+
+    async fn pending(&self, key: &SessionKey) -> Result<Option<Session>> {
+        self.app.pending_session(key).await
+    }
 }
 
 /// Report a graded session as the final check status (ADR-0001 D8). The
@@ -460,7 +480,7 @@ where
 async fn finish<S, E, C, P>(
     app: &Soqrates<S, E, C>,
     scm: &P,
-    pr: &PrRef,
+    pull: &PullRequest,
     outcome: &SessionOutcome,
 ) -> Result<CheckStatus>
 where
@@ -490,7 +510,7 @@ where
         ),
     };
     summary.push_str(&location_note(&outcome.profile_location));
-    scm.set_check(pr, status, &summary).await?;
+    scm.set_check(pull, status, &summary).await?;
     Ok(status)
 }
 

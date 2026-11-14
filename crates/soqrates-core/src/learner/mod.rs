@@ -5,7 +5,7 @@ pub mod identity;
 pub mod policy;
 pub mod schedule;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,20 @@ pub struct LearnerProfile {
     history: Vec<GradedAnswer>,
     /// Index into `history` of the first review since the last level change.
     level_since: usize,
+    /// How often this profile was saved, as the store counts it. A save
+    /// that expects a version other than the stored one is refused, so two
+    /// writers of one profile cannot overwrite each other (ADR-0002 D6).
+    /// Profiles stored before this existed load as version 0.
+    #[serde(default)]
+    version: u64,
+    /// Marks of the gradings whose reviews are on this profile, so that
+    /// applying a grading journal again records nothing twice (ADR-0002 D6).
+    /// A mark is opaque: the learner store may not hold PR references
+    /// (ADR-0003 D5). The set only grows, one mark per graded session; it is
+    /// left unbounded for now, since bounding it needs a way to tell that
+    /// no journal of an old session can come back.
+    #[serde(default)]
+    applied: BTreeSet<String>,
 }
 
 impl LearnerProfile {
@@ -89,7 +103,49 @@ impl LearnerProfile {
             cards: BTreeMap::new(),
             history: Vec::new(),
             level_since: 0,
+            version: 0,
+            applied: BTreeSet::new(),
         }
+    }
+
+    /// The version of this profile; see [`LearnerProfile::with_version`].
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// This profile at `version`. For store adapters, which store a profile
+    /// one version after the one it was loaded at (ADR-0002 D6).
+    pub fn with_version(mut self, version: u64) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Whether the reviews marked `mark` are on this profile.
+    pub fn has_applied(&self, mark: &str) -> bool {
+        self.applied.contains(mark)
+    }
+
+    /// This profile with `reviews`, the reviews of one grading, recorded in
+    /// order through [`LearnerProfile::record`], and the events each
+    /// emitted. The grading is identified by `mark`, an opaque string that
+    /// is the same each time the same session is applied. `None` if the
+    /// reviews marked `mark` are on this profile already: recording them
+    /// again would count them twice (ADR-0002 D6).
+    pub fn with_session_reviews(
+        &self,
+        mark: &str,
+        reviews: &[GradedAnswer],
+    ) -> Option<(LearnerProfile, Vec<Vec<LearnerEvent>>)> {
+        if self.has_applied(mark) {
+            return None;
+        }
+        let mut next = self.clone();
+        let events = reviews
+            .iter()
+            .map(|r| next.record(&r.concept, r.format, r.grade, r.at, &r.via))
+            .collect();
+        next.applied.insert(mark.to_string());
+        Some((next, events))
     }
 
     pub fn learner(&self) -> &LearnerId {
@@ -215,7 +271,12 @@ impl LearnerProfile {
             .map(|p| p.starting_level)
             .min()
             .unwrap_or_default();
-        Self::replayed(learner, level, profiles.iter().flat_map(|p| &p.history))
+        let mut merged = Self::replayed(learner, level, profiles.iter().flat_map(|p| &p.history));
+        merged.applied = profiles.iter().flat_map(|p| p.applied.clone()).collect();
+        // Newer than every part, so a writer that loaded one of them is
+        // refused rather than overwriting the merge.
+        merged.version = profiles.iter().map(|p| p.version).max().unwrap_or(0) + 1;
+        merged
     }
 
     /// Split off the reviews that came through `identity` into a profile of
@@ -228,9 +289,90 @@ impl LearnerProfile {
     ) -> (LearnerProfile, LearnerProfile) {
         let (split_off, remaining): (Vec<&GradedAnswer>, Vec<&GradedAnswer>) =
             self.history.iter().partition(|r| &r.via == identity);
-        (
-            Self::replayed(self.learner.clone(), self.starting_level, remaining),
-            Self::replayed(new_learner, self.starting_level, split_off),
-        )
+        let mut remaining = Self::replayed(self.learner.clone(), self.starting_level, remaining);
+        remaining.applied = self.applied.clone();
+        let mut split_off = Self::replayed(new_learner, self.starting_level, split_off);
+        // Newer than this profile, so a writer that loaded it is refused.
+        remaining.version = self.version + 1;
+        split_off.version = self.version + 1;
+        (remaining, split_off)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    fn review(concept: &str, grade: Grade, minute: u32) -> GradedAnswer {
+        GradedAnswer {
+            concept: ConceptId(concept.into()),
+            format: QuestionFormat::MultipleChoice,
+            grade,
+            at: Utc.with_ymd_and_hms(2026, 1, 5, 9, minute, 0).unwrap(),
+            via: Identity::parse("github:1001").unwrap(),
+        }
+    }
+
+    // @adr-0002-d6
+    #[test]
+    fn reviews_of_a_session_are_recorded_once_however_often_they_are_applied() {
+        let reviews = [
+            review("rust.ownership", Grade::Good, 0),
+            review("rust.traits", Grade::Again, 1),
+        ];
+        let profile = LearnerProfile::new(LearnerId("ada".into()));
+        let (once, events) = profile.with_session_reviews("s1", &reviews).unwrap();
+        assert_eq!(events.len(), 2, "the events of each review");
+        assert_eq!(once.history().len(), 2);
+        assert!(once.has_applied("s1"));
+        // The original is untouched: nothing is recorded until it is saved.
+        assert!(profile.history().is_empty());
+
+        let mut again = once.clone();
+        for _ in 0..3 {
+            assert!(again.with_session_reviews("s1", &reviews).is_none());
+            if let Some((next, _)) = again.with_session_reviews("s2", &[]) {
+                again = next;
+            }
+        }
+        assert_eq!(again.history(), once.history());
+        assert_eq!(again.cards(), once.cards());
+        assert_eq!(again.level(), once.level());
+        assert_eq!(again.version(), once.version());
+    }
+
+    // @adr-0002-d6
+    #[test]
+    fn a_profile_stored_without_version_or_marks_still_loads() {
+        let profile = LearnerProfile::new(LearnerId("ada".into()));
+        let mut doc = serde_json::to_value(&profile).unwrap();
+        let fields = doc.as_object_mut().unwrap();
+        fields.remove("version").expect("a version is stored");
+        fields.remove("applied").expect("the marks are stored");
+        let old: LearnerProfile = serde_json::from_value(doc).unwrap();
+        assert_eq!(old, profile);
+        assert_eq!(old.version(), 0);
+    }
+
+    // @adr-0002-d6
+    #[test]
+    fn merging_and_splitting_produce_a_newer_version_and_keep_the_marks() {
+        let reviews = [review("rust.ownership", Grade::Good, 0)];
+        let ada = LearnerProfile::new(LearnerId("ada".into()));
+        let (ada, _) = ada.with_session_reviews("s1", &reviews).unwrap();
+        let ada = ada.with_version(4);
+        let bob = LearnerProfile::new(LearnerId("bob".into())).with_version(2);
+        let merged = LearnerProfile::merged(LearnerId("ada".into()), &[ada.clone(), bob]);
+        assert_eq!(merged.version(), 5);
+        assert!(merged.has_applied("s1"));
+        let (remaining, split_off) = ada.split(
+            &Identity::parse("github:1001").unwrap(),
+            LearnerId("new".into()),
+        );
+        assert_eq!(remaining.version(), 5);
+        assert_eq!(split_off.version(), 5);
+        assert!(remaining.has_applied("s1"));
     }
 }

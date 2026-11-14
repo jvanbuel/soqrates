@@ -39,7 +39,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Question | `Question` | assessment | A question about one concept, in one format. | exercise |
 | Format | `QuestionFormat` | assessment | Multiple choice or open. | |
 | Kind | `QuestionKind` | assessment | What a question asks of the author, e.g. predict an outcome or explain their change (ADR-0007). Separate from the format. | |
-| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and at most 15 lines, from the change or written by the examiner (ADR-0007). | |
+| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and about 15 lines (at most 20), from the change or written by the examiner (ADR-0007). | |
 | Hunk | `Hunk` | assessment | A contiguous piece of a change in one file, as it is after the change. | |
 | Brief | `QuestionBrief` | assessment | What the examiner is asked to write for one concept: the format, the kinds allowed and the hunks (ADR-0007). | |
 | Answer | `Answer` | assessment | The author's response to a question. | reply |
@@ -184,23 +184,50 @@ How "at most once" is achieved: grading is written ahead, in a grading
 journal kept with the session.
 
 1. **Grade.** The examiner grades the answers and the engine works out the
-   graded record and the learner profiles with the new reviews. Nothing is
-   written yet.
+   graded record and the reviews to add: for each question, the concept,
+   format, grade, time and identity (what `LearnerProfile::record` takes)
+   and the store whose profile gets it (ADR-0003 D4, D5). Nothing is
+   written yet. The `SessionOutcome` (level after, events, next review
+   dates) is worked out from the profiles as they are now.
 2. **Claim.** In one atomic step (`StateStore::begin_grading`), the pending
    session is removed and a journal entry holding the session, the graded
-   record and the profiles is stored. Of concurrent submissions exactly one
-   claims the session; the others fail with `NotFound`. A failure before
-   this step leaves the session pending.
-3. **Apply.** The profiles are saved, the session removed if a file store
-   still holds it, then the graded record. Each write replaces or removes
-   a whole document, so applying again changes nothing.
+   record and the reviews is stored. The journal holds what happened, not
+   what the profiles should look like afterwards: a whole profile in it
+   would, when applied, replace the reviews another session of the same
+   learner added meanwhile. Of concurrent submissions exactly one claims
+   the session; the others fail with `NotFound`. A failure before this
+   step leaves the session pending.
+3. **Apply.** For each profile the reviews go to, the engine loads it
+   fresh, records the journaled reviews on it and saves it with
+   `StateStore::save_profile_if_current`: a profile carries a version, and
+   the save is refused, saving nothing, if the stored profile is no longer
+   the version that was loaded (an optimistic check, one step in every
+   store). On a refusal the engine loads, records and saves again, so of
+   several sessions of one learner graded at the same moment all reviews
+   end up on the profile. The profile also keeps an opaque mark of every
+   session whose reviews it holds, and records the reviews of a session
+   only if its mark is not there yet, so applying again records nothing
+   twice. The marks are opaque so that the learner store holds no PR
+   reference (ADR-0003 D5); they are never removed, one per graded session
+   per profile, which is acceptable for now. Then the session is removed if
+   a file store still holds it, then the graded record.
 4. **Commit.** The journal entry is removed.
+
+The `SessionOutcome` is then corrected to what was recorded: the level,
+the events and the next review dates come from the profiles the reviews
+landed on, which may differ from those grading saw if another session was
+graded meanwhile.
+
+Journals written before the reviews were journaled hold the whole profiles
+to save instead (`profiles`, and no `reviews`). Such a journal is applied
+the old way, once: its profiles are saved, unless the graded record shows
+that was done. Profiles stored without a version or marks load as version 0
+with none.
 
 While the entry exists, the session is being graded. Every engine operation
 that touches a learner or a session first finishes the entries left behind,
 e.g. by a crash or a failed write, by applying them again. Entries whose
-graded record exists only need removing: their profiles are not saved
-again, since that could undo later reviews. An operation that can't finish
+graded record exists only need removing. An operation that can't finish
 an entry fails, except looking up a session: the CI check then reports
 "being graded" rather than asking again. It looks a session up in the
 order grading moves it, pending, being graded, graded, so it never misses a

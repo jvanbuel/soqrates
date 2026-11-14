@@ -5,13 +5,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
 use soqrates_core::ports::{
-    BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, Examiner, LearnerStore,
-    Prompter, ScmProvider, StateStore,
+    BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, EarlierSessions, Examiner,
+    Frozen, LearnerStore, Prompter, ScmProvider, StateStore, Submission,
 };
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, BankedQuestion, CheckStatus, CodeLocation, CodeSnippet, Concept,
@@ -502,7 +503,7 @@ pub struct ScmState {
     pub commits: HashMap<PrRef, Vec<(String, Diff)>>,
     /// Every `diff_between` call, in order: the pull request, from and to.
     pub compared: Vec<(PrRef, String, String)>,
-    /// Every `post_questions` call, in order.
+    /// Every `publish_questions` call, in order.
     pub posted: Vec<(PrRef, Session)>,
     /// Every `set_check` call, in order.
     pub checks: Vec<(PrRef, CheckStatus)>,
@@ -513,14 +514,14 @@ pub struct ScmState {
     /// Answers that don't count as a reply (ADR-0004 D3): ticked but not
     /// submitted, or given by someone other than the author.
     pub ignored: Vec<(SessionKey, Vec<Answer>)>,
-    /// Make the next `post_questions` call fail, as on a transient error.
+    /// Make the next `publish_questions` call fail, as on a transient error.
     pub fail_next_post: bool,
     /// Every `post_results` call, in order.
     pub results: Vec<(PrRef, SessionKey, SessionOutcome)>,
     /// Question comments frozen as superseded: the session key, the session
     /// shown (if it was still stored) and the key of the newer session.
     pub superseded: Vec<(PrRef, SessionKey, Option<Session>, SessionKey)>,
-    /// Make the next `supersede_questions` call fail.
+    /// Make freezing the next superseded question comment fail.
     pub fail_next_supersede: bool,
     /// The slug of the app Soqrates posts as, if any (ADR-0004 D8).
     pub app_slug: Option<String>,
@@ -528,9 +529,6 @@ pub struct ScmState {
     pub comments: Vec<FakeComment>,
     /// The comments that got a hint, by id, in order (ADR-0004 D8).
     pub hints: Vec<u64>,
-    /// What submitted the answers that `fetch_answers` last found, by
-    /// session (ADR-0004 D9).
-    pub submitted_by: HashMap<SessionKey, Submitter>,
     /// The reactions currently on submitting comments (ADR-0004 D9).
     pub reactions: Vec<(Submitter, Reaction)>,
     /// What the author saw happen on the pull request, in order: check
@@ -751,6 +749,8 @@ impl CodeSource for FakeCheckout {
 }
 
 impl ScmProvider for FakeScm {
+    type Receipt = Submitter;
+
     async fn pull_request(&self, pr: &PrRef) -> Result<PullRequest> {
         self.state
             .lock()
@@ -784,7 +784,7 @@ impl ScmProvider for FakeScm {
         )))
     }
 
-    async fn post_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
+    async fn publish_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
         let mut state = self.state.lock().unwrap();
         if std::mem::take(&mut state.fail_next_post) {
             return Err(Error::Port("the forge is unavailable".into()));
@@ -793,64 +793,62 @@ impl ScmProvider for FakeScm {
         Ok(())
     }
 
-    async fn post_results(
+    async fn freeze_superseded(
         &self,
         pr: &PrRef,
-        session: &Session,
-        outcome: &SessionOutcome,
-    ) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
-        state
-            .results
-            .push((pr.clone(), session.key().clone(), outcome.clone()));
-        state.timeline.push("results".into());
-        // 👀 becomes ✅ (ADR-0004 D9).
-        if let Some(by) = state.submitted_by.get(session.key()).copied() {
+        current: &Session,
+        sessions: &impl EarlierSessions,
+    ) -> Result<Frozen> {
+        let keys = {
+            let state = self.state.lock().unwrap();
+            let posted = |k: &SessionKey| state.posted.iter().any(|(p, s)| p == pr && s.key() == k);
+            if !posted(current.key()) {
+                return Ok(Frozen::default());
+            }
+            let frozen = |k: &SessionKey| {
+                state.results.iter().any(|(p, r, _)| p == pr && r == k)
+                    || state
+                        .superseded
+                        .iter()
+                        .any(|(p, r, _, _)| p == pr && r == k)
+            };
+            let mut keys: Vec<SessionKey> = Vec::new();
+            for (_, s) in state.posted.iter().filter(|(p, _)| p == pr) {
+                let k = s.key();
+                if k != current.key() && !frozen(k) && !keys.contains(k) {
+                    keys.push(k.clone());
+                }
+            }
+            keys
+        };
+        let mut done = Frozen::default();
+        for key in keys {
+            if !sessions.may_freeze(&key) {
+                continue;
+            }
+            let session = sessions.pending(&key).await?;
+            let mut state = self.state.lock().unwrap();
+            if std::mem::take(&mut state.fail_next_supersede) {
+                done.failure = Some(Error::Port("the forge is unavailable".into()));
+                break;
+            }
             state
-                .reactions
-                .retain(|(s, r)| !(*s == by && *r == Reaction::Eyes));
-            state.reactions.push((by, Reaction::Done));
-            state.timeline.push(format!("{by:?}: {:?}", Reaction::Done));
+                .superseded
+                .push((pr.clone(), key.clone(), session, current.key().clone()));
+            done.frozen.push(key);
         }
-        Ok(())
+        Ok(done)
     }
 
     /// The structured answers given with [`FakeScm::reply`], else the
     /// latest answer comment of the author, read as the GitHub adapter
-    /// reads it (ADR-0004 D8).
-    async fn fetch_answers(&self, pr: &PrRef, session: &Session) -> Result<Option<Vec<Answer>>> {
-        let mut state = self.state.lock().unwrap();
-        if let Some(answers) = state.replies.get(session.key()).cloned() {
-            state
-                .submitted_by
-                .insert(session.key().clone(), Submitter::Reply);
-            return Ok(Some(answers));
-        }
-        let slug = state.app_slug.clone();
-        let found = state
-            .comments
-            .iter()
-            .rev()
-            .filter(|c| c.pr == *pr && c.session == *session.key() && c.author == *session.author())
-            .find(|c| matches!(read_command(&c.body, slug.as_deref()), Command::Answer(_)))
-            .map(|c| {
-                (
-                    c.id,
-                    parse_answers(&c.body, session.questions(), slug.as_deref()),
-                )
-            });
-        match found {
-            Some((id, answers @ Some(_))) => {
-                state
-                    .submitted_by
-                    .insert(session.key().clone(), Submitter::Comment(id));
-                Ok(answers)
-            }
-            _ => Ok(None),
-        }
-    }
-
-    async fn hint_commands(&self, pr: &PrRef, session: &Session) -> Result<()> {
+    /// reads it (ADR-0004 D8). Also hints at the author's near-miss
+    /// commands, once each.
+    async fn collect_answers(
+        &self,
+        pr: &PrRef,
+        session: &Session,
+    ) -> Result<Option<Submission<Submitter>>> {
         let mut state = self.state.lock().unwrap();
         let slug = state.app_slug.clone();
         let candidates: Vec<(u64, String)> = state
@@ -863,65 +861,79 @@ impl ScmProvider for FakeScm {
             candidates.iter().map(|(i, b)| (*i, b.as_str())).collect();
         let due = hints_due(&candidates, &state.hints, slug.as_deref());
         state.hints.extend(due);
-        Ok(())
+
+        if let Some(answers) = state.replies.get(session.key()).cloned() {
+            return Ok(Some(Submission {
+                answers,
+                receipt: Submitter::Reply,
+            }));
+        }
+        let found = state
+            .comments
+            .iter()
+            .rev()
+            .filter(|c| c.pr == *pr && c.session == *session.key() && c.author == *session.author())
+            .find(|c| matches!(read_command(&c.body, slug.as_deref()), Command::Answer(_)))
+            .map(|c| {
+                (
+                    c.id,
+                    parse_answers(&c.body, session.questions(), slug.as_deref()),
+                )
+            });
+        Ok(match found {
+            Some((id, Some(answers))) => Some(Submission {
+                answers,
+                receipt: Submitter::Comment(id),
+            }),
+            _ => None,
+        })
     }
 
-    async fn acknowledge_answers(&self, _pr: &PrRef, session: &Session) -> Result<()> {
+    async fn acknowledge_answers(
+        &self,
+        _pr: &PrRef,
+        _session: &Session,
+        receipt: Submitter,
+    ) -> Result<Submitter> {
         let mut state = self.state.lock().unwrap();
-        if let Some(by) = state.submitted_by.get(session.key()).copied() {
-            state.reactions.push((by, Reaction::Eyes));
-            state.timeline.push(format!("{by:?}: {:?}", Reaction::Eyes));
-        }
-        Ok(())
+        state.reactions.push((receipt, Reaction::Eyes));
+        state
+            .timeline
+            .push(format!("{receipt:?}: {:?}", Reaction::Eyes));
+        Ok(receipt)
     }
 
-    async fn superseded_questions(&self, pr: &PrRef, current: &Session) -> Result<Vec<SessionKey>> {
-        let state = self.state.lock().unwrap();
-        let posted = |k: &SessionKey| state.posted.iter().any(|(p, s)| p == pr && s.key() == k);
-        if !posted(current.key()) {
-            return Ok(Vec::new());
-        }
-        let frozen = |k: &SessionKey| {
-            state.results.iter().any(|(p, r, _)| p == pr && r == k)
-                || state
-                    .superseded
-                    .iter()
-                    .any(|(p, r, _, _)| p == pr && r == k)
-        };
-        let mut keys: Vec<SessionKey> = Vec::new();
-        for (_, s) in state.posted.iter().filter(|(p, _)| p == pr) {
-            let k = s.key();
-            if k != current.key() && !frozen(k) && !keys.contains(k) {
-                keys.push(k.clone());
-            }
-        }
-        Ok(keys)
-    }
-
-    async fn supersede_questions(
+    async fn post_results(
         &self,
         pr: &PrRef,
-        superseded: &SessionKey,
-        session: Option<&Session>,
-        current: &Session,
+        session: &Session,
+        outcome: &SessionOutcome,
+        receipt: &Submitter,
     ) -> Result<()> {
         let mut state = self.state.lock().unwrap();
-        if std::mem::take(&mut state.fail_next_supersede) {
-            return Err(Error::Port("the forge is unavailable".into()));
-        }
-        state.superseded.push((
-            pr.clone(),
-            superseded.clone(),
-            session.cloned(),
-            current.key().clone(),
-        ));
+        state
+            .results
+            .push((pr.clone(), session.key().clone(), outcome.clone()));
+        state.timeline.push("results".into());
+        // 👀 becomes ✅ (ADR-0004 D9).
+        let by = *receipt;
+        state
+            .reactions
+            .retain(|(s, r)| !(*s == by && *r == Reaction::Eyes));
+        state.reactions.push((by, Reaction::Done));
+        state.timeline.push(format!("{by:?}: {:?}", Reaction::Done));
         Ok(())
     }
 
-    async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
+    async fn set_check(
+        &self,
+        pull: &PullRequest,
+        status: CheckStatus,
+        summary: &str,
+    ) -> Result<()> {
         let mut state = self.state.lock().unwrap();
-        state.checks.push((pr.clone(), status));
-        state.summaries.push((pr.clone(), summary.to_string()));
+        state.checks.push((pull.pr.clone(), status));
+        state.summaries.push((pull.pr.clone(), summary.to_string()));
         state.timeline.push(format!("check {status:?}: {summary}"));
         Ok(())
     }
@@ -986,6 +998,29 @@ pub struct Faults {
     pub allowed: usize,
     /// Writes that fail after those; `usize::MAX` for all of them.
     pub failing: usize,
+    /// Makes the first two conditional profile saves collide (ADR-0002 D6).
+    pub meet: Option<Arc<Meeting>>,
+}
+
+/// Holds back the first of two conditional profile saves until the second
+/// arrives, so that both were loaded before either is saved: two sessions
+/// of one learner graded at the same moment.
+#[derive(Debug, Default)]
+pub struct Meeting {
+    arrived: AtomicUsize,
+    /// How many saves the store refused because the profile had changed.
+    pub refused: AtomicUsize,
+}
+
+impl Meeting {
+    async fn arrive(&self) {
+        if self.arrived.fetch_add(1, Ordering::SeqCst) >= 2 {
+            return;
+        }
+        while self.arrived.load(Ordering::SeqCst) < 2 {
+            tokio::task::yield_now().await;
+        }
+    }
 }
 
 impl AnyStore {
@@ -1096,6 +1131,22 @@ impl StateStore for AnyStore {
     }
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
         write!(self, save_profile(profile))
+    }
+    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
+        // The same write to the learner as `save_profile`, for faults.
+        self.fault("save_profile")?;
+        let meet = match self {
+            AnyStore::Faulty(_, faults) => faults.lock().unwrap().meet.clone(),
+            _ => None,
+        };
+        if let Some(meet) = &meet {
+            meet.arrive().await;
+        }
+        let saved = delegate!(self, save_profile_if_current(profile))?;
+        if let (false, Some(meet)) = (saved, &meet) {
+            meet.refused.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(saved)
     }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
         write!(self, delete_learner(learner))

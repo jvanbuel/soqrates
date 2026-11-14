@@ -818,6 +818,45 @@ pub fn takes_answers(body: &str) -> bool {
         .any(|(_, text)| text == DONE_BOX)
 }
 
+/// The sessions whose question comments still take answers although a newer
+/// push superseded them: those among `comments` posted by `poster` (the
+/// account that posted `current`'s questions), for a session other than
+/// `current`, that still take answers (ADR-0004 D7). `comments` are
+/// `(poster id, body)` in the order the forge lists them. Only the poster's
+/// comments count, so nobody can have another comment rewritten by copying
+/// a marker.
+pub fn superseded_keys(
+    comments: &[(u64, &str)],
+    poster: u64,
+    current: &SessionKey,
+) -> Vec<SessionKey> {
+    let mut keys: Vec<SessionKey> = Vec::new();
+    for (_, body) in comments.iter().filter(|(user, _)| *user == poster) {
+        if let Some(key) = marker_key(body)
+            && key != *current
+            && takes_answers(body)
+            && !keys.contains(&key)
+        {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
+/// The question comments of the session `key` to freeze: the indexes of the
+/// comments among `comments` that `poster` posted for it and that still
+/// take answers. `comments` are `(poster id, body)`.
+pub fn comments_to_freeze(comments: &[(u64, &str)], poster: u64, key: &SessionKey) -> Vec<usize> {
+    comments
+        .iter()
+        .enumerate()
+        .filter(|(_, (user, body))| {
+            *user == poster && marker_key(body).as_ref() == Some(key) && takes_answers(body)
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// The answer comment for a session: the latest comment by `author_id`
 /// posted after the first comment carrying `marker`, whose body starts with
 /// the answer command (`/soqrates answer`, read forgivingly, ADR-0004 D8).
@@ -2342,5 +2381,47 @@ mod tests {
             Some(NEWER),
             true
         )));
+    }
+
+    // @adr-0004-d7
+    #[test]
+    fn superseded_keys_are_the_posters_open_question_comments_of_other_sessions() {
+        let open = |k: &str| {
+            let s = Session::open(
+                SessionKey(k.into()),
+                AuthorId("github.com:42".into()),
+                questions(),
+                10,
+                Utc.timestamp_opt(0, 0).unwrap(),
+            )
+            .unwrap();
+            render_questions(&s)
+        };
+        let current = SessionKey("o/r#1@new".into());
+        let graded = render_graded_questions(&session(), &[]);
+        let bodies = [
+            (1, open("o/r#1@old")),
+            (1, open("o/r#1@new")),
+            // Copied by someone else.
+            (2, open("o/r#1@copied")),
+            // No longer takes answers.
+            (1, graded),
+            (1, "no marker".to_string()),
+            // The same session twice.
+            (1, open("o/r#1@old")),
+        ];
+        let listed: Vec<(u64, &str)> = bodies.iter().map(|(u, b)| (*u, b.as_str())).collect();
+        assert_eq!(
+            superseded_keys(&listed, 1, &current),
+            vec![SessionKey("o/r#1@old".into())]
+        );
+        assert_eq!(
+            comments_to_freeze(&listed, 1, &SessionKey("o/r#1@old".into())),
+            vec![0, 5]
+        );
+        assert_eq!(
+            comments_to_freeze(&listed, 1, &SessionKey("o/r#1@copied".into())),
+            Vec::<usize>::new()
+        );
     }
 }
