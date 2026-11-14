@@ -25,6 +25,16 @@ pub trait StateStore: Send + Sync {
         learner: &LearnerId,
     ) -> impl Future<Output = Result<Option<LearnerProfile>>> + Send;
     fn save_profile(&self, profile: &LearnerProfile) -> impl Future<Output = Result<()>> + Send;
+    /// Save `profile` only if the stored profile of its learner is still the
+    /// version `profile` was loaded at (`profile.version()`; a learner
+    /// without a profile counts as version 0). The stored profile is then
+    /// `profile` one version later. Returns `false`, saving nothing, when
+    /// someone saved in between: the caller loads again and retries
+    /// (ADR-0002 D6). Check and save are one step.
+    fn save_profile_if_current(
+        &self,
+        profile: &LearnerProfile,
+    ) -> impl Future<Output = Result<bool>> + Send;
     /// Remove the profile and every link of `learner` (ADR-0003 D6).
     fn delete_learner(&self, learner: &LearnerId) -> impl Future<Output = Result<()>> + Send;
 

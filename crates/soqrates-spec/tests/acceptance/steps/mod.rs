@@ -7,6 +7,7 @@ mod codebase;
 mod common;
 mod domain_model;
 mod feedback;
+mod grading_journal;
 mod learner_identity;
 mod learner_state;
 mod local_hooks;

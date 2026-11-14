@@ -106,6 +106,7 @@ fn write_fails(w: &mut SpecWorld, what: String, how: String) {
             only: Some(method.to_string()),
             allowed: 0,
             failing,
+            meet: None,
         },
     );
 }
@@ -118,6 +119,7 @@ fn stops_after(w: &mut SpecWorld, n: usize) {
             only: None,
             allowed: n,
             failing: usize::MAX,
+            meet: None,
         },
     );
 }
