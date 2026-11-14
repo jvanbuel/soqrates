@@ -224,6 +224,19 @@
         "last_review": "2026-11-10T05:29:22.171515045Z"
       }
     },
+    "markdown.fenced-code-blocks.delimiters": {
+      "card": {
+        "due": "2026-11-17T09:56:09.147821157Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T09:56:09.147821157Z"
+      }
+    },
     "parsing.markdown.delimited-region-scanning": {
       "card": {
         "due": "2026-11-17T08:51:05.038464527Z",
@@ -393,6 +406,19 @@
         "last_review": "2026-11-08T11:19:21.919639663Z"
       }
     },
+    "project.scm-github.comment-scanning.fenced-fields": {
+      "card": {
+        "due": "2026-11-17T09:56:09.147821157Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T09:56:09.147821157Z"
+      }
+    },
     "project.scm.hint-and-acknowledge-ports": {
       "card": {
         "due": "2026-11-11T17:18:45.049315465Z",
@@ -410,7 +436,7 @@
       "card": {
         "due": "2026-11-15T08:51:05.038464527Z",
         "stability": 0.5197046120754482,
-        "difficulty": 9.198653481986167,
+        "difficulty": 9.198653481986169,
         "elapsed_days": 5,
         "scheduled_days": 1,
         "reps": 2,
@@ -549,6 +575,19 @@
         "last_review": "2026-11-09T05:54:08.679385522Z"
       }
     },
+    "rust.pattern-matching.guards-and-option-state": {
+      "card": {
+        "due": "2026-11-17T09:56:09.147821157Z",
+        "stability": 3.1262,
+        "difficulty": 5.314577829570867,
+        "elapsed_days": 0,
+        "scheduled_days": 3,
+        "reps": 1,
+        "lapses": 0,
+        "state": "Review",
+        "last_review": "2026-11-14T09:56:09.147821157Z"
+      }
+    },
     "rust.pattern-matching.slice-patterns": {
       "card": {
         "due": "2026-11-12T08:58:28.977822508Z",
@@ -603,15 +642,15 @@
     },
     "rust.sqlx.any-driver": {
       "card": {
-        "due": "2026-11-09T16:24:56.473686819Z",
-        "stability": 0.27491830347692675,
-        "difficulty": 9.198653481986169,
-        "elapsed_days": 1,
+        "due": "2026-11-15T09:56:09.147821157Z",
+        "stability": 0.41677304153694217,
+        "difficulty": 10.0,
+        "elapsed_days": 5,
         "scheduled_days": 1,
-        "reps": 2,
-        "lapses": 1,
+        "reps": 3,
+        "lapses": 2,
         "state": "Review",
-        "last_review": "2026-11-08T16:24:56.473686819Z"
+        "last_review": "2026-11-14T09:56:09.147821157Z"
       }
     },
     "rust.string.fuzzy-matching": {
@@ -785,15 +824,15 @@
     },
     "soqrates.ci.idempotent-rerun": {
       "card": {
-        "due": "2026-11-09T17:12:25.279744332Z",
-        "stability": 0.4072,
-        "difficulty": 7.2102,
-        "elapsed_days": 0,
-        "scheduled_days": 1,
-        "reps": 1,
+        "due": "2026-11-21T09:56:09.147821157Z",
+        "stability": 6.687684366074506,
+        "difficulty": 7.118300161986166,
+        "elapsed_days": 5,
+        "scheduled_days": 7,
+        "reps": 2,
         "lapses": 0,
         "state": "Review",
-        "last_review": "2026-11-08T17:12:25.279744332Z"
+        "last_review": "2026-11-14T09:56:09.147821157Z"
       }
     },
     "soqrates.ci.idempotent-retry-ordering": {
@@ -1515,12 +1554,48 @@
       "grade": "Good",
       "at": "2026-11-14T08:51:05.038464527Z",
       "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.sqlx.any-driver",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "at": "2026-11-14T09:56:09.147821157Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "soqrates.ci.idempotent-rerun",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T09:56:09.147821157Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "markdown.fenced-code-blocks.delimiters",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T09:56:09.147821157Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "project.scm-github.comment-scanning.fenced-fields",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T09:56:09.147821157Z",
+      "via": "github.com:16427728"
+    },
+    {
+      "concept": "rust.pattern-matching.guards-and-option-state",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "at": "2026-11-14T09:56:09.147821157Z",
+      "via": "github.com:16427728"
     }
   ],
   "level_since": 68,
-  "version": 2,
+  "version": 3,
   "applied": [
     "283f1237330d939c7cea0782b068e4b6",
+    "2b7e606d084b6a23eefd4d4950b94915",
     "8fc0b22b22c83aba7743212de71634a4"
   ]
 }
