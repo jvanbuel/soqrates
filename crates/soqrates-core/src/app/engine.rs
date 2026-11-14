@@ -13,10 +13,9 @@ use crate::assessment::{
     QuestionFormat, QuestionKind, Weight,
 };
 use crate::delivery::{
-    AskedQuestion, AskedSession, BankedQuestion, FeedbackGiven, FeedbackId, FeedbackKind,
-    FeedbackRequest, FollowUp, GradedSession, GradingJournal, JournaledReview, Mode, PrRef,
-    PrRounds, QuestionFeedback, QuestionResult, SeenQuestions, Session, SessionEvent, StoreId,
-    pick,
+    AskedQuestion, AskedSession, BankedQuestion, FeedbackGiven, FeedbackId, FeedbackRequest,
+    FollowUp, GradedSession, GradingJournal, JournaledReview, Mode, PrRef, PrRounds,
+    QuestionFeedback, QuestionResult, SeenQuestions, Session, SessionEvent, StoreId, pick,
 };
 use crate::ids::{AuthorId, BankId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{
@@ -301,17 +300,27 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     async fn change_bank_entry(
         bank: &S,
         asked: &AskedQuestion,
-        change: impl FnOnce(&mut BankedQuestion),
+        change: impl Fn(&mut BankedQuestion),
     ) -> Result<()> {
         let Some(reference) = asked.bank() else {
             return Ok(());
         };
-        let mut entries = bank.bank_questions(&asked.question.concept).await?;
-        if let Some(entry) = entries.iter_mut().find(|e| *e.id() == reference.id) {
-            change(entry);
-            bank.save_bank_question(entry).await?;
+        for _ in 0..100 {
+            let entries = bank.bank_questions(&asked.question.concept).await?;
+            let Some(previous) = entries.iter().find(|e| *e.id() == reference.id) else {
+                return Ok(());
+            };
+            let mut entry = previous.clone();
+            change(&mut entry);
+            if entry == *previous
+                || bank
+                    .save_bank_question_if_current(&entry, Some(previous))
+                    .await?
+            {
+                return Ok(());
+            }
         }
-        Ok(())
+        Err(Error::Port("bank question kept changing".into()))
     }
 
     /// An opaque learner ID, derived from `identity` but not revealing it
@@ -622,34 +631,49 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         level: Level,
         code: &impl Codebase,
     ) -> Result<Question> {
-        let mut bank = store.bank_questions(&concept.id).await?;
         let gap = self.config.reask_after_rounds;
-        if let Some(i) = pick(&bank, brief, seen, round, gap, in_round) {
-            let entry = &mut bank[i];
-            // Asked as it is: the stored question, in this concept's scope.
+        for _ in 0..100 {
+            let bank = store.bank_questions(&concept.id).await?;
+            let Some(i) = pick(&bank, brief, seen, round, gap, in_round) else {
+                break;
+            };
+            let mut entry = bank[i].clone();
             let mut q = entry.take();
             q.scope = concept.scope;
-            store.save_bank_question(entry).await?;
-            seen.show(entry.id(), round);
-            return Ok(q);
+            if store
+                .save_bank_question_if_current(&entry, Some(&bank[i]))
+                .await?
+            {
+                seen.show(entry.id(), round);
+                return Ok(q);
+            }
         }
         let mut q = self.written(concept, brief, code).await?;
         let Some(new) = BankedQuestion::new(&q, level, self.clock.now()) else {
             return Ok(q);
         };
-        // The same question written again is banked once.
-        let entry = match bank.iter_mut().find(|e| e.id() == new.id()) {
-            Some(existing) if existing.is_retired() => return Ok(q),
-            Some(existing) => {
-                existing.take();
-                existing.clone()
+        for _ in 0..100 {
+            let bank = store.bank_questions(&concept.id).await?;
+            let previous = bank.iter().find(|e| e.id() == new.id());
+            let entry = match previous {
+                Some(existing) if existing.is_retired() || existing.is_disputed() => return Ok(q),
+                Some(existing) => {
+                    let mut entry = existing.clone();
+                    entry.take();
+                    entry
+                }
+                None => new.clone(),
+            };
+            if store
+                .save_bank_question_if_current(&entry, previous)
+                .await?
+            {
+                seen.show(entry.id(), round);
+                q.banked = Some(entry.reference());
+                return Ok(q);
             }
-            None => new,
-        };
-        store.save_bank_question(&entry).await?;
-        seen.show(entry.id(), round);
-        q.banked = Some(entry.reference());
-        Ok(q)
+        }
+        Err(Error::Port("bank question kept changing".into()))
     }
 
     /// Concepts `place`'s learner has a review card for, in either store,
@@ -1122,7 +1146,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 recorded = self.record_reviews(journal).await?;
             }
             if let Some(asked) = &journal.asked {
-                store.save_asked(asked).await?;
+                store.save_asked_if_current(asked, None).await?;
             }
             store.delete_session(key).await?;
             store.save_graded(&journal.graded).await?;
@@ -1192,6 +1216,18 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             };
             for journal in &journals {
                 if let Err(e) = self.apply(store, journal).await {
+                    failed.get_or_insert(e);
+                }
+            }
+            match store.asked_sessions().await {
+                Ok(sessions) => {
+                    for asked in sessions {
+                        if let Err(e) = self.sync_feedback(store, &asked).await {
+                            failed.get_or_insert(e);
+                        }
+                    }
+                }
+                Err(e) => {
                     failed.get_or_insert(e);
                 }
             }
@@ -1425,26 +1461,31 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 (store, asked, learner)
             }
         };
-        let given = asked.give(&learner, request, source, self.clock.now())?;
-        if !given.new {
-            return Ok(given);
-        }
-        // The bank first: noting the same feedback again is harmless, and
-        // once the asked session is saved, the same source isn't noted again.
-        let number = given.number;
-        let question = &asked.questions()[number - 1];
-        let id = given.feedback.id.clone();
-        match given.feedback.kind {
-            kind if kind.disputes() => {
-                Self::change_bank_entry(self.bank_of(store), question, |e| e.dispute(&id)).await?
+        for _ in 0..100 {
+            let previous = asked.clone();
+            let given = asked.give(&learner, request, source, self.clock.now())?;
+            if !given.new || store.save_asked_if_current(&asked, Some(&previous)).await? {
+                self.sync_feedback(store, &asked).await?;
+                return Ok(given);
             }
-            FeedbackKind::Good => {
-                Self::change_bank_entry(self.bank_of(store), question, |e| e.commend(&id)).await?
-            }
-            _ => {}
+            asked = store.load_asked(key).await?.ok_or_else(not_graded)?;
         }
-        store.save_asked(&asked).await?;
-        Ok(given)
+        Err(Error::Port("asked session kept changing".into()))
+    }
+
+    /// The saved session is the durable feedback journal. Replaying is
+    /// idempotent, including an open snapshot replayed after resolution.
+    async fn sync_feedback(&self, store: &S, asked: &AskedSession) -> Result<()> {
+        for question in asked.questions() {
+            if question.feedback.is_empty() {
+                continue;
+            }
+            Self::change_bank_entry(self.bank_of(store), question, |entry| {
+                asked.update_bank_entry(question, entry);
+            })
+            .await?;
+        }
+        Ok(())
     }
 
     /// A maintainer accepts or rejects the feedback `id` (ADR-0011 D7). It
@@ -1459,19 +1500,24 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         self.recover().await?;
         for store in self.feedback_stores() {
             for mut asked in store.asked_sessions().await? {
-                let Some((question, feedback)) = asked.resolve(id, accept) else {
+                if asked.find(id).is_none() {
                     continue;
-                };
-                let retire = accept && feedback.kind.disputes();
-                Self::change_bank_entry(self.bank_of(store), &question, |e| {
-                    e.settle(id);
-                    if retire {
-                        e.retire();
+                }
+                for _ in 0..100 {
+                    let previous = asked.clone();
+                    let Some(result) = asked.resolve(id, accept) else {
+                        break;
+                    };
+                    if store.save_asked_if_current(&asked, Some(&previous)).await? {
+                        self.sync_feedback(store, &asked).await?;
+                        return Ok(result);
                     }
-                })
-                .await?;
-                store.save_asked(&asked).await?;
-                return Ok((question, feedback));
+                    asked = store
+                        .load_asked(previous.key())
+                        .await?
+                        .ok_or_else(|| Error::NotFound("asked session deleted".into()))?;
+                }
+                return Err(Error::Port("asked session kept changing".into()));
             }
         }
         Err(Error::NotFound(format!("feedback {:?}", id.0)))

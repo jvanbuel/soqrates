@@ -3041,6 +3041,7 @@ version = "0.1.2"
 dependencies = [
  "chrono",
  "octocrab",
+ "serde",
  "serde_json",
  "soqrates-core",
 ]

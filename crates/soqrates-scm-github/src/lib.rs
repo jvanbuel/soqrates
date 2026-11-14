@@ -583,14 +583,48 @@ impl ScmProvider for GitHubProvider {
         pr: &PrRef,
         author: &AuthorId,
     ) -> Result<Vec<FeedbackCommand>> {
-        let comments = self.comments(pr).await?;
+        // Keep GitHub's app provenance, which octocrab's Comment omits.
+        #[derive(serde::Deserialize)]
+        struct FeedbackComment {
+            #[serde(flatten)]
+            comment: Comment,
+            performed_via_github_app: Option<serde_json::Value>,
+        }
+        let client = self.client()?;
+        let (owner, name) = repo(pr)?;
+        let page: octocrab::Page<FeedbackComment> = client
+            .get(
+                format!("/repos/{owner}/{name}/issues/{}/comments", pr.number),
+                Some(&[("per_page", 100)]),
+            )
+            .await
+            .map_err(port("list feedback comments"))?;
+        let comments = client
+            .all_pages(page)
+            .await
+            .map_err(port("list feedback comments"))?;
+        // User tokens authenticate their account. Installation tokens use
+        // GitHub's app metadata (the configured app, or GitHub Actions).
+        let user: std::result::Result<serde_json::Value, _> =
+            client.get("/user", None::<&()>).await;
+        let poster = user.ok().and_then(|u| u["id"].as_u64());
+        let app = self.app_slug().unwrap_or("github-actions");
         let listed: Vec<ListedComment> = comments
             .iter()
-            .map(|c| ListedComment {
-                id: c.id.into_inner(),
-                user: c.user.id.into_inner(),
-                author: self.author(c.user.id.into_inner()),
-                body: c.body.clone().unwrap_or_default(),
+            .map(|entry| {
+                let c = &entry.comment;
+                ListedComment {
+                    trusted: poster == Some(c.user.id.into_inner())
+                        || entry
+                            .performed_via_github_app
+                            .as_ref()
+                            .and_then(|app| app["slug"].as_str())
+                            == Some(app),
+                    id: c.id.into_inner(),
+                    user: c.user.id.into_inner(),
+                    author: self.author(c.user.id.into_inner()),
+                    body: c.body.clone().unwrap_or_default(),
+                }
             })
             .collect();
         Ok(select_feedback(&listed, &author.0, self.app_slug())

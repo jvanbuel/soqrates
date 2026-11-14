@@ -295,6 +295,64 @@ fn backend_of(url: &str) -> &str {
 }
 
 impl StateStore for SqlStore {
+    async fn save_asked_if_current(
+        &self,
+        value: &AskedSession,
+        expected: Option<&AskedSession>,
+    ) -> Result<bool> {
+        let row = sqlx::query("SELECT doc FROM soqrates_asked WHERE session_key = $1")
+            .bind(value.key().0.clone())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?;
+        let raw: Option<String> = row.map(|r| r.try_get(0)).transpose().map_err(db)?;
+        let stored: Option<AskedSession> = raw
+            .as_deref()
+            .map(|r| from_json("asked", &value.key().0, r))
+            .transpose()?;
+        if stored.as_ref() != expected {
+            return Ok(false);
+        }
+        let doc = to_json(value)?;
+        let result = if let Some(raw) = raw {
+ sqlx::query("UPDATE soqrates_asked SET doc = $1 WHERE session_key = $2 AND doc = $3")
+ .bind(doc).bind(value.key().0.clone()).bind(raw).execute(&self.pool).await
+ } else {
+ sqlx::query("INSERT INTO soqrates_asked (session_key, learner, doc) VALUES ($1, $2, $3) ON CONFLICT (session_key) DO NOTHING")
+ .bind(value.key().0.clone()).bind(value.learner().0.clone()).bind(doc).execute(&self.pool).await
+ }.map_err(db)?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    async fn save_bank_question_if_current(
+        &self,
+        value: &BankedQuestion,
+        expected: Option<&BankedQuestion>,
+    ) -> Result<bool> {
+        let row = sqlx::query("SELECT doc FROM soqrates_bank WHERE id = $1")
+            .bind(value.id().0.clone())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?;
+        let raw: Option<String> = row.map(|r| r.try_get(0)).transpose().map_err(db)?;
+        let stored: Option<BankedQuestion> = raw
+            .as_deref()
+            .map(|r| from_json("bank", &value.id().0, r))
+            .transpose()?;
+        if stored.as_ref() != expected {
+            return Ok(false);
+        }
+        let doc = to_json(value)?;
+        let result = if let Some(raw) = raw {
+ sqlx::query("UPDATE soqrates_bank SET doc = $1 WHERE id = $2 AND doc = $3")
+ .bind(doc).bind(value.id().0.clone()).bind(raw).execute(&self.pool).await
+ } else {
+ sqlx::query("INSERT INTO soqrates_bank (id, concept, doc) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING")
+ .bind(value.id().0.clone()).bind(value.concept().0.clone()).bind(doc).execute(&self.pool).await
+ }.map_err(db)?;
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
         self.fetch_doc(
             "SELECT doc FROM soqrates_profiles WHERE learner = $1",

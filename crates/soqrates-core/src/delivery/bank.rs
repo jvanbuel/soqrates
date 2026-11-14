@@ -32,6 +32,8 @@ pub struct BankedQuestion {
     /// `good` feedback about it, by feedback id (ADR-0011 D6).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     praise: BTreeSet<FeedbackId>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    settled: BTreeSet<FeedbackId>,
 }
 
 impl BankedQuestion {
@@ -61,6 +63,7 @@ impl BankedQuestion {
             retired: false,
             disputes: BTreeSet::new(),
             praise: BTreeSet::new(),
+            settled: BTreeSet::new(),
         })
     }
 
@@ -116,17 +119,22 @@ impl BankedQuestion {
 
     /// Record the dispute `id` (ADR-0011 D6).
     pub fn dispute(&mut self, id: &FeedbackId) {
-        self.disputes.insert(id.clone());
+        if !self.settled.contains(id) {
+            self.disputes.insert(id.clone());
+        }
     }
 
     /// Record the `good` feedback `id` (ADR-0011 D6).
     pub fn commend(&mut self, id: &FeedbackId) {
-        self.praise.insert(id.clone());
+        if !self.settled.contains(id) {
+            self.praise.insert(id.clone());
+        }
     }
 
     /// Forget the feedback `id`: its dispute was resolved, or its learner
     /// deleted (ADR-0011 D7, D8). Returns whether it was recorded here.
     pub fn settle(&mut self, id: &FeedbackId) -> bool {
+        self.settled.insert(id.clone());
         let disputed = self.disputes.remove(id);
         self.praise.remove(id) || disputed
     }

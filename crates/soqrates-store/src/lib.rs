@@ -58,6 +58,34 @@ impl InMemoryStore {
 }
 
 impl StateStore for InMemoryStore {
+    async fn save_asked_if_current(
+        &self,
+        value: &AskedSession,
+        expected: Option<&AskedSession>,
+    ) -> Result<bool> {
+        Ok(self.with(|d| {
+            if d.asked.get(value.key()) != expected {
+                return false;
+            }
+            d.asked.insert(value.key().clone(), value.clone());
+            true
+        }))
+    }
+
+    async fn save_bank_question_if_current(
+        &self,
+        value: &BankedQuestion,
+        expected: Option<&BankedQuestion>,
+    ) -> Result<bool> {
+        Ok(self.with(|d| {
+            if d.bank.get(value.id()) != expected {
+                return false;
+            }
+            d.bank.insert(value.id().clone(), value.clone());
+            true
+        }))
+    }
+
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
         Ok(self.with(|d| d.profiles.get(learner).cloned()))
     }
@@ -219,6 +247,29 @@ impl FileStore {
         format!("bank/{}", hex(&concept.0))
     }
 
+    fn compare_save<T: Serialize + DeserializeOwned + PartialEq>(
+        &self,
+        kind: &str,
+        key: &str,
+        value: &T,
+        expected: Option<&T>,
+    ) -> Result<bool> {
+        let dir = self.root.join(kind);
+        std::fs::create_dir_all(&dir).map_err(io)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(".lock"))
+            .map_err(io)?;
+        lock.lock().map_err(io)?;
+        if self.read::<T>(kind, key)?.as_ref() != expected {
+            return Ok(false);
+        }
+        self.write(kind, key, value)?;
+        Ok(true)
+    }
+
     fn read<T: DeserializeOwned>(&self, kind: &str, key: &str) -> Result<Option<T>> {
         match std::fs::read(self.path(kind, key)) {
             Ok(bytes) => serde_json::from_slice(&bytes)
@@ -277,6 +328,27 @@ fn io(e: std::io::Error) -> Error {
 }
 
 impl StateStore for FileStore {
+    async fn save_asked_if_current(
+        &self,
+        value: &AskedSession,
+        expected: Option<&AskedSession>,
+    ) -> Result<bool> {
+        self.compare_save("asked", &value.key().0, value, expected)
+    }
+
+    async fn save_bank_question_if_current(
+        &self,
+        value: &BankedQuestion,
+        expected: Option<&BankedQuestion>,
+    ) -> Result<bool> {
+        self.compare_save(
+            &Self::bank_dir(value.concept()),
+            &value.id().0,
+            value,
+            expected,
+        )
+    }
+
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
         self.read("profiles", &learner.0)
     }
@@ -463,6 +535,22 @@ macro_rules! delegate {
 }
 
 impl StateStore for Store {
+    async fn save_asked_if_current(
+        &self,
+        value: &AskedSession,
+        expected: Option<&AskedSession>,
+    ) -> Result<bool> {
+        delegate!(self, save_asked_if_current(value, expected))
+    }
+
+    async fn save_bank_question_if_current(
+        &self,
+        value: &BankedQuestion,
+        expected: Option<&BankedQuestion>,
+    ) -> Result<bool> {
+        delegate!(self, save_bank_question_if_current(value, expected))
+    }
+
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
         delegate!(self, load_profile(learner))
     }
@@ -880,6 +968,42 @@ mod tests {
             "saving again replaces"
         );
 
+        // A stale selection or feedback write cannot replace a newer dispute.
+        let old = second.clone();
+        let mut disputed = old.clone();
+        let id = soqrates_core::FeedbackId("first-dispute".into());
+        disputed.dispute(&id);
+        assert!(
+            store
+                .save_bank_question_if_current(&disputed, Some(&old))
+                .await
+                .unwrap()
+        );
+        let mut stale = old.clone();
+        stale.take();
+        assert!(
+            !store
+                .save_bank_question_if_current(&stale, Some(&old))
+                .await
+                .unwrap()
+        );
+        let mut latest = disputed.clone();
+        latest.dispute(&soqrates_core::FeedbackId("second-dispute".into()));
+        assert!(
+            store
+                .save_bank_question_if_current(&latest, Some(&disputed))
+                .await
+                .unwrap()
+        );
+        latest.settle(&id);
+        assert!(latest.is_disputed(), "the second dispute survives");
+        latest.settle(&soqrates_core::FeedbackId("second-dispute".into()));
+        latest.dispute(&id);
+        assert!(
+            !latest.is_disputed(),
+            "a delayed journal cannot reopen resolved feedback"
+        );
+
         // What a learner was shown, deleted with the learner (ADR-0009 D5).
         let cy = LearnerId("cy".into());
         assert!(store.load_seen(&cy).await.unwrap().is_none());
@@ -917,6 +1041,37 @@ mod tests {
         let mut all = store.asked_sessions().await.unwrap();
         all.sort_by(|a, b| a.key().cmp(b.key()));
         assert_eq!(all, vec![mine.clone(), theirs.clone()]);
+        let mut changed = mine.clone();
+        changed
+            .give(
+                &cy,
+                &soqrates_core::FeedbackRequest {
+                    question: soqrates_core::QuestionRef::Number(1),
+                    kind: soqrates_core::FeedbackKind::Disagree,
+                    text: None,
+                },
+                Some("comment-1"),
+                now,
+            )
+            .unwrap();
+        assert!(
+            store
+                .save_asked_if_current(&changed, Some(&mine))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store.save_asked_if_current(&mine, None).await.unwrap(),
+            "grading replay preserves feedback"
+        );
+        assert!(
+            !store
+                .save_asked_if_current(&mine, Some(&mine))
+                .await
+                .unwrap(),
+            "stale sessions cannot overwrite feedback"
+        );
+        assert_eq!(store.load_asked(mine.key()).await.unwrap(), Some(changed));
         store.delete_learner(&cy).await.unwrap();
         assert!(store.load_asked(mine.key()).await.unwrap().is_none());
         assert_eq!(store.asked_sessions().await.unwrap(), vec![theirs]);
@@ -950,6 +1105,97 @@ mod tests {
             std::process::id(),
             DIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ))
+    }
+
+    struct StoreExaminer;
+    impl soqrates_core::ports::Examiner for StoreExaminer {
+        async fn extract_concepts(
+            &self,
+            _: &soqrates_core::Diff,
+            _: &impl soqrates_core::ports::Codebase,
+        ) -> Result<Vec<soqrates_core::Concept>> {
+            unreachable!()
+        }
+        async fn write_question(
+            &self,
+            _: &soqrates_core::Concept,
+            _: &soqrates_core::QuestionBrief,
+            _: &impl soqrates_core::ports::Codebase,
+        ) -> Result<soqrates_core::Question> {
+            unreachable!()
+        }
+        async fn grade(
+            &self,
+            _: &soqrates_core::Question,
+            _: &soqrates_core::Answer,
+            _: &impl soqrates_core::ports::Codebase,
+        ) -> Result<soqrates_core::Grading> {
+            unreachable!()
+        }
+    }
+    struct TestClock;
+    impl soqrates_core::ports::Clock for TestClock {
+        fn now(&self) -> chrono::DateTime<chrono::Utc> {
+            chrono::Utc::now()
+        }
+    }
+
+    #[tokio::test]
+    async fn feedback_recovers_after_bank_write_failure_without_resubmission() {
+        use soqrates_core::{FeedbackKind, FeedbackRequest, QuestionRef, Soqrates};
+        let root = temp_dir("feedback-recovery");
+        let store = FileStore::new(&root);
+        let now = chrono::Utc::now();
+        let bank = banked("rust.traits", "Question?", now);
+        store.save_bank_question(&bank).await.unwrap();
+        let asked = AskedSession::new(
+            SessionKey("session".into()),
+            LearnerId("learner".into()),
+            now,
+            &[bank.question()],
+            &[],
+        );
+        store.save_asked(&asked).await.unwrap();
+        let app = Soqrates::new(store, StoreExaminer, TestClock, Default::default());
+        // Prevent the bank CAS lock from opening after the session is saved.
+        let lock = root.join(FileStore::bank_dir(bank.concept())).join(".lock");
+        std::fs::create_dir(&lock).unwrap();
+        let request = FeedbackRequest {
+            question: QuestionRef::Number(1),
+            kind: FeedbackKind::Disagree,
+            text: None,
+        };
+        assert!(
+            app.give_feedback(None, asked.key(), &request, Some("source"))
+                .await
+                .is_err()
+        );
+        let saved = app.store.load_asked(asked.key()).await.unwrap().unwrap();
+        assert_eq!(saved.questions()[0].feedback.len(), 1);
+        let id = saved.questions()[0].feedback[0].id.clone();
+        std::fs::remove_dir(&lock).unwrap();
+        // Any later operation recovers; the original request is never retried.
+        app.export_questions(true).await.unwrap();
+        assert!(app.store.bank_questions(bank.concept()).await.unwrap()[0].is_disputed());
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::create_dir(&lock).unwrap();
+        assert!(app.resolve_feedback(&id, true).await.is_err());
+        // A concurrent opposite verdict must retain the irreversible retirement intent.
+        let accepted = app.store.load_asked(asked.key()).await.unwrap().unwrap();
+        let mut rejected = accepted.clone();
+        rejected.resolve(&id, false).unwrap();
+        assert!(
+            app.store
+                .save_asked_if_current(&rejected, Some(&accepted))
+                .await
+                .unwrap()
+        );
+        std::fs::remove_dir(&lock).unwrap();
+        app.export_questions(true).await.unwrap();
+        let recovered = &app.store.bank_questions(bank.concept()).await.unwrap()[0];
+        assert!(recovered.is_retired());
+        assert!(!recovered.is_disputed());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

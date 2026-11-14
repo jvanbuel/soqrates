@@ -188,10 +188,46 @@ fn settings(cli: &Cli, project_root: Option<&std::path::Path>) -> Result<config:
     }))
 }
 
+/// Store commands cannot invoke a provider.
+struct StoreOnly;
+impl soqrates_core::ports::Examiner for StoreOnly {
+    async fn extract_concepts(
+        &self,
+        _: &soqrates_core::Diff,
+        _: &impl soqrates_core::ports::Codebase,
+    ) -> soqrates_core::Result<Vec<soqrates_core::Concept>> {
+        Err(soqrates_core::Error::Invalid("store-only command".into()))
+    }
+    async fn write_question(
+        &self,
+        _: &soqrates_core::Concept,
+        _: &soqrates_core::QuestionBrief,
+        _: &impl soqrates_core::ports::Codebase,
+    ) -> soqrates_core::Result<soqrates_core::Question> {
+        Err(soqrates_core::Error::Invalid("store-only command".into()))
+    }
+    async fn grade(
+        &self,
+        _: &soqrates_core::Question,
+        _: &soqrates_core::Answer,
+        _: &impl soqrates_core::ports::Codebase,
+    ) -> soqrates_core::Result<soqrates_core::Grading> {
+        Err(soqrates_core::Error::Invalid("store-only command".into()))
+    }
+}
+
 async fn build_app(cli: &Cli, settings: &config::File) -> Result<App, String> {
     let model = ModelSpec::parse(settings.model.as_deref().unwrap_or(DEFAULT_MODEL))
         .map_err(|e| e.to_string())?;
     let examiner = RigExaminer::new(model).map_err(|e| e.to_string())?;
+    build_with_examiner(cli, settings, examiner).await
+}
+
+async fn build_with_examiner<E: soqrates_core::ports::Examiner>(
+    cli: &Cli,
+    settings: &config::File,
+    examiner: E,
+) -> Result<Soqrates<Store, E, SystemClock>, String> {
     let defaults = soqrates_core::Config::default();
     let core = soqrates_core::Config {
         max_questions: settings.max_questions.unwrap_or(defaults.max_questions),
@@ -376,7 +412,7 @@ async fn run_identity(cli: &Cli, command: &IdentityCommand) -> Result<ExitCode, 
 
 async fn run_questions(cli: &Cli, command: &QuestionsCommand) -> Result<ExitCode, String> {
     let settings = settings(cli, std::env::current_dir().ok().as_deref())?;
-    let app = build_app(cli, &settings).await?;
+    let app = build_with_examiner(cli, &settings, StoreOnly).await?;
     let err = |e: soqrates_core::Error| e.to_string();
     match command {
         QuestionsCommand::Export { with_feedback } => {

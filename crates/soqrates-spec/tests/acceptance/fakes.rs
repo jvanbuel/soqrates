@@ -1251,6 +1251,24 @@ macro_rules! write {
 }
 
 impl StateStore for AnyStore {
+    async fn save_asked_if_current(
+        &self,
+        value: &AskedSession,
+        expected: Option<&AskedSession>,
+    ) -> Result<bool> {
+        self.fault("save_asked")?;
+        delegate!(self, save_asked_if_current(value, expected))
+    }
+
+    async fn save_bank_question_if_current(
+        &self,
+        value: &BankedQuestion,
+        expected: Option<&BankedQuestion>,
+    ) -> Result<bool> {
+        self.fault("save_bank_question")?;
+        delegate!(self, save_bank_question_if_current(value, expected))
+    }
+
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
         delegate!(self, load_profile(learner))
     }

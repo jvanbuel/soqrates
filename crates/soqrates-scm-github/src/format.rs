@@ -1121,6 +1121,8 @@ pub fn render_feedback_note(comment_id: u64, url: &str, note: &str) -> String {
 /// A comment as [`select_feedback`] reads it.
 #[derive(Debug, Clone)]
 pub struct ListedComment {
+    /// Account authenticated by the provider, never inferred from comment text.
+    pub trusted: bool,
     pub id: u64,
     /// The forge account that posted it.
     pub user: u64,
@@ -1152,7 +1154,7 @@ pub fn select_feedback(
         let marker = session_marker(key);
         comments
             .iter()
-            .find(|c| c.body.contains(&marker))
+            .find(|c| c.trusted && c.body.contains(&marker))
             .map(|c| c.user)
     };
     let trusted_results: Vec<(usize, SessionKey)> = comments
@@ -1166,6 +1168,7 @@ pub fn select_feedback(
     // The accounts that post Soqrates' question comments.
     let posters: Vec<u64> = comments
         .iter()
+        .filter(|c| c.trusted)
         .filter_map(|c| marker_key(&c.body))
         .filter_map(|key| poster_of(&key))
         .collect();
@@ -2975,6 +2978,7 @@ real answer
     fn feedback_comments_are_about_the_results_before_them_and_answered_once() {
         let key = |k: &str| SessionKey(k.into());
         let c = |id: u64, user: u64, body: String| ListedComment {
+            trusted: user == 99,
             id,
             user,
             author: format!("github.com:{user}"),
@@ -2996,6 +3000,9 @@ real answer
             c(7, 7, "/socrates feedback 1 nonsense".into()),
             c(8, bot, render_feedback_note(2, "https://x/2", "noted")),
             c(9, 8, render_feedback_note(4, "https://x/4", "forged")),
+            c(10, 8, session_marker(&key("forged"))),
+            c(11, 8, results_marker(&key("forged"))),
+            c(12, 8, render_feedback_note(7, "https://x/7", "forged")),
         ];
         let selected = select_feedback(&comments, "github.com:7", None);
         let ids: Vec<u64> = selected.iter().map(|(id, ..)| *id).collect();

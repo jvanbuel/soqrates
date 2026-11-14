@@ -242,6 +242,9 @@ pub struct AskedSession {
     learner: LearnerId,
     at: DateTime<Utc>,
     questions: Vec<AskedQuestion>,
+    /// Retirement is irreversible, even if a later verdict changes.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    retire_questions: std::collections::BTreeSet<usize>,
 }
 
 impl AskedSession {
@@ -274,6 +277,7 @@ impl AskedSession {
             learner,
             at,
             questions,
+            retire_questions: Default::default(),
         }
     }
 
@@ -289,6 +293,28 @@ impl AskedSession {
     pub fn questions(&self) -> &[AskedQuestion] {
         &self.questions
     }
+    /// Replay the durable feedback effects, including irreversible retirement.
+    pub fn update_bank_entry(&self, question: &AskedQuestion, entry: &mut super::BankedQuestion) {
+        if self.retire_questions.contains(&question.number) {
+            entry.retire();
+        }
+        for feedback in &question.feedback {
+            match feedback.status {
+                FeedbackStatus::Open if feedback.kind.disputes() => entry.dispute(&feedback.id),
+                FeedbackStatus::Open if feedback.kind == FeedbackKind::Good => {
+                    entry.commend(&feedback.id)
+                }
+                FeedbackStatus::Open => {}
+                status => {
+                    entry.settle(&feedback.id);
+                    if status == FeedbackStatus::Accepted && feedback.kind.disputes() {
+                        entry.retire();
+                    }
+                }
+            }
+        }
+    }
+
     pub fn reviewer(&self) -> ReviewerKey {
         ReviewerKey::of(&self.learner)
     }
@@ -385,6 +411,9 @@ impl AskedSession {
     ) -> Option<(AskedQuestion, QuestionFeedback)> {
         for q in &mut self.questions {
             if let Some(f) = q.feedback.iter_mut().find(|f| f.id == *id) {
+                if accept && f.kind.disputes() {
+                    self.retire_questions.insert(q.number);
+                }
                 f.status = if accept {
                     FeedbackStatus::Accepted
                 } else {

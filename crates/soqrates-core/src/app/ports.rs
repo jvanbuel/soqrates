@@ -115,6 +115,18 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<AskedSession>>> + Send;
     /// Create or replace the asked session `asked.key()`.
     fn save_asked(&self, asked: &AskedSession) -> impl Future<Output = Result<()>> + Send;
+    /// Atomically replace the record only if it equals expected; None means absent.
+    fn save_bank_question_if_current(
+        &self,
+        value: &BankedQuestion,
+        expected: Option<&BankedQuestion>,
+    ) -> impl Future<Output = Result<bool>> + Send;
+    /// Atomically replace the record only if it equals expected; None means absent.
+    fn save_asked_if_current(
+        &self,
+        value: &AskedSession,
+        expected: Option<&AskedSession>,
+    ) -> impl Future<Output = Result<bool>> + Send;
     /// Every asked session in this store, in any order (ADR-0011 D9).
     fn asked_sessions(&self) -> impl Future<Output = Result<Vec<AskedSession>>> + Send;
 }
