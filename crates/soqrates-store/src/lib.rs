@@ -1,5 +1,7 @@
-//! `StateStore` adapters (ADR-0001 D5, ADR-0003): in memory, JSON files,
+//! `DocumentStore` adapters (ADR-0001 D5, ADR-0003): in memory, JSON files,
 //! and, with the `sqlite` or `postgres` feature, a SQL database (ADR-0005).
+//! Each implements only the small document port of `soqrates-core`; the
+//! core provides `StateStore` on top of it.
 
 #[cfg(any(feature = "sqlite", feature = "postgres"))]
 mod sql;
@@ -7,44 +9,17 @@ mod sql;
 pub use sql::{SCHEMA_VERSION, SqlStore};
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-use soqrates_core::ports::{LearnerStore, StateStore};
-use soqrates_core::{
-    AskedSession, BankId, BankedQuestion, ConceptId, Error, GradedSession, GradingJournal,
-    Identity, IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, Result,
-    SeenQuestions, Session, SessionKey,
-};
-
-#[derive(Debug, Default)]
-struct Data {
-    profiles: BTreeMap<LearnerId, LearnerProfile>,
-    links: BTreeMap<Identity, IdentityLink>,
-    codes: BTreeMap<String, LinkCode>,
-    sessions: BTreeMap<SessionKey, Session>,
-    graded: BTreeMap<SessionKey, GradedSession>,
-    gradings: BTreeMap<SessionKey, GradingJournal>,
-    rounds: BTreeMap<String, PrRounds>,
-    bank: BTreeMap<BankId, BankedQuestion>,
-    seen: BTreeMap<LearnerId, SeenQuestions>,
-    asked: BTreeMap<SessionKey, AskedSession>,
-}
-
-/// `questions` in the order they were banked (ADR-0009 D1).
-fn in_bank_order(mut questions: Vec<BankedQuestion>) -> Vec<BankedQuestion> {
-    questions.sort_by(|a, b| (a.added_at(), a.id()).cmp(&(b.added_at(), b.id())));
-    questions
-}
+use soqrates_core::ports::{Doc, DocumentStore, Kind, Removal};
+use soqrates_core::{Error, Result};
 
 /// Keeps everything in memory. Useful for tests and for the MCP server's
-/// ephemeral mode.
+/// ephemeral mode. One lock around everything, so every step is atomic.
 #[derive(Debug, Default)]
 pub struct InMemoryStore {
-    // Boxed, so a `Store` holding it stays small.
-    data: Mutex<Box<Data>>,
+    docs: Mutex<BTreeMap<(Kind, String), Doc>>,
 }
 
 impl InMemoryStore {
@@ -52,185 +27,97 @@ impl InMemoryStore {
         Self::default()
     }
 
-    fn with<T>(&self, f: impl FnOnce(&mut Data) -> T) -> T {
-        f(&mut self.data.lock().expect("store mutex poisoned"))
+    fn with<T>(&self, f: impl FnOnce(&mut BTreeMap<(Kind, String), Doc>) -> T) -> T {
+        f(&mut self.docs.lock().expect("store mutex poisoned"))
     }
 }
 
-impl StateStore for InMemoryStore {
-    async fn save_asked_if_current(
-        &self,
-        value: &AskedSession,
-        expected: Option<&AskedSession>,
-    ) -> Result<bool> {
-        Ok(self.with(|d| {
-            if d.asked.get(value.key()) != expected {
-                return false;
-            }
-            d.asked.insert(value.key().clone(), value.clone());
-            true
-        }))
-    }
+/// Whether `doc` of `kind` is in `group`.
+fn in_group(kind: Kind, doc: &Doc, group: &str) -> bool {
+    kind.group_of(doc).ok().flatten().as_deref() == Some(group)
+}
 
-    async fn save_bank_question_if_current(
-        &self,
-        value: &BankedQuestion,
-        expected: Option<&BankedQuestion>,
-    ) -> Result<bool> {
+impl DocumentStore for InMemoryStore {
+    async fn load(&self, kind: Kind, key: &str) -> Result<Option<Doc>> {
+        Ok(self.with(|d| d.get(&(kind, key.to_string())).cloned()))
+    }
+    async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        // A grouped document must have its group, as in every backend.
+        kind.group_of(doc)?;
+        self.with(|d| d.insert((kind, key.to_string()), doc.clone()));
+        Ok(())
+    }
+    async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
         Ok(self.with(|d| {
-            if d.bank.get(value.id()) != expected {
-                return false;
-            }
-            d.bank.insert(value.id().clone(), value.clone());
-            true
-        }))
-    }
-
-    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
-        Ok(self.with(|d| d.profiles.get(learner).cloned()))
-    }
-    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        self.with(|d| {
-            d.profiles
-                .insert(profile.learner().clone(), profile.clone())
-        });
-        Ok(())
-    }
-    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
-        Ok(self.with(|d| {
-            let stored = d.profiles.get(profile.learner()).map_or(0, |p| p.version());
-            if stored != profile.version() {
-                return false;
-            }
-            d.profiles.insert(
-                profile.learner().clone(),
-                profile.clone().with_version(stored + 1),
-            );
-            true
-        }))
-    }
-    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        self.with(|d| {
-            d.profiles.remove(learner);
-            d.links.retain(|_, link| &link.learner != learner);
-            d.seen.remove(learner);
-            d.asked.retain(|_, a| a.learner() != learner);
-        });
-        Ok(())
-    }
-    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
-        Ok(self.with(|d| d.links.get(identity).map(|l| l.learner.clone())))
-    }
-    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        self.with(|d| d.links.insert(link.identity.clone(), link.clone()));
-        Ok(())
-    }
-    async fn delete_link(&self, identity: &Identity) -> Result<()> {
-        self.with(|d| d.links.remove(identity));
-        Ok(())
-    }
-    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
-        Ok(self.with(|d| {
-            d.links
-                .values()
-                .filter(|l| &l.learner == learner)
-                .cloned()
+            d.iter()
+                .filter(|((k, _), doc)| *k == kind && group.is_none_or(|g| in_group(kind, doc, g)))
+                .map(|(_, doc)| doc.clone())
                 .collect()
         }))
     }
-    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        self.with(|d| d.codes.insert(code.code().to_string(), code.clone()));
+    async fn remove(&self, removals: &[Removal<'_>]) -> Result<()> {
+        self.with(|d| {
+            for removal in removals {
+                match *removal {
+                    Removal::Key(kind, key) => {
+                        d.remove(&(kind, key.to_string()));
+                    }
+                    Removal::Group(kind, group) => {
+                        d.retain(|(k, _), doc| *k != kind || !in_group(kind, doc, group));
+                    }
+                }
+            }
+        });
         Ok(())
     }
-    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
-        Ok(self.with(|d| d.codes.get(code).cloned()))
-    }
-    async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        Ok(self.with(|d| d.sessions.get(key).cloned()))
-    }
-    async fn save_session(&self, session: &Session) -> Result<()> {
-        self.with(|d| d.sessions.insert(session.key().clone(), session.clone()));
-        Ok(())
-    }
-    async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        self.with(|d| d.sessions.remove(key));
-        Ok(())
-    }
-    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
-        let key = journal.key();
+    async fn swap(&self, kind: Kind, key: &str, expected: Option<&Doc>, new: &Doc) -> Result<bool> {
+        kind.group_of(new)?;
         Ok(self.with(|d| {
-            if d.gradings.contains_key(key) || d.sessions.remove(key).is_none() {
+            let slot = (kind, key.to_string());
+            if d.get(&slot) != expected {
                 return false;
             }
-            d.gradings.insert(key.clone(), journal.clone());
+            d.insert(slot, new.clone());
             true
         }))
     }
-    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
-        Ok(self.with(|d| d.gradings.get(key).cloned()))
-    }
-    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
-        Ok(self.with(|d| d.gradings.values().cloned().collect()))
-    }
-    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
-        self.with(|d| d.gradings.remove(key));
-        Ok(())
-    }
-    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
-        self.with(|d| d.graded.insert(graded.key.clone(), graded.clone()));
-        Ok(())
-    }
-    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
-        Ok(self.with(|d| d.graded.get(key).cloned()))
-    }
-    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
-        Ok(self.with(|d| d.rounds.get(&pr.id()).cloned()))
-    }
-    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        self.with(|d| d.rounds.insert(rounds.pr().id(), rounds.clone()));
-        Ok(())
-    }
-    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
-        Ok(in_bank_order(self.with(|d| {
-            d.bank
-                .values()
-                .filter(|q| q.concept() == concept)
-                .cloned()
-                .collect()
-        })))
-    }
-    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
-        self.with(|d| d.bank.insert(question.id().clone(), question.clone()));
-        Ok(())
-    }
-    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
-        Ok(self.with(|d| d.seen.get(learner).cloned()))
-    }
-    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
-        self.with(|d| d.seen.insert(seen.learner().clone(), seen.clone()));
-        Ok(())
-    }
-    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
-        Ok(self.with(|d| d.asked.get(key).cloned()))
-    }
-    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
-        self.with(|d| d.asked.insert(asked.key().clone(), asked.clone()));
-        Ok(())
-    }
-    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
-        Ok(self.with(|d| d.asked.values().cloned().collect()))
+    async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
+        to.group_of(doc)?;
+        Ok(self.with(|d| {
+            let target = (to, key.to_string());
+            if d.contains_key(&target) || d.remove(&(from, key.to_string())).is_none() {
+                return false;
+            }
+            d.insert(target, doc.clone());
+            true
+        }))
     }
 }
 
-impl LearnerStore for InMemoryStore {}
-
-/// One JSON document per profile, link, link code, pending session, grading
-/// journal, graded session, pull request's rounds, bank question,
-/// learner's seen questions and asked session, under a directory. File names are the
-/// hex-encoded keys; bank questions are in a directory per concept.
+/// One JSON document per record, under a directory: `<kind>/<hex key>.json`
+/// with the kinds `profiles`, `links`, `codes`, `sessions`, `gradings`,
+/// `graded`, `rounds` and `seen`; bank questions are in a directory per
+/// concept, `bank/<hex concept>/<hex id>.json`. File names are the
+/// hex-encoded keys.
 #[derive(Debug, Clone)]
 pub struct FileStore {
     pub root: PathBuf,
+}
+
+/// The directory of `kind` under the root of a [`FileStore`].
+fn dir_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Profile => "profiles",
+        Kind::Link => "links",
+        Kind::LinkCode => "codes",
+        Kind::Session => "sessions",
+        Kind::Grading => "gradings",
+        Kind::Graded => "graded",
+        Kind::Rounds => "rounds",
+        Kind::Bank => "bank",
+        Kind::Seen => "seen",
+        Kind::Asked => "asked",
+    }
 }
 
 impl FileStore {
@@ -238,23 +125,105 @@ impl FileStore {
         Self { root: root.into() }
     }
 
-    fn path(&self, kind: &str, key: &str) -> PathBuf {
-        self.root.join(kind).join(format!("{}.json", hex(key)))
+    /// The file of the document of `kind` with `key`, which for a bank
+    /// question is in the directory of its `group` (ADR-0009 D1).
+    fn path(&self, kind: Kind, key: &str, group: Option<&str>) -> PathBuf {
+        let dir = self.root.join(dir_name(kind));
+        let dir = match (kind, group) {
+            (Kind::Bank, Some(concept)) => dir.join(hex(concept)),
+            _ => dir,
+        };
+        dir.join(format!("{}.json", hex(key)))
     }
 
-    /// The directory of the bank questions about `concept` (ADR-0009 D1).
-    fn bank_dir(concept: &ConceptId) -> String {
-        format!("bank/{}", hex(&concept.0))
+    /// The file of the stored document of `kind` with `key`, if any. A bank
+    /// question's group is not known by its key, so its directories are
+    /// searched.
+    fn find(&self, kind: Kind, key: &str) -> Result<Option<PathBuf>> {
+        if kind != Kind::Bank {
+            let path = self.path(kind, key, None);
+            return Ok(path.exists().then_some(path));
+        }
+        let file = format!("{}.json", hex(key));
+        for dir in self.subdirs(kind)? {
+            if dir.join(&file).exists() {
+                return Ok(Some(dir.join(file)));
+            }
+        }
+        Ok(None)
     }
 
-    fn compare_save<T: Serialize + DeserializeOwned + PartialEq>(
-        &self,
-        kind: &str,
-        key: &str,
-        value: &T,
-        expected: Option<&T>,
-    ) -> Result<bool> {
-        let dir = self.root.join(kind);
+    fn subdirs(&self, kind: Kind) -> Result<Vec<PathBuf>> {
+        let Some(entries) = read_dir(&self.root.join(dir_name(kind)))? else {
+            return Ok(Vec::new());
+        };
+        let mut dirs = Vec::new();
+        for entry in entries {
+            let path = entry.map_err(io)?.path();
+            if path.is_dir() {
+                dirs.push(path);
+            }
+        }
+        Ok(dirs)
+    }
+
+    fn read_doc(path: &Path) -> Result<Option<Doc>> {
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)
+                .map(Some)
+                .map_err(|e| Error::Port(format!("corrupt {}: {e}", path.display()))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(io(e)),
+        }
+    }
+
+    fn write_doc(path: &Path, doc: &Doc) -> Result<()> {
+        std::fs::create_dir_all(path.parent().expect("has parent")).map_err(io)?;
+        let json = serde_json::to_vec_pretty(doc).map_err(|e| Error::Port(e.to_string()))?;
+        // Write then rename, so a crash never leaves a half-written file.
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json).map_err(io)?;
+        std::fs::rename(&tmp, path).map_err(io)
+    }
+
+    fn remove_file(path: &Path) -> Result<()> {
+        match std::fs::remove_file(path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(e)),
+            _ => Ok(()),
+        }
+    }
+
+    /// The files and documents of `kind`, or of `group`, in file name order.
+    fn entries(&self, kind: Kind, group: Option<&str>) -> Result<Vec<(PathBuf, Doc)>> {
+        let dirs = match (kind, group) {
+            (Kind::Bank, Some(concept)) => vec![self.root.join("bank").join(hex(concept))],
+            (Kind::Bank, None) => self.subdirs(kind)?,
+            _ => vec![self.root.join(dir_name(kind))],
+        };
+        let mut out = Vec::new();
+        for dir in dirs {
+            let Some(entries) = read_dir(&dir)? else {
+                continue;
+            };
+            for entry in entries {
+                let path = entry.map_err(io)?.path();
+                if path.extension().is_some_and(|x| x == "json")
+                    && let Some(doc) = Self::read_doc(&path)?
+                    && (kind == Kind::Bank || group.is_none_or(|g| in_group(kind, &doc, g)))
+                {
+                    out.push((path, doc));
+                }
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(out)
+    }
+
+    /// Hold the advisory lock of `kind`'s directory until the returned file
+    /// is dropped. Between processes it makes checking and writing one
+    /// step; the OS releases it if the process stops.
+    fn lock(&self, kind: Kind) -> Result<std::fs::File> {
+        let dir = self.root.join(dir_name(kind));
         std::fs::create_dir_all(&dir).map_err(io)?;
         let lock = std::fs::OpenOptions::new()
             .create(true)
@@ -263,59 +232,32 @@ impl FileStore {
             .open(dir.join(".lock"))
             .map_err(io)?;
         lock.lock().map_err(io)?;
-        if self.read::<T>(kind, key)?.as_ref() != expected {
-            return Ok(false);
-        }
-        self.write(kind, key, value)?;
-        Ok(true)
+        Ok(lock)
     }
 
-    fn read<T: DeserializeOwned>(&self, kind: &str, key: &str) -> Result<Option<T>> {
-        match std::fs::read(self.path(kind, key)) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map(Some)
-                .map_err(|e| Error::Port(format!("corrupt {kind} {key:?}: {e}"))),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(io(e)),
-        }
-    }
-
-    fn write<T: Serialize>(&self, kind: &str, key: &str, value: &T) -> Result<()> {
-        let path = self.path(kind, key);
-        std::fs::create_dir_all(path.parent().expect("has parent")).map_err(io)?;
-        let json = serde_json::to_vec_pretty(value).map_err(|e| Error::Port(e.to_string()))?;
-        // Write then rename, so a crash never leaves a half-written file.
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(io)?;
-        std::fs::rename(&tmp, &path).map_err(io)
-    }
-
-    fn remove(&self, kind: &str, key: &str) -> Result<()> {
-        match std::fs::remove_file(self.path(kind, key)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(io(e)),
+    /// Write `doc` as the document of `kind` with `key`, moving a bank
+    /// question whose concept changed.
+    fn put(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        let group = kind.group_of(doc)?;
+        let path = self.path(kind, key, group.as_deref());
+        let old = if kind == Kind::Bank {
+            self.find(kind, key)?
+        } else {
+            None
+        };
+        Self::write_doc(&path, doc)?;
+        match old {
+            Some(old) if old != path => Self::remove_file(&old),
             _ => Ok(()),
         }
     }
+}
 
-    fn all<T: DeserializeOwned>(&self, kind: &str) -> Result<Vec<T>> {
-        let dir = self.root.join(kind);
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(io(e)),
-        };
-        let mut out = Vec::new();
-        for entry in entries {
-            let path = entry.map_err(io)?.path();
-            if path.extension().is_some_and(|x| x == "json") {
-                let bytes = std::fs::read(&path).map_err(io)?;
-                out.push(
-                    serde_json::from_slice(&bytes)
-                        .map_err(|e| Error::Port(format!("corrupt {}: {e}", path.display())))?,
-                );
-            }
-        }
-        Ok(out)
+fn read_dir(dir: &Path) -> Result<Option<std::fs::ReadDir>> {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(io(e)),
     }
 }
 
@@ -327,176 +269,67 @@ fn io(e: std::io::Error) -> Error {
     Error::Port(e.to_string())
 }
 
-impl StateStore for FileStore {
-    async fn save_asked_if_current(
-        &self,
-        value: &AskedSession,
-        expected: Option<&AskedSession>,
-    ) -> Result<bool> {
-        self.compare_save("asked", &value.key().0, value, expected)
-    }
-
-    async fn save_bank_question_if_current(
-        &self,
-        value: &BankedQuestion,
-        expected: Option<&BankedQuestion>,
-    ) -> Result<bool> {
-        self.compare_save(
-            &Self::bank_dir(value.concept()),
-            &value.id().0,
-            value,
-            expected,
-        )
-    }
-
-    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
-        self.read("profiles", &learner.0)
-    }
-    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        self.write("profiles", &profile.learner().0, profile)
-    }
-    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
-        // Between processes, an advisory lock makes checking the version
-        // and writing one step. The OS releases it if the process stops.
-        let dir = self.root.join("profiles");
-        std::fs::create_dir_all(&dir).map_err(io)?;
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(dir.join(".lock"))
-            .map_err(io)?;
-        lock.lock().map_err(io)?;
-        let learner = &profile.learner().0;
-        let stored = self
-            .read::<LearnerProfile>("profiles", learner)?
-            .map_or(0, |p| p.version());
-        if stored != profile.version() {
-            return Ok(false);
+impl DocumentStore for FileStore {
+    async fn load(&self, kind: Kind, key: &str) -> Result<Option<Doc>> {
+        match self.find(kind, key)? {
+            Some(path) => Self::read_doc(&path),
+            None => Ok(None),
         }
-        self.write(
-            "profiles",
-            learner,
-            &profile.clone().with_version(stored + 1),
-        )?;
-        Ok(true)
     }
-    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        for link in self.links_of(learner).await? {
-            self.delete_link(&link.identity).await?;
-        }
-        self.remove("seen", &learner.0)?;
-        for asked in self.all::<AskedSession>("asked")? {
-            if asked.learner() == learner {
-                self.remove("asked", &asked.key().0)?;
-            }
-        }
-        self.remove("profiles", &learner.0)
+    async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        self.put(kind, key, doc)
     }
-    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
+    async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
         Ok(self
-            .read::<IdentityLink>("links", &identity.to_string())?
-            .map(|l| l.learner))
-    }
-    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        self.write("links", &link.identity.to_string(), link)
-    }
-    async fn delete_link(&self, identity: &Identity) -> Result<()> {
-        self.remove("links", &identity.to_string())
-    }
-    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
-        Ok(self
-            .all::<IdentityLink>("links")?
+            .entries(kind, group)?
             .into_iter()
-            .filter(|l| &l.learner == learner)
+            .map(|(_, doc)| doc)
             .collect())
     }
-    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        self.write("codes", code.code(), code)
+    async fn remove(&self, removals: &[Removal<'_>]) -> Result<()> {
+        for removal in removals {
+            match *removal {
+                Removal::Key(kind, key) => {
+                    if let Some(path) = self.find(kind, key)? {
+                        Self::remove_file(&path)?;
+                    }
+                }
+                Removal::Group(kind, group) => {
+                    for (path, _) in self.entries(kind, Some(group))? {
+                        Self::remove_file(&path)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
-    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
-        self.read("codes", code)
-    }
-    async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        self.read("sessions", &key.0)
-    }
-    async fn save_session(&self, session: &Session) -> Result<()> {
-        self.write("sessions", &session.key().0, session)
-    }
-    async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        self.remove("sessions", &key.0)
-    }
-    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
-        let key = &journal.key().0;
-        // Between processes, an advisory lock makes checking and claiming
-        // one step. The OS releases it if the process stops.
-        let dir = self.root.join("gradings");
-        std::fs::create_dir_all(&dir).map_err(io)?;
-        let lock = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(dir.join(".lock"))
-            .map_err(io)?;
-        lock.lock().map_err(io)?;
-        if self.path("gradings", key).exists() || !self.path("sessions", key).exists() {
+    async fn swap(&self, kind: Kind, key: &str, expected: Option<&Doc>, new: &Doc) -> Result<bool> {
+        let _lock = self.lock(kind)?;
+        let stored = match self.find(kind, key)? {
+            Some(path) => Self::read_doc(&path)?,
+            None => None,
+        };
+        if stored.as_ref() != expected {
             return Ok(false);
         }
-        // Journal first: a stop before the session is removed leaves both,
-        // and finishing the journal removes the session (ADR-0002 D6).
-        self.write("gradings", key, journal)?;
-        self.remove("sessions", key)?;
+        self.put(kind, key, new)?;
         Ok(true)
     }
-    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
-        self.read("gradings", &key.0)
-    }
-    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
-        self.all("gradings")
-    }
-    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
-        self.remove("gradings", &key.0)
-    }
-    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
-        self.write("graded", &graded.key.0, graded)
-    }
-    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
-        self.read("graded", &key.0)
-    }
-    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
-        self.read("rounds", &pr.id())
-    }
-    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        self.write("rounds", &rounds.pr().id(), rounds)
-    }
-    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
-        Ok(in_bank_order(self.all(&Self::bank_dir(concept))?))
-    }
-    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
-        self.write(
-            &Self::bank_dir(question.concept()),
-            &question.id().0,
-            question,
-        )
-    }
-    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
-        self.read("seen", &learner.0)
-    }
-    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
-        self.write("seen", &seen.learner().0, seen)
-    }
-    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
-        self.read("asked", &key.0)
-    }
-    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
-        self.write("asked", &asked.key().0, asked)
-    }
-    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
-        self.all("asked")
+    async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
+        let _lock = self.lock(to)?;
+        let Some(pending) = self.find(from, key)? else {
+            return Ok(false);
+        };
+        if self.find(to, key)?.is_some() {
+            return Ok(false);
+        }
+        // `to` first: a stop before `from` is removed leaves both, and
+        // finishing the journal removes the session (ADR-0002 D6).
+        self.put(to, key, doc)?;
+        Self::remove_file(&pending)?;
+        Ok(true)
     }
 }
-
-impl LearnerStore for FileStore {}
 
 /// Any of the stores above, chosen at run time, e.g. from configuration.
 #[derive(Debug)]
@@ -534,116 +367,38 @@ macro_rules! delegate {
     };
 }
 
-impl StateStore for Store {
-    async fn save_asked_if_current(
-        &self,
-        value: &AskedSession,
-        expected: Option<&AskedSession>,
-    ) -> Result<bool> {
-        delegate!(self, save_asked_if_current(value, expected))
+impl DocumentStore for Store {
+    async fn load(&self, kind: Kind, key: &str) -> Result<Option<Doc>> {
+        delegate!(self, load(kind, key))
     }
-
-    async fn save_bank_question_if_current(
-        &self,
-        value: &BankedQuestion,
-        expected: Option<&BankedQuestion>,
-    ) -> Result<bool> {
-        delegate!(self, save_bank_question_if_current(value, expected))
+    async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        delegate!(self, save(kind, key, doc))
     }
-
-    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
-        delegate!(self, load_profile(learner))
+    async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
+        delegate!(self, list(kind, group))
     }
-    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        delegate!(self, save_profile(profile))
+    async fn remove(&self, removals: &[Removal<'_>]) -> Result<()> {
+        delegate!(self, remove(removals))
     }
-    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
-        delegate!(self, save_profile_if_current(profile))
+    async fn swap(&self, kind: Kind, key: &str, expected: Option<&Doc>, new: &Doc) -> Result<bool> {
+        delegate!(self, swap(kind, key, expected, new))
     }
-    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        delegate!(self, delete_learner(learner))
-    }
-    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
-        delegate!(self, learner_of(identity))
-    }
-    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        delegate!(self, save_link(link))
-    }
-    async fn delete_link(&self, identity: &Identity) -> Result<()> {
-        delegate!(self, delete_link(identity))
-    }
-    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
-        delegate!(self, links_of(learner))
-    }
-    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        delegate!(self, save_link_code(code))
-    }
-    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
-        delegate!(self, load_link_code(code))
-    }
-    async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        delegate!(self, load_session(key))
-    }
-    async fn save_session(&self, session: &Session) -> Result<()> {
-        delegate!(self, save_session(session))
-    }
-    async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        delegate!(self, delete_session(key))
-    }
-    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
-        delegate!(self, begin_grading(journal))
-    }
-    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
-        delegate!(self, load_grading(key))
-    }
-    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
-        delegate!(self, gradings())
-    }
-    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
-        delegate!(self, end_grading(key))
-    }
-    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
-        delegate!(self, save_graded(graded))
-    }
-    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
-        delegate!(self, load_graded(key))
-    }
-    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
-        delegate!(self, load_rounds(pr))
-    }
-    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        delegate!(self, save_rounds(rounds))
-    }
-    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
-        delegate!(self, bank_questions(concept))
-    }
-    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
-        delegate!(self, save_bank_question(question))
-    }
-    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
-        delegate!(self, load_seen(learner))
-    }
-    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
-        delegate!(self, save_seen(seen))
-    }
-    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
-        delegate!(self, load_asked(key))
-    }
-    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
-        delegate!(self, save_asked(asked))
-    }
-    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
-        delegate!(self, asked_sessions())
+    async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
+        delegate!(self, claim(from, to, key, doc))
     }
 }
-
-impl LearnerStore for Store {}
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use soqrates_core::{AuthorId, Session, SessionKey, StoreId};
+    use serde::Serialize;
+    use soqrates_core::ports::StateStore;
+    use soqrates_core::{
+        AskedSession, AuthorId, BankedQuestion, ConceptId, GradedSession, GradingJournal, Identity,
+        IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, SeenQuestions, Session,
+        SessionKey, StoreId,
+    };
 
     use super::*;
 
@@ -931,12 +686,12 @@ mod tests {
         };
         assert!(store.load_rounds(&pr("o/r", 1)).await.unwrap().is_none());
         let mut rounds = PrRounds::new(pr("o/r", 1));
-        rounds.record(soqrates_core::Round {
-            head: "abc".into(),
-            session: s.key().clone(),
-            concepts: vec![soqrates_core::ConceptId("rust.traits".into())],
-            at: now,
-        });
+        rounds.record(soqrates_core::Round::own(
+            "abc".into(),
+            s.key().clone(),
+            vec![soqrates_core::ConceptId("rust.traits".into())],
+            now,
+        ));
         store.save_rounds(&rounds).await.unwrap();
         store.save_rounds(&rounds).await.unwrap();
         assert_eq!(
@@ -1158,7 +913,7 @@ mod tests {
         store.save_asked(&asked).await.unwrap();
         let app = Soqrates::new(store, StoreExaminer, TestClock, Default::default());
         // Prevent the bank CAS lock from opening after the session is saved.
-        let lock = root.join(FileStore::bank_dir(bank.concept())).join(".lock");
+        let lock = root.join("bank").join(".lock");
         std::fs::create_dir(&lock).unwrap();
         let request = FeedbackRequest {
             question: QuestionRef::Number(1),
@@ -1257,7 +1012,7 @@ mod tests {
             .save_profile(&LearnerProfile::new(ada.clone()))
             .await
             .unwrap();
-        let path = store.path("profiles", "ada");
+        let path = store.path(Kind::Profile, "ada", None);
         let mut doc: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let fields = doc.as_object_mut().unwrap();
@@ -1272,6 +1027,498 @@ mod tests {
             store.load_profile(&ada).await.unwrap().unwrap().version(),
             1
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The stored schema, pinned: the table, key column and group column
+    /// of each kind, with the key and group of what `populate` saved. A
+    /// change here orphans the rows of every existing database.
+    #[cfg(any(feature = "sqlite", feature = "postgres"))]
+    async fn schema_is_pinned(store: &SqlStore) {
+        populate(store).await;
+        let id = banked("rust.traits", "First?", chrono::Utc::now())
+            .id()
+            .0
+            .clone();
+        for (table, key_column, group_column, key, group) in [
+            ("soqrates_profiles", "learner", None, "ada", None),
+            (
+                "soqrates_links",
+                "identity",
+                Some("learner"),
+                "github.com:1",
+                Some("ada"),
+            ),
+            ("soqrates_link_codes", "code", None, "K7Q-29XZ", None),
+            ("soqrates_sessions", "session_key", None, "o/r#1@abc", None),
+            ("soqrates_gradings", "session_key", None, "o/r#2@def", None),
+            ("soqrates_graded", "session_key", None, "o/r#1@abc", None),
+            ("soqrates_rounds", "pr", None, "o/r#1", None),
+            (
+                "soqrates_bank",
+                "id",
+                Some("concept"),
+                id.as_str(),
+                Some("rust.traits"),
+            ),
+            ("soqrates_seen", "learner", None, "cy", None),
+        ] {
+            let rows = store
+                .raw_rows_for_test(table, key_column, group_column)
+                .await;
+            assert_eq!(
+                rows,
+                vec![(key.to_string(), group.map(str::to_string))],
+                "{table}"
+            );
+        }
+    }
+
+    // --- The document port ---------------------------------------------------
+
+    fn link_doc(identity: &str, learner: &str) -> Doc {
+        serde_json::json!({ "identity": identity, "learner": learner, "since": "2026-01-01T00:00:00Z" })
+    }
+
+    fn bank_doc(concept: &str, n: u32) -> Doc {
+        serde_json::json!({ "question": { "concept": concept }, "n": n })
+    }
+
+    fn sorted(mut docs: Vec<Doc>) -> Vec<Doc> {
+        docs.sort_by_key(|d| d.to_string());
+        docs
+    }
+
+    /// What every `DocumentStore` promises, method by method.
+    async fn document_port_conforms<D: DocumentStore>(store: &D) {
+        use serde_json::json;
+
+        // load and save: documents round-trip, saving replaces, kinds and
+        // keys are independent, and keys are used verbatim.
+        assert_eq!(store.load(Kind::Profile, "a").await.unwrap(), None);
+        store
+            .save(Kind::Profile, "a", &json!({"v": 1}))
+            .await
+            .unwrap();
+        store
+            .save(Kind::Profile, "a", &json!({"v": 2}))
+            .await
+            .unwrap();
+        store
+            .save(Kind::Seen, "a", &json!({"seen": true}))
+            .await
+            .unwrap();
+        for key in ["A", "a ", "a'b", "a/b", "../a"] {
+            store
+                .save(Kind::Profile, key, &json!({"key": key}))
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            store.load(Kind::Profile, "a").await.unwrap(),
+            Some(json!({"v": 2}))
+        );
+        assert_eq!(
+            store.load(Kind::Seen, "a").await.unwrap(),
+            Some(json!({"seen": true}))
+        );
+        for key in ["A", "a ", "a'b", "a/b", "../a"] {
+            assert_eq!(
+                store.load(Kind::Profile, key).await.unwrap(),
+                Some(json!({"key": key}))
+            );
+        }
+        assert_eq!(store.load(Kind::Session, "a").await.unwrap(), None);
+
+        // list: a kind's documents, and for a grouped kind only a group's.
+        assert_eq!(store.list(Kind::Profile, None).await.unwrap().len(), 6);
+        assert!(store.list(Kind::Rounds, None).await.unwrap().is_empty());
+        assert!(
+            store
+                .list(Kind::Profile, Some("a"))
+                .await
+                .unwrap()
+                .is_empty(),
+            "a kind that is not grouped has no group"
+        );
+        let (ada1, ada2, bob1) = (
+            link_doc("github.com:1", "ada"),
+            link_doc("email:ada@example.com", "ada"),
+            link_doc("github.com:2", "bob"),
+        );
+        for (key, doc) in [("l1", &ada1), ("l2", &ada2), ("l3", &bob1)] {
+            store.save(Kind::Link, key, doc).await.unwrap();
+        }
+        assert_eq!(
+            sorted(store.list(Kind::Link, None).await.unwrap()),
+            sorted(vec![ada1.clone(), ada2.clone(), bob1.clone()])
+        );
+        assert_eq!(
+            sorted(store.list(Kind::Link, Some("ada")).await.unwrap()),
+            sorted(vec![ada1.clone(), ada2.clone()])
+        );
+        assert!(store.list(Kind::Link, Some("cy")).await.unwrap().is_empty());
+        // The group is saved with the document and replaced with it.
+        store
+            .save(Kind::Link, "l2", &link_doc("email:ada@example.com", "bob"))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.list(Kind::Link, Some("ada")).await.unwrap(),
+            vec![ada1.clone()]
+        );
+        assert_eq!(store.list(Kind::Link, Some("bob")).await.unwrap().len(), 2);
+        // A document of a grouped kind needs its group.
+        assert!(
+            store
+                .save(Kind::Link, "bad", &json!({"identity": "x"}))
+                .await
+                .is_err()
+        );
+        assert_eq!(store.load(Kind::Link, "bad").await.unwrap(), None);
+
+        // Bank questions are found by key, wherever their group is.
+        let (t1, t2, o1) = (
+            bank_doc("traits", 1),
+            bank_doc("traits", 2),
+            bank_doc("own", 3),
+        );
+        for (key, doc) in [("q1", &t1), ("q2", &t2), ("q3", &o1)] {
+            store.save(Kind::Bank, key, doc).await.unwrap();
+        }
+        assert_eq!(
+            store.load(Kind::Bank, "q3").await.unwrap(),
+            Some(o1.clone())
+        );
+        assert_eq!(
+            sorted(store.list(Kind::Bank, Some("traits")).await.unwrap()),
+            sorted(vec![t1.clone(), t2.clone()])
+        );
+        assert_eq!(store.list(Kind::Bank, None).await.unwrap().len(), 3);
+        store
+            .save(Kind::Bank, "q1", &bank_doc("own", 4))
+            .await
+            .unwrap();
+        assert_eq!(
+            store.list(Kind::Bank, Some("traits")).await.unwrap(),
+            vec![t2.clone()]
+        );
+        assert_eq!(store.list(Kind::Bank, Some("own")).await.unwrap().len(), 2);
+        assert_eq!(store.list(Kind::Bank, None).await.unwrap().len(), 3);
+
+        // remove: by key or by group, what is not there is skipped, and all
+        // of them are removed.
+        store
+            .remove(&[
+                Removal::Key(Kind::Bank, "q3"),
+                Removal::Key(Kind::Bank, "nope"),
+                Removal::Key(Kind::Rounds, "nope"),
+                Removal::Group(Kind::Rounds, "nope"),
+                Removal::Group(Kind::Profile, "a"),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(store.load(Kind::Bank, "q3").await.unwrap(), None);
+        assert!(store.load(Kind::Bank, "q1").await.unwrap().is_some());
+        assert!(store.load(Kind::Profile, "a").await.unwrap().is_some());
+        store
+            .remove(&[
+                Removal::Group(Kind::Link, "bob"),
+                Removal::Key(Kind::Seen, "a"),
+                Removal::Key(Kind::Profile, "a"),
+            ])
+            .await
+            .unwrap();
+        assert_eq!(
+            store.list(Kind::Link, None).await.unwrap(),
+            vec![ada1.clone()]
+        );
+        assert_eq!(store.load(Kind::Seen, "a").await.unwrap(), None);
+        assert_eq!(store.load(Kind::Profile, "a").await.unwrap(), None);
+        assert!(store.load(Kind::Profile, "A").await.unwrap().is_some());
+        store.remove(&[]).await.unwrap();
+
+        // swap: only from the expected document, or from none.
+        let (one, two, three) = (json!({"n": 1}), json!({"n": 2}), json!({"n": 3}));
+        assert!(
+            !store
+                .swap(Kind::Rounds, "r", Some(&one), &two)
+                .await
+                .unwrap()
+        );
+        assert_eq!(store.load(Kind::Rounds, "r").await.unwrap(), None);
+        assert!(store.swap(Kind::Rounds, "r", None, &one).await.unwrap());
+        assert!(!store.swap(Kind::Rounds, "r", None, &two).await.unwrap());
+        assert!(
+            !store
+                .swap(Kind::Rounds, "r", Some(&two), &three)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            store.load(Kind::Rounds, "r").await.unwrap(),
+            Some(one.clone())
+        );
+        assert!(
+            store
+                .swap(Kind::Rounds, "r", Some(&one), &two)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .swap(Kind::Rounds, "r", Some(&one), &three)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            store.load(Kind::Rounds, "r").await.unwrap(),
+            Some(two.clone())
+        );
+        // A swap moves the group too.
+        assert!(
+            store
+                .swap(Kind::Link, "l1", Some(&ada1), &bob1)
+                .await
+                .unwrap()
+        );
+        assert!(
+            store
+                .list(Kind::Link, Some("ada"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store.list(Kind::Link, Some("bob")).await.unwrap(),
+            vec![bob1.clone()]
+        );
+
+        // claim: moves a document to another kind if there is one to move
+        // and nothing in the way.
+        let claimed = json!({"claimed": true});
+        assert!(
+            !store
+                .claim(Kind::Session, Kind::Grading, "s", &claimed)
+                .await
+                .unwrap()
+        );
+        assert_eq!(store.load(Kind::Grading, "s").await.unwrap(), None);
+        store.save(Kind::Session, "s", &one).await.unwrap();
+        assert!(
+            store
+                .claim(Kind::Session, Kind::Grading, "s", &claimed)
+                .await
+                .unwrap()
+        );
+        assert_eq!(store.load(Kind::Session, "s").await.unwrap(), None);
+        assert_eq!(
+            store.load(Kind::Grading, "s").await.unwrap(),
+            Some(claimed.clone())
+        );
+        assert!(
+            !store
+                .claim(Kind::Session, Kind::Grading, "s", &two)
+                .await
+                .unwrap()
+        );
+        store.save(Kind::Session, "s", &one).await.unwrap();
+        assert!(
+            !store
+                .claim(Kind::Session, Kind::Grading, "s", &two)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            store.load(Kind::Session, "s").await.unwrap(),
+            Some(one.clone())
+        );
+        assert_eq!(store.load(Kind::Grading, "s").await.unwrap(), Some(claimed));
+    }
+
+    /// Of many concurrent swaps from one document, exactly one succeeds;
+    /// of many concurrent claims, too.
+    async fn document_port_is_atomic<D: DocumentStore + 'static>(store: Arc<D>) {
+        use serde_json::json;
+        let start = json!({"n": 0});
+        assert!(store.swap(Kind::Profile, "p", None, &start).await.unwrap());
+        let swaps: Vec<_> = (0..16)
+            .map(|i| {
+                let (store, start) = (store.clone(), start.clone());
+                tokio::spawn(async move {
+                    store
+                        .swap(Kind::Profile, "p", Some(&start), &json!({"n": i + 1}))
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect();
+        let mut won = 0;
+        for h in swaps {
+            won += usize::from(h.await.unwrap());
+        }
+        assert_eq!(won, 1, "one swap from one document");
+        // Of many concurrent first writers, one inserts.
+        let inserts: Vec<_> = (0..16)
+            .map(|i| {
+                let store = store.clone();
+                tokio::spawn(async move {
+                    store
+                        .swap(Kind::Profile, "fresh", None, &json!({"n": i}))
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect();
+        let mut won = 0;
+        for h in inserts {
+            won += usize::from(h.await.unwrap());
+        }
+        assert_eq!(won, 1, "one insert of one document");
+
+        store.save(Kind::Session, "s", &start).await.unwrap();
+        let claims: Vec<_> = (0..16)
+            .map(|i| {
+                let store = store.clone();
+                tokio::spawn(async move {
+                    store
+                        .claim(Kind::Session, Kind::Grading, "s", &json!({"by": i}))
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect();
+        let mut won = 0;
+        for h in claims {
+            won += usize::from(h.await.unwrap());
+        }
+        assert_eq!(won, 1, "one claim of one document");
+        assert_eq!(store.load(Kind::Session, "s").await.unwrap(), None);
+        assert_eq!(store.list(Kind::Grading, None).await.unwrap().len(), 1);
+    }
+
+    /// One record of every kind, through `StateStore`, for the layout tests.
+    async fn populate<S: StateStore>(store: &S) {
+        let now = chrono::Utc::now();
+        let ada = LearnerId("ada".into());
+        store
+            .save_profile(&LearnerProfile::new(ada.clone()))
+            .await
+            .unwrap();
+        store
+            .save_link(&IdentityLink {
+                identity: forge("1"),
+                learner: ada.clone(),
+                since: now,
+            })
+            .await
+            .unwrap();
+        let code = LinkCode::issue("K7Q-29XZ".into(), forge("2"), ada.clone(), now);
+        store.save_link_code(&code).await.unwrap();
+        let s = session();
+        store.save_session(&s).await.unwrap();
+        let other = Session::open(
+            SessionKey("o/r#2@def".into()),
+            s.author().clone(),
+            Vec::new(),
+            3,
+            now,
+        )
+        .unwrap();
+        store.save_session(&other).await.unwrap();
+        assert!(store.begin_grading(&journal(&other, "ada")).await.unwrap());
+        store
+            .save_graded(&GradedSession {
+                key: s.key().clone(),
+                author: s.author().clone(),
+                correct: 1,
+                total: 1,
+                passed: true,
+                at: now,
+            })
+            .await
+            .unwrap();
+        let pr = PrRef {
+            repo: "o/r".into(),
+            number: 1,
+        };
+        store.save_rounds(&PrRounds::new(pr)).await.unwrap();
+        store
+            .save_bank_question(&banked("rust.traits", "First?", now))
+            .await
+            .unwrap();
+        store
+            .save_seen(&SeenQuestions::new(LearnerId("cy".into())))
+            .await
+            .unwrap();
+    }
+
+    /// The stored layout of the file store, pinned: a change here orphans
+    /// the files of every existing installation.
+    #[tokio::test]
+    async fn file_layout_is_pinned() {
+        let dir = temp_dir("layout");
+        let store = FileStore::new(&dir);
+        populate(&store).await;
+        // Take the lock files of swaps and claims out of the picture.
+        let mut files = Vec::new();
+        let mut pending = vec![dir.clone()];
+        while let Some(d) = pending.pop() {
+            for entry in std::fs::read_dir(&d).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    files.push(
+                        path.strip_prefix(&dir)
+                            .unwrap()
+                            .to_string_lossy()
+                            .into_owned(),
+                    );
+                }
+            }
+        }
+        files.sort();
+        let id = hex(&banked("rust.traits", "First?", chrono::Utc::now()).id().0);
+        let mut expected = vec![
+            "profiles/616461.json".to_string(),
+            "links/6769746875622e636f6d3a31.json".into(),
+            "codes/4b37512d3239585a.json".into(),
+            "sessions/6f2f72233140616263.json".into(),
+            "gradings/6f2f72233240646566.json".into(),
+            "graded/6f2f72233140616263.json".into(),
+            "rounds/6f2f722331.json".into(),
+            format!("bank/727573742e747261697473/{id}.json"),
+            "seen/6379.json".into(),
+            // Sessions are claimed under this lock, which is kept.
+            "gradings/.lock".into(),
+        ];
+        expected.sort();
+        assert_eq!(files, expected);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn in_memory_document_port_conforms() {
+        document_port_conforms(&InMemoryStore::new()).await;
+    }
+
+    #[tokio::test]
+    async fn file_document_port_conforms() {
+        let dir = temp_dir("doc-conforms");
+        document_port_conforms(&FileStore::new(&dir)).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn in_memory_document_port_is_atomic() {
+        document_port_is_atomic(Arc::new(InMemoryStore::new())).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn file_document_port_is_atomic() {
+        let dir = temp_dir("doc-atomic");
+        document_port_is_atomic(Arc::new(FileStore::new(&dir))).await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1318,6 +1565,25 @@ mod tests {
             let _ = std::fs::remove_dir_all(dir);
         }
 
+        #[tokio::test]
+        async fn sqlite_document_port_conforms() {
+            document_port_conforms(&SqlStore::connect("sqlite::memory:").await.unwrap()).await;
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+        async fn sqlite_document_port_is_atomic() {
+            let dir = temp_dir("sqlite-doc-atomic");
+            std::fs::create_dir_all(&dir).unwrap();
+            document_port_is_atomic(Arc::new(SqlStore::connect(&url(&dir)).await.unwrap())).await;
+            let _ = std::fs::remove_dir_all(dir);
+        }
+
+        // @adr-0005-d2
+        #[tokio::test]
+        async fn sqlite_schema_is_pinned() {
+            schema_is_pinned(&SqlStore::connect("sqlite::memory:").await.unwrap()).await;
+        }
+
         // @adr-0002-d6
         #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
         async fn sqlite_writers_keep_every_review() {
@@ -1349,9 +1615,10 @@ mod tests {
             let profile = LearnerProfile::new(LearnerId("ada".into()));
             files.save_profile(&profile).await.unwrap();
             sql.save_profile(&profile).await.unwrap();
-            let file_doc: serde_json::Value =
-                serde_json::from_slice(&std::fs::read(files.path("profiles", "ada")).unwrap())
-                    .unwrap();
+            let file_doc: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(files.path(Kind::Profile, "ada", None)).unwrap(),
+            )
+            .unwrap();
             let row_doc: serde_json::Value = serde_json::from_str(
                 &sql.raw_doc_for_test("soqrates_profiles", "learner", "ada")
                     .await,
@@ -1410,7 +1677,13 @@ mod tests {
             };
             conforms(&store).await;
             store.clear_for_test().await;
+            document_port_conforms(&store).await;
+            store.clear_for_test().await;
+            schema_is_pinned(&store).await;
+            store.clear_for_test().await;
             let store = Arc::new(store);
+            document_port_is_atomic(store.clone()).await;
+            store.clear_for_test().await;
             // @adr-0002-d6
             concurrent_writers_keep_every_review(store.clone()).await;
             store.clear_for_test().await;

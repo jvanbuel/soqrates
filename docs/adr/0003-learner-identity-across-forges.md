@@ -116,6 +116,10 @@ The domain does not depend on the choice. Where a forge's CI cannot reach the
 learner store, Soqrates falls back to a profile local to that forge, says
 so in the check output, and never fails the check because of it.
 
+The store router (`app/stores`) is the one place that implements this
+fallback: it falls back for placing a learner, and for looking a session,
+grading journal or graded record up across the stores.
+
 ### D5: Only general concepts cross organisations
 **Enforcement:** automated
 

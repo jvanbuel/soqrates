@@ -33,11 +33,7 @@ where
     if diff.is_empty() {
         return Ok(HookDecision::Allow);
     }
-    let key = SessionKey(format!(
-        "hook:{kind:?}:{}:{}",
-        author.0,
-        app.clock.now().to_rfc3339()
-    ));
+    let key = SessionKey::hook(kind, author, &app.clock.now().to_rfc3339());
     let mut session = app.start_session(key, author, diff, code).await?;
     let outcome = loop {
         let mut answers = Vec::with_capacity(session.questions().len());

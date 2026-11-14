@@ -28,8 +28,9 @@ SQLite for a local store in a single file, with the same code path.
 ### D1: One SQL adapter, `SqlStore`, for SQLite and PostgreSQL
 **Enforcement:** automated
 
-`soqrates-store` provides `SqlStore`, which implements `StateStore` and
-`LearnerStore` on [sqlx](https://github.com/launchbadge/sqlx)'s `Any`
+`soqrates-store` provides `SqlStore`, which implements the core's
+`DocumentStore` port (ADR-0001 D5; the core turns every `DocumentStore` into
+a `StateStore`) on [sqlx](https://github.com/launchbadge/sqlx)'s `Any`
 driver. The connection URL chooses the backend: `sqlite://…` or
 `postgres://…`. The SQL is written once, in the subset both backends share:
 `$N` parameters, `ON CONFLICT … DO UPDATE`, `DELETE … RETURNING`. The
@@ -39,10 +40,14 @@ only the drivers it needs. Only `soqrates-store` may depend on `sqlx`.
 ### D2: Each record is a JSON document in a table of its kind
 **Enforcement:** automated
 
-The five kinds of record (profiles, links, link codes, pending sessions and
-graded sessions) each get a table, keyed like the file store's files. Every
+Each kind of record (profiles, links, link codes, pending sessions, grading
+journals, graded sessions, PR rounds, bank questions and seen questions) gets
+a table, keyed like the file store's files. The table, key column and (for
+the grouped kinds) group column of each kind are fixed by the schema; a test
+pins them, so that a later change cannot silently orphan data. Every
 row holds the record as the same JSON document the file store writes. Only
-the key, and for links the learner, are columns of their own. The domain
+the key, and for links the learner and for bank questions the concept (the
+group of `DocumentStore::list`), are columns of their own. The domain
 types stay the single definition of the content, and records move between
 stores unchanged. Keys are bound as parameters, never spliced into SQL.
 
@@ -58,11 +63,16 @@ at the same time don't collide.
 ### D4: A session is claimed in one transaction
 **Enforcement:** automated
 
-`begin_grading` deletes the session row with `DELETE … RETURNING` and
+`DocumentStore::claim`, which `begin_grading` is, deletes the session row
+with `DELETE … RETURNING` and
 inserts the grading journal in one transaction, so of several concurrent
 callers, in any number of processes, exactly one claims the session, and
-the claim and the journal are stored together (ADR-0002 D6). Deleting a learner removes the profile and its links in one
-transaction (ADR-0003 D6).
+the claim and the journal are stored together (ADR-0002 D6).
+`DocumentStore::swap`, the conditional profile save, inserts the row only if
+there is none, or updates it only `WHERE` the stored text is still the
+document that was compared, as one statement. Deleting a learner removes the
+profile, its links and what it was shown in one transaction
+(`DocumentStore::remove`, ADR-0003 D6).
 
 ### D5: The database is chosen by URL, from a flag or the environment only
 **Enforcement:** automated

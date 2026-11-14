@@ -32,7 +32,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Verification | `Verification` | shared | Whether the forge vouches for an identity. Forge accounts are verified; a commit e-mail on its own is not. | |
 | Link | `IdentityLink` | learner | The fact that an identity belongs to a learner. Every identity has at most one link. | alias |
 | Link code | `LinkCode` | learner | A short-lived, single-use code that proves one person controls two identities. | token, OTP |
-| Learner store | `LearnerStore` | app | The store holding the profiles of linked learners, reachable from several forges. Owned by the learner or by an organisation. | |
+| Learner store | `StateStore` | app | The store (a `StateStore`) holding the profiles of linked learners, reachable from several forges. Owned by the learner or by an organisation. | |
 | Change | `Diff` | assessment | The unified diff Soqrates asks about. | |
 | Concept | `Concept` | assessment | One idea that a change exercises, e.g. Rust borrowing. The unit of learning. | topic, skill |
 | Concept scope | `ConceptScope` | assessment | `General` (a technology concept, e.g. `rust.async.cancellation`) or `Project` (specific to one organisation's code, ADR-0003). | |
@@ -72,7 +72,7 @@ flowchart RL
     learner["learner<br/>profiles, levels, scheduling"] --> assessment["assessment<br/>concepts, questions, grades"]
     delivery["delivery<br/>sessions, checks, hooks"] --> learner
     delivery --> assessment
-    app["app<br/>engine, CI and hook workflows,<br/>ports, events"] --> delivery
+    app["app<br/>engine, store router, CI and hook<br/>workflows, ports, events"] --> delivery
     app --> learner
     app --> assessment
 ```
@@ -122,6 +122,14 @@ that their rules cannot be bypassed:
 Serde deserialization is how a store rehydrates them, and is used for
 nothing else. The `app` layer orchestrates (load, call the aggregate, save,
 emit events) and holds no domain rules.
+
+Inside `app`, `Soqrates` is a facade. Its operations are split by use case
+into services, one module and one `impl` each: identities, a learner's
+profile, composing a session, and grading. The services reach a store only
+through the store router (`app/stores`), which owns the knowledge of where
+data lives (ADR-0003 D4, D5) and of what to do when the learner store is
+unreachable, and which finishes interrupted gradings (D6) before it hands a
+store out. The router is crate-private, so it is not a glossary term.
 
 ### D4: Level rules
 **Enforcement:** automated
@@ -228,12 +236,26 @@ with none.
 
 While the entry exists, the session is being graded. Every engine operation
 that touches a learner or a session first finishes the entries left behind,
-e.g. by a crash or a failed write, by applying them again. Entries whose
+e.g. by a crash or a failed write, by applying them again. The store
+router does this, not each operation: a service gets at the stores only
+through `strict` (finish them, fail if one can't be finished), `best_effort`
+(try, carry on) or `without_recovery` (for documents no grading writes,
+such as the rounds of a pull request), so a new operation has to choose.
+Applying a journal is part of the router, since recovery is nothing but
+applying the journals found in its stores. Entries whose
 graded record exists only need removing. An operation that can't finish
 an entry fails, except looking up a session: the CI check then reports
-"being graded" rather than asking again. It looks a session up in the
-order grading moves it, pending, being graded, graded, so it never misses a
-grading by another run and never opens a second session for its key.
+"being graded" rather than asking again. `Soqrates::session_state` is the
+one query for where a session is: `Absent`, `Pending`, `Grading` or
+`Graded`. It looks a session up in the order grading moves it, pending,
+being graded, graded, so it never misses a grading by another run and never
+opens a second session for its key.
+
+A `SessionKey` keeps its string form, which stores and comment markers hold
+and MCP clients may choose freely. Its CI form `{repo}#{number}@{head}`,
+the hook form and the MCP form are built and read only in `ids`, through
+typed constructors and accessors, so no other code formats or parses a
+key.
 
 ### D7: Domain events
 **Enforcement:** automated
@@ -304,7 +326,10 @@ check (ADR-0001 D8) decides each new round like this:
   new head. If it was graded, its result is reported again. So a push can't
   wipe out a failed or unanswered round by asking nothing.
 
-A round records every concept its session asks, carried ones included.
+A round records every concept its session asks, carried ones included, and
+whether its session is its own or carried forward. Rounds stored before
+that was recorded are read as own when the head in the session key is the
+round's head, and as carried otherwise.
 The rounds hold heads, session keys and concept IDs, no question or answer
 text, and are kept with the author's sessions: in the organisation's store
 when there is one, never in the shared learner store (ADR-0003 D5). The
