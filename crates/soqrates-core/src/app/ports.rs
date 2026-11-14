@@ -7,7 +7,6 @@ use std::future::Future;
 
 use chrono::{DateTime, Utc};
 
-use crate::Result;
 use crate::app::engine::SessionOutcome;
 use crate::assessment::{Answer, Concept, Diff, Grading, Question, QuestionBrief};
 use crate::delivery::{
@@ -16,6 +15,7 @@ use crate::delivery::{
 };
 use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
+use crate::{Error, Result};
 
 /// Persists learner profiles, identity links, link codes and pending
 /// sessions (ADR-0001 D5, ADR-0003).
@@ -25,6 +25,16 @@ pub trait StateStore: Send + Sync {
         learner: &LearnerId,
     ) -> impl Future<Output = Result<Option<LearnerProfile>>> + Send;
     fn save_profile(&self, profile: &LearnerProfile) -> impl Future<Output = Result<()>> + Send;
+    /// Save `profile` only if the stored profile of its learner is still the
+    /// version `profile` was loaded at (`profile.version()`; a learner
+    /// without a profile counts as version 0). The stored profile is then
+    /// `profile` one version later. Returns `false`, saving nothing, when
+    /// someone saved in between: the caller loads again and retries
+    /// (ADR-0002 D6). Check and save are one step.
+    fn save_profile_if_current(
+        &self,
+        profile: &LearnerProfile,
+    ) -> impl Future<Output = Result<bool>> + Send;
     /// Remove the profile, every link, what they were shown and every asked
     /// session of `learner` (ADR-0003 D6, ADR-0009 D5, ADR-0011 D8).
     fn delete_learner(&self, learner: &LearnerId) -> impl Future<Output = Result<()>> + Send;
@@ -310,8 +320,46 @@ pub trait Examiner: Send + Sync {
     ) -> impl Future<Output = Result<Grading>> + Send;
 }
 
+/// The answers an author submitted, with what the provider needs to
+/// acknowledge and report on them ([`ScmProvider::collect_answers`]).
+#[derive(Debug, Clone)]
+pub struct Submission<R> {
+    pub answers: Vec<Answer>,
+    /// Opaque to the core: it passes the receipt back to
+    /// [`ScmProvider::acknowledge_answers`] and
+    /// [`ScmProvider::post_results`].
+    pub receipt: R,
+}
+
+/// The sessions of a pull request that a newer one may supersede, as the
+/// core knows them ([`ScmProvider::freeze_superseded`]).
+pub trait EarlierSessions: Send + Sync {
+    /// Whether the session `key` may be frozen: it belongs to the pull
+    /// request and is not the newer session itself.
+    fn may_freeze(&self, key: &SessionKey) -> bool;
+    /// The stored session `key`, while it is pending. `None` when it is no
+    /// longer stored.
+    fn pending(&self, key: &SessionKey) -> impl Future<Output = Result<Option<Session>>> + Send;
+}
+
+/// What [`ScmProvider::freeze_superseded`] did. `frozen` lists the sessions
+/// frozen so far even when `failure` is set, so the core can discard those
+/// and the next run only has the rest left to freeze.
+#[derive(Debug, Default)]
+pub struct Frozen {
+    pub frozen: Vec<SessionKey>,
+    pub failure: Option<Error>,
+}
+
 /// A forge/CI provider (D4). Implemented by `soqrates-scm-github` and friends.
+///
+/// The provider keeps no state between calls: whatever a later call needs
+/// is a value the core passes along, such as the receipt of a submission.
 pub trait ScmProvider: Send + Sync {
+    /// What the provider remembers about a submission, from
+    /// [`ScmProvider::collect_answers`] to [`ScmProvider::post_results`].
+    type Receipt: Send + Sync;
+
     fn pull_request(&self, pr: &PrRef) -> impl Future<Output = Result<PullRequest>> + Send;
     /// The change on `pr` from commit `from` to commit `to`, or `None` when
     /// `from` is not an ancestor of `to`, e.g. after a force-push
@@ -322,75 +370,62 @@ pub trait ScmProvider: Send + Sync {
         from: &str,
         to: &str,
     ) -> impl Future<Output = Result<Option<Diff>>> + Send;
-    /// Post the session's questions on the PR, e.g. as a comment. A session
-    /// without questions is posted too, saying there is nothing to answer
+    /// Show the author the session's questions on the PR. A session without
+    /// questions is published too, saying there is nothing to answer
     /// (ADR-0004 D7).
-    fn post_questions(
+    fn publish_questions(
         &self,
         pr: &PrRef,
         session: &Session,
     ) -> impl Future<Output = Result<()>> + Send;
+    /// Close the questions of every earlier session of `pr` that `current`
+    /// superseded and that were neither graded nor closed yet, so answers to
+    /// them can't be mistaken for answers that count: say a newer push
+    /// superseded them, point to `current`'s questions, and show the
+    /// session's questions without a way to answer (ADR-0004 D7). Only
+    /// sessions `sessions` allows are touched, and the questions are shown
+    /// from [`EarlierSessions::pending`]. Nothing happens when `current`'s
+    /// questions are not published. Safe to call again: sessions closed
+    /// already are not found again, so a call that failed part-way is made
+    /// good by the next.
+    fn freeze_superseded(
+        &self,
+        pr: &PrRef,
+        current: &Session,
+        sessions: &impl EarlierSessions,
+    ) -> impl Future<Output = Result<Frozen>> + Send;
     /// The author's answers to `session`, if they have submitted them
     /// (ADR-0004 D3). Answers by anyone else, or ticked but not submitted,
-    /// are `None`.
-    fn fetch_answers(
+    /// are `None`. Also points out, once each, the author's messages on
+    /// `session` that start like an answer command but aren't one (ADR-0004
+    /// D8), best effort: that never fails the call.
+    fn collect_answers(
         &self,
         pr: &PrRef,
         session: &Session,
-    ) -> impl Future<Output = Result<Option<Vec<Answer>>>> + Send;
-    /// Point out, once each, the author's comments on `session` that start
-    /// like an answer command but aren't one, e.g. with a hint to use
-    /// `/soqrates answer` (ADR-0004 D8). Best effort: providers without
-    /// comments do nothing.
-    fn hint_commands(
-        &self,
-        _pr: &PrRef,
-        _session: &Session,
-    ) -> impl Future<Output = Result<()>> + Send {
-        async { Ok(()) }
-    }
-    /// Show the author that their answers to `session` were picked up and
-    /// are being graded, e.g. with a 👀 reaction on the comment that
-    /// submitted them (ADR-0004 D9). Called after
-    /// [`ScmProvider::fetch_answers`] returned answers, before grading.
+    ) -> impl Future<Output = Result<Option<Submission<Self::Receipt>>>> + Send;
+    /// Show the author that the answers of `receipt` were picked up and are
+    /// being graded (ADR-0004 D9). Called after
+    /// [`ScmProvider::collect_answers`] returned them, before grading.
+    /// Returns the receipt to pass on. Best effort: failing to show
+    /// progress is no error.
     fn acknowledge_answers(
         &self,
-        _pr: &PrRef,
-        _session: &Session,
-    ) -> impl Future<Output = Result<()>> + Send {
-        async { Ok(()) }
-    }
-    /// Post the per-question results of a graded session and mark the
-    /// question comment as graded (ADR-0004 D1, D2, D5). Shows this
-    /// session's results only, never the learner's profile. Replaces the
-    /// acknowledgement of [`ScmProvider::acknowledge_answers`] with one
-    /// saying the answers were graded (ADR-0004 D9).
+        pr: &PrRef,
+        session: &Session,
+        receipt: Self::Receipt,
+    ) -> impl Future<Output = Result<Self::Receipt>> + Send;
+    /// Report the per-question results of a graded session and close its
+    /// questions as graded (ADR-0004 D1, D2, D5). Shows this session's
+    /// results only, never the learner's profile. Replaces the
+    /// acknowledgement with one saying the answers of `receipt` were graded
+    /// (ADR-0004 D9).
     fn post_results(
         &self,
         pr: &PrRef,
         session: &Session,
         outcome: &SessionOutcome,
-    ) -> impl Future<Output = Result<()>> + Send;
-    /// The sessions whose question comments on `pr` still take answers
-    /// although a newer push superseded them: posted by the same account as
-    /// `current`'s question comment, for another session, and neither graded
-    /// nor superseded yet (ADR-0004 D7). Empty when `current` has no question
-    /// comment.
-    fn superseded_questions(
-        &self,
-        pr: &PrRef,
-        current: &Session,
-    ) -> impl Future<Output = Result<Vec<SessionKey>>> + Send;
-    /// Freeze the question comment of `superseded`: say a newer push
-    /// superseded it, point to `current`'s question comment, and show
-    /// `session`'s questions collapsed, without boxes (ADR-0004 D7).
-    /// `session` is `None` when the superseded session is no longer stored.
-    fn supersede_questions(
-        &self,
-        pr: &PrRef,
-        superseded: &SessionKey,
-        session: Option<&Session>,
-        current: &Session,
+        receipt: &Self::Receipt,
     ) -> impl Future<Output = Result<()>> + Send;
     /// The PR author's feedback commands on `pr` that have not been
     /// answered yet, oldest first (ADR-0011 D2). Commands by anyone else are
@@ -413,11 +448,12 @@ pub trait ScmProvider: Send + Sync {
     ) -> impl Future<Output = Result<()>> + Send {
         async { Ok(()) }
     }
-    /// Set the check status with a human-readable `summary`. The summary
-    /// never mentions the learner's other identities (ADR-0003 D6).
+    /// Set the check status of the head commit of `pull` with a
+    /// human-readable `summary`. The summary never mentions the learner's
+    /// other identities (ADR-0003 D6).
     fn set_check(
         &self,
-        pr: &PrRef,
+        pull: &PullRequest,
         status: CheckStatus,
         summary: &str,
     ) -> impl Future<Output = Result<()>> + Send;

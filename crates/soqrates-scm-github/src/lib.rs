@@ -20,25 +20,24 @@
 
 mod format;
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use octocrab::Octocrab;
 use octocrab::models::issues::Comment;
 use soqrates_core::answer_command::{hints_due, parse_answers};
-use soqrates_core::ports::ScmProvider;
+use soqrates_core::ports::{EarlierSessions, Frozen, ScmProvider, Submission};
 use soqrates_core::{
-    Answer, AuthorId, CheckStatus, Diff, Error, FeedbackCommand, PrRef, PullRequest, Result,
-    Session, SessionKey, SessionOutcome,
+    AuthorId, CheckStatus, Diff, Error, FeedbackCommand, PrRef, PullRequest, Result, Session,
+    SessionOutcome,
 };
 
 use crate::format::{
     AnswerComment, AnswerSource, EDITOR_QUERY, ListedComment, STATUS_CONTEXT, StatusState,
-    author_id, boxes_read, commit_status, diff_of_files, editor_database_id, graphql_base,
-    hinted_comment, host_of, is_slug, marker_key, merge_answers, parse_checkboxes,
+    author_id, boxes_read, comments_to_freeze, commit_status, diff_of_files, editor_database_id,
+    graphql_base, hinted_comment, host_of, is_slug, merge_answers, parse_checkboxes,
     render_feedback_note, render_graded_questions, render_hint, render_questions, render_results,
     render_superseded_questions, select_answer_comment, select_feedback, session_marker,
-    split_repo, takes_answers,
+    split_repo, superseded_keys,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -54,27 +53,21 @@ pub struct GitHubProvider {
     client: OnceLock<Octocrab>,
     /// Like `client`, rooted where `/graphql` is served.
     graphql_client: OnceLock<Octocrab>,
-    /// Head commits seen by `pull_request`, for `set_check`.
-    head_shas: Mutex<HashMap<PrRef, String>>,
     /// The slug of the app Soqrates posts as, if any: `@<slug> answer` is
     /// then an answer command too (ADR-0004 D8, ADR-0006 D4).
     app_slug: Option<String>,
-    /// How the answers found by `fetch_answers` were submitted, for
-    /// `acknowledge_answers` and `post_results`.
-    submissions: Mutex<HashMap<SessionKey, Submission>>,
-    /// The URL of each feedback comment found by `feedback_commands`, by
-    /// comment id, for `answer_feedback`.
-    feedback_urls: Mutex<HashMap<u64, String>>,
 }
 
-/// How a session's answers were submitted (ADR-0004 D8, D9).
+/// How a session's answers were submitted (ADR-0004 D8, D9): what
+/// `collect_answers` found, for `acknowledge_answers` and `post_results`.
 #[derive(Debug, Clone)]
-struct Submission {
+pub struct Receipt {
     /// The comment that submitted them: the answer comment, or the question
     /// comment when "Grade my answers" was ticked.
     comment_id: u64,
     source: AnswerSource,
-    /// The 👀 reaction added by `acknowledge_answers`.
+    /// The 👀 reaction added by `acknowledge_answers`, for `post_results`
+    /// to replace.
     eyes: Option<u64>,
 }
 
@@ -112,10 +105,7 @@ impl GitHubProvider {
             host,
             client: OnceLock::new(),
             graphql_client: OnceLock::new(),
-            head_shas: Mutex::new(HashMap::new()),
             app_slug: None,
-            submissions: Mutex::new(HashMap::new()),
-            feedback_urls: Mutex::new(HashMap::new()),
         })
     }
 
@@ -143,19 +133,6 @@ impl GitHubProvider {
 
     fn app_slug(&self) -> Option<&str> {
         self.app_slug.as_deref()
-    }
-
-    fn submission(&self, key: &SessionKey) -> Option<Submission> {
-        self.submissions.lock().ok()?.get(key).cloned()
-    }
-
-    fn set_submission(&self, key: &SessionKey, submission: Option<Submission>) {
-        if let Ok(mut map) = self.submissions.lock() {
-            match submission {
-                Some(s) => map.insert(key.clone(), s),
-                None => map.remove(key),
-            };
-        }
     }
 
     /// Add the reaction `content` to the comment `comment_id`, returning
@@ -218,20 +195,6 @@ impl GitHubProvider {
 
     fn author(&self, user_id: u64) -> String {
         author_id(&self.host, user_id)
-    }
-
-    async fn head_sha(&self, pr: &PrRef) -> Result<String> {
-        if let Some(sha) = self.head_shas.lock().ok().and_then(|m| m.get(pr).cloned()) {
-            return Ok(sha);
-        }
-        let (owner, name) = repo(pr)?;
-        let pull = self
-            .client()?
-            .pulls(owner, name)
-            .get(pr.number)
-            .await
-            .map_err(port("get pull request"))?;
-        Ok(pull.head.sha)
     }
 
     /// Every comment on the PR, oldest first.
@@ -345,6 +308,8 @@ fn repo(pr: &PrRef) -> Result<(&str, &str)> {
 }
 
 impl ScmProvider for GitHubProvider {
+    type Receipt = Receipt;
+
     async fn pull_request(&self, pr: &PrRef) -> Result<PullRequest> {
         let (owner, name) = repo(pr)?;
         let client = self.client()?;
@@ -360,14 +325,10 @@ impl ScmProvider for GitHubProvider {
             .get_diff(pr.number)
             .await
             .map_err(port("get pull request diff"))?;
-        let head_sha = pull.head.sha;
-        if let Ok(mut shas) = self.head_shas.lock() {
-            shas.insert(pr.clone(), head_sha.clone());
-        }
         Ok(PullRequest {
             pr: pr.clone(),
             author: AuthorId(self.author(user.id.into_inner())),
-            head_sha,
+            head_sha: pull.head.sha,
             diff: Diff(diff),
         })
     }
@@ -407,7 +368,7 @@ impl ScmProvider for GitHubProvider {
         Ok(Some(Diff(diff_of_files(&files))))
     }
 
-    async fn post_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
+    async fn publish_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
         let (owner, name) = repo(pr)?;
         self.client()?
             .issues(owner, name)
@@ -417,7 +378,72 @@ impl ScmProvider for GitHubProvider {
         Ok(())
     }
 
-    async fn fetch_answers(&self, pr: &PrRef, session: &Session) -> Result<Option<Vec<Answer>>> {
+    async fn freeze_superseded(
+        &self,
+        pr: &PrRef,
+        current: &Session,
+        sessions: &impl EarlierSessions,
+    ) -> Result<Frozen> {
+        let comments = self.comments(pr).await?;
+        let Some(ours) = question_comment(&comments, &session_marker(current.key())) else {
+            return Ok(Frozen::default());
+        };
+        // Only comments posted by the account that posts Soqrates' questions.
+        let poster = ours.user.id.into_inner();
+        let listed: Vec<(u64, &str)> = comments
+            .iter()
+            .map(|c| {
+                (
+                    c.user.id.into_inner(),
+                    c.body.as_deref().unwrap_or_default(),
+                )
+            })
+            .collect();
+        let mut done = Frozen::default();
+        for key in superseded_keys(&listed, poster, current.key()) {
+            if !sessions.may_freeze(&key) {
+                continue;
+            }
+            let frozen = async {
+                let session = sessions.pending(&key).await?;
+                let body = render_superseded_questions(
+                    &key,
+                    session.as_ref(),
+                    Some(ours.html_url.as_str()),
+                    !current.questions().is_empty(),
+                );
+                for i in comments_to_freeze(&listed, poster, &key) {
+                    self.edit_comment(
+                        pr,
+                        comments[i].id.into_inner(),
+                        body.clone(),
+                        "mark question comment superseded",
+                    )
+                    .await?;
+                }
+                Ok(())
+            }
+            .await;
+            match frozen {
+                Ok(()) => done.frozen.push(key),
+                Err(e) => {
+                    done.failure = Some(e);
+                    break;
+                }
+            }
+        }
+        Ok(done)
+    }
+
+    async fn collect_answers(
+        &self,
+        pr: &PrRef,
+        session: &Session,
+    ) -> Result<Option<Submission<Receipt>>> {
+        // Best effort: a hint that can't be posted must not stop grading.
+        if let Err(e) = self.post_hints(pr, session).await {
+            eprintln!("warning: could not post a command hint: {e}");
+        }
         let comments = self.comments(pr).await?;
         let marker = session_marker(session.key());
         let Some(question) = question_comment(&comments, &marker) else {
@@ -468,34 +494,29 @@ impl ScmProvider for GitHubProvider {
         let answers = merge_answers(session.questions(), boxes.as_ref(), from_comment);
         // The comment that submitted: the answer comment, else the question
         // comment, whose "Grade my answers" box was ticked.
-        let submission = answers.as_ref().map(|_| Submission {
-            comment_id: answer_comment.unwrap_or(question).id.into_inner(),
-            source,
-            eyes: None,
-        });
-        self.set_submission(session.key(), submission);
-        Ok(answers)
+        let comment_id = answer_comment.unwrap_or(question).id.into_inner();
+        Ok(answers.map(|answers| Submission {
+            answers,
+            receipt: Receipt {
+                comment_id,
+                source,
+                eyes: None,
+            },
+        }))
     }
 
-    async fn hint_commands(&self, pr: &PrRef, session: &Session) -> Result<()> {
-        // Best effort: a hint that can't be posted must not stop grading.
-        if let Err(e) = self.post_hints(pr, session).await {
-            eprintln!("warning: could not post a command hint: {e}");
-        }
-        Ok(())
-    }
-
-    async fn acknowledge_answers(&self, pr: &PrRef, session: &Session) -> Result<()> {
-        let Some(mut submission) = self.submission(session.key()) else {
-            return Ok(());
-        };
+    async fn acknowledge_answers(
+        &self,
+        pr: &PrRef,
+        _session: &Session,
+        mut receipt: Receipt,
+    ) -> Result<Receipt> {
         // Best effort, like every reaction: it only shows progress.
-        match self.react(pr, submission.comment_id, "eyes").await {
-            Ok(id) => submission.eyes = Some(id),
+        match self.react(pr, receipt.comment_id, "eyes").await {
+            Ok(id) => receipt.eyes = Some(id),
             Err(e) => eprintln!("warning: could not react to the answers: {e}"),
         }
-        self.set_submission(session.key(), Some(submission));
-        Ok(())
+        Ok(receipt)
     }
 
     async fn post_results(
@@ -503,10 +524,10 @@ impl ScmProvider for GitHubProvider {
         pr: &PrRef,
         session: &Session,
         outcome: &SessionOutcome,
+        receipt: &Receipt,
     ) -> Result<()> {
         let (owner, name) = repo(pr)?;
         let client = self.client()?;
-        let submission = self.submission(session.key());
         // Results first: a new comment notifies the author (ADR-0004 D5).
         client
             .issues(owner, name)
@@ -516,7 +537,7 @@ impl ScmProvider for GitHubProvider {
                     session,
                     &outcome.results,
                     outcome.passed,
-                    submission.as_ref().map(|s| &s.source),
+                    Some(&receipt.source),
                 ),
             )
             .await
@@ -534,73 +555,13 @@ impl ScmProvider for GitHubProvider {
         }
         // Then 👀 becomes 👍: the answers were graded (ADR-0004 D9). GitHub
         // has no ✅ reaction.
-        if let Some(s) = submission {
-            if let Some(eyes) = s.eyes
-                && let Err(e) = self.unreact(pr, s.comment_id, eyes).await
-            {
-                eprintln!("warning: could not remove the 👀 reaction: {e}");
-            }
-            if let Err(e) = self.react(pr, s.comment_id, "+1").await {
-                eprintln!("warning: could not react to the graded answers: {e}");
-            }
-            self.set_submission(session.key(), None);
+        if let Some(eyes) = receipt.eyes
+            && let Err(e) = self.unreact(pr, receipt.comment_id, eyes).await
+        {
+            eprintln!("warning: could not remove the 👀 reaction: {e}");
         }
-        Ok(())
-    }
-
-    async fn superseded_questions(&self, pr: &PrRef, current: &Session) -> Result<Vec<SessionKey>> {
-        let comments = self.comments(pr).await?;
-        let Some(ours) = question_comment(&comments, &session_marker(current.key())) else {
-            return Ok(Vec::new());
-        };
-        // Only comments posted by the account that posts Soqrates' questions,
-        // so nobody can have another comment rewritten by copying a marker.
-        let poster = ours.user.id;
-        let mut keys: Vec<SessionKey> = Vec::new();
-        for c in comments.iter().filter(|c| c.user.id == poster) {
-            let body = c.body.as_deref().unwrap_or_default();
-            if let Some(key) = marker_key(body)
-                && key != *current.key()
-                && takes_answers(body)
-                && !keys.contains(&key)
-            {
-                keys.push(key);
-            }
-        }
-        Ok(keys)
-    }
-
-    async fn supersede_questions(
-        &self,
-        pr: &PrRef,
-        superseded: &SessionKey,
-        session: Option<&Session>,
-        current: &Session,
-    ) -> Result<()> {
-        let comments = self.comments(pr).await?;
-        let Some(ours) = question_comment(&comments, &session_marker(current.key())) else {
-            return Ok(());
-        };
-        let old = comments.iter().filter(|c| {
-            c.user.id == ours.user.id
-                && c.body
-                    .as_deref()
-                    .is_some_and(|b| marker_key(b).as_ref() == Some(superseded) && takes_answers(b))
-        });
-        let body = render_superseded_questions(
-            superseded,
-            session,
-            Some(ours.html_url.as_str()),
-            !current.questions().is_empty(),
-        );
-        for c in old {
-            self.edit_comment(
-                pr,
-                c.id.into_inner(),
-                body.clone(),
-                "mark question comment superseded",
-            )
-            .await?;
+        if let Err(e) = self.react(pr, receipt.comment_id, "+1").await {
+            eprintln!("warning: could not react to the graded answers: {e}");
         }
         Ok(())
     }
@@ -620,15 +581,7 @@ impl ScmProvider for GitHubProvider {
                 body: c.body.clone().unwrap_or_default(),
             })
             .collect();
-        let selected = select_feedback(&listed, &author.0, self.app_slug());
-        if let Ok(mut urls) = self.feedback_urls.lock() {
-            for (id, ..) in &selected {
-                if let Some(c) = comments.iter().find(|c| c.id.into_inner() == *id) {
-                    urls.insert(*id, c.html_url.to_string());
-                }
-            }
-        }
-        Ok(selected
+        Ok(select_feedback(&listed, &author.0, self.app_slug())
             .into_iter()
             .map(|(id, session, request)| FeedbackCommand {
                 source: feedback_source(&self.host, id),
@@ -651,13 +604,18 @@ impl ScmProvider for GitHubProvider {
         else {
             return Ok(());
         };
-        let url = self
-            .feedback_urls
-            .lock()
-            .ok()
-            .and_then(|urls| urls.get(&id).cloned())
-            .unwrap_or_default();
         let (owner, name) = repo(pr)?;
+        // The provider keeps nothing between calls, so the comment is looked
+        // up again for its URL; without it the note links nothing.
+        let url = match self
+            .client()?
+            .issues(owner, name)
+            .get_comment(id.into())
+            .await
+        {
+            Ok(c) => c.html_url.to_string(),
+            Err(_) => String::new(),
+        };
         // Best effort, like a hint: the feedback is recorded already, and
         // the next run answers it if this fails.
         if let Err(e) = self
@@ -671,9 +629,14 @@ impl ScmProvider for GitHubProvider {
         Ok(())
     }
 
-    async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
-        let (owner, name) = repo(pr)?;
-        let sha = self.head_sha(pr).await?;
+    async fn set_check(
+        &self,
+        pull: &PullRequest,
+        status: CheckStatus,
+        summary: &str,
+    ) -> Result<()> {
+        let (owner, name) = repo(&pull.pr)?;
+        let sha = pull.head_sha.clone();
         let (state, description) = commit_status(status, summary);
         let state = match state {
             StatusState::Pending => octocrab::models::StatusState::Pending,

@@ -27,8 +27,14 @@ pub fn code_path(raw: &str) -> Option<String> {
     Some(parts.join("/"))
 }
 
-/// The most lines a code snippet, or a code option, may have (ADR-0007 D3).
-pub const MAX_SNIPPET_LINES: usize = 15;
+/// The lines a code snippet, or a code option, is asked to fit in, and the
+/// length hunks are cut to (ADR-0007 D3).
+pub const SNIPPET_LINES: usize = 15;
+
+/// The most lines a snippet, or a code option, may have (ADR-0007 D3): a
+/// little more than [`SNIPPET_LINES`], so that a snippet the model makes a
+/// few lines too long is still shown instead of failing the round.
+pub const MAX_SNIPPET_LINES: usize = 20;
 
 /// The most hunks a writer is given for one concept (ADR-0007 D4).
 pub const MAX_HUNKS: usize = 3;
@@ -295,7 +301,7 @@ impl Question {
 impl Diff {
     /// The hunks of this diff at `locations`, as they are after the change
     /// (ADR-0007 D4): for each location, the new-side lines of each hunk of
-    /// its file that fall in its range, at most [`MAX_SNIPPET_LINES`] of
+    /// its file that fall in its range, at most [`SNIPPET_LINES`] of
     /// them, and at most [`MAX_HUNKS`] hunks in all, without duplicates.
     /// Locations in files this diff doesn't touch give nothing.
     pub fn hunks_at(&self, locations: &[CodeLocation]) -> Vec<Hunk> {
@@ -319,11 +325,7 @@ impl Diff {
                     if run.is_empty() {
                         return;
                     }
-                    let text: Vec<&str> = run
-                        .iter()
-                        .take(MAX_SNIPPET_LINES)
-                        .map(|(_, l)| *l)
-                        .collect();
+                    let text: Vec<&str> = run.iter().take(SNIPPET_LINES).map(|(_, l)| *l).collect();
                     let hunk = Hunk {
                         file: path.to_string(),
                         start: run[0].0,
@@ -538,7 +540,7 @@ mod tests {
         }
         let hunks = Diff(text).hunks_at(&[loc("a.py", 1, 40), loc("a.py", 30, 31)]);
         assert_eq!(hunks.len(), 2);
-        assert_eq!(hunks[0].snippet().lines(), MAX_SNIPPET_LINES);
+        assert_eq!(hunks[0].snippet().lines(), SNIPPET_LINES);
         assert!(hunks[0].snippet().fits());
         assert_eq!(hunks[1].text, "line 30\nline 31");
         assert_eq!(hunks[0].snippet().origin, SnippetOrigin::Change);
@@ -695,7 +697,7 @@ mod tests {
                 .check(&question(ExplainYourChange, open(Some(relabelled))))
                 .is_err()
         );
-        // At most 15 lines.
+        // At most MAX_SNIPPET_LINES lines.
         let long = general(&vec!["x();"; MAX_SNIPPET_LINES + 1].join("\n"));
         assert!(
             brief

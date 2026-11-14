@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::app::events::DomainEvent;
@@ -13,11 +14,14 @@ use crate::assessment::{
 };
 use crate::delivery::{
     AskedQuestion, AskedSession, BankedQuestion, FeedbackGiven, FeedbackId, FeedbackKind,
-    FeedbackRequest, GradedSession, GradingJournal, Mode, PrRef, PrRounds, QuestionFeedback,
-    QuestionResult, SeenQuestions, Session, StoreId, pick,
+    FeedbackRequest, GradedSession, GradingJournal, JournaledReview, Mode, PrRef, PrRounds,
+    QuestionFeedback, QuestionResult, SeenQuestions, Session, StoreId, pick,
 };
 use crate::ids::{AuthorId, BankId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
-use crate::learner::{IdentityLink, LearnerProfile, Level, LinkCode, LinkRejection, policy};
+use crate::learner::{
+    GradedAnswer, IdentityLink, LearnerEvent, LearnerProfile, Level, LinkCode, LinkRejection,
+    policy,
+};
 use crate::{Error, Result};
 
 /// The result of grading a session, as returned by [`Soqrates::submit`].
@@ -33,6 +37,58 @@ pub struct SessionOutcome {
     pub profile_location: ProfileLocation,
     /// Per-question feedback, in question order (ADR-0004 D1).
     pub results: Vec<QuestionResult>,
+}
+
+/// What recording the reviews of one grading did to the profiles.
+#[derive(Debug, Default)]
+struct Recorded {
+    /// The events of each review, indexed like `GradingJournal::reviews`.
+    by_review: BTreeMap<usize, Vec<LearnerEvent>>,
+    /// The level of each profile after the reviews.
+    levels: Vec<(StoreId, Level)>,
+}
+
+impl Recorded {
+    /// Add the `events` of the reviews at `indices`, one entry per review.
+    fn add(&mut self, indices: &[usize], events: Vec<Vec<LearnerEvent>>) {
+        self.by_review.extend(indices.iter().copied().zip(events));
+    }
+
+    /// The events of all `count` reviews, in review order.
+    fn events_in_order(&self, count: usize) -> Vec<DomainEvent> {
+        (0..count)
+            .filter_map(|i| self.by_review.get(&i))
+            .flatten()
+            .cloned()
+            .map(DomainEvent::from)
+            .collect()
+    }
+
+    fn level_of(&self, store: &StoreId) -> Option<Level> {
+        self.levels
+            .iter()
+            .find(|(id, _)| id == store)
+            .map(|(_, l)| *l)
+    }
+}
+
+impl SessionOutcome {
+    /// Replace what was worked out at grading time by what `recorded`
+    /// says happened: the level of the profile in `primary`, the review
+    /// events and the next review dates. The grades and the session's own
+    /// event stay.
+    fn correct_by(&mut self, recorded: Recorded, primary: &StoreId) {
+        let concluded = self.events.pop();
+        let count = recorded.by_review.keys().max().map_or(0, |last| last + 1);
+        self.events = recorded.events_in_order(count);
+        self.events.extend(concluded);
+        if let Some(level) = recorded.level_of(primary) {
+            self.level_after = level;
+        }
+        for r in &mut self.results {
+            r.next_review = next_review_of(&self.events, &r.concept);
+        }
+    }
 }
 
 /// Where a learner's profile was read from and written to (ADR-0003 D4).
@@ -728,7 +784,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// for answers that don't fit the session (ADR-0002 D6).
     ///
     /// Grading is written ahead: claiming the session and journaling the
-    /// complete end state are one atomic step, then the journal is applied.
+    /// reviews to record are one atomic step, then the journal is applied.
     /// If applying fails, the journal stays and a later operation finishes
     /// it.
     ///
@@ -743,23 +799,29 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         self.recover().await?;
         let not_found = || Error::NotFound(format!("session {:?}", key.0));
         let (session, session_store) = self.find_session(key).await?.ok_or_else(not_found)?;
-        let (journal, outcome) = self.grade(session, answers, code).await?;
+        let (journal, mut outcome, primary) = self.grade(session, answers, code).await?;
         // Of several concurrent submissions, exactly one claims the session.
         if !session_store.begin_grading(&journal).await? {
             return Err(not_found());
         }
-        self.apply(session_store, &journal).await?;
+        if let Some(recorded) = self.apply(session_store, &journal).await? {
+            // Applying recorded the reviews on the profiles as they are now,
+            // which may differ from the ones grading saw if another session
+            // of the learner was graded meanwhile: report what happened.
+            outcome.correct_by(recorded, &primary);
+        }
         Ok(outcome)
     }
 
     /// Grade `answers` to `session`: the journal of everything grading
-    /// writes, and the outcome. Writes no reviews.
+    /// writes, the outcome as the profiles look now, and the store of the
+    /// general reviews. Writes no reviews.
     async fn grade(
         &self,
         session: Session,
         answers: &[Answer],
         code: &impl Codebase,
-    ) -> Result<(GradingJournal, SessionOutcome)> {
+    ) -> Result<(GradingJournal, SessionOutcome, StoreId)> {
         let now = self.clock.now();
         session.validate_answers(answers)?;
 
@@ -780,57 +842,84 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
         let place = self.place(&author).await?;
         let identity = author.identity()?;
-        let mut primary = Self::load_or_new(place.primary, &place.learner).await?;
-        let mut project = match place.project {
+        let primary = Self::load_or_new(place.primary, &place.learner).await?;
+        let project = match place.project {
             Some(store) => Some(Self::load_or_new(store, &place.learner).await?),
             None => None,
         };
-        let mut events: Vec<DomainEvent> = Vec::new();
-        for (q, (_, grade)) in questions.iter().zip(&result.grades) {
-            let profile = match (&mut project, q.scope) {
-                (Some(p), ConceptScope::Project) => p,
-                _ => &mut primary,
-            };
-            events.extend(
-                profile
-                    .record(&q.concept, q.format(), *grade, now, &identity)
-                    .into_iter()
-                    .map(DomainEvent::from),
-            );
-        }
-        events.push(result.event.into());
-        let results = question_results(&questions, answers, &result.grades, &feedback, &events);
-        let correct = result.grades.iter().filter(|(_, g)| g.is_correct()).count();
+        let reviews: Vec<JournaledReview> = questions
+            .iter()
+            .zip(&result.grades)
+            .map(|(q, (_, grade))| {
+                let store = match (&place.project_id, q.scope) {
+                    (Some(id), ConceptScope::Project) => id.clone(),
+                    _ => place.primary_id.clone(),
+                };
+                JournaledReview {
+                    store,
+                    learner: place.learner.clone(),
+                    review: GradedAnswer {
+                        concept: q.concept.clone(),
+                        format: q.format(),
+                        grade: *grade,
+                        at: now,
+                        via: identity.clone(),
+                    },
+                }
+            })
+            .collect();
         let graded = GradedSession {
-            key,
+            key: key.clone(),
             author,
-            correct,
+            correct: result.grades.iter().filter(|(_, g)| g.is_correct()).count(),
             total: result.grades.len(),
             passed: result.passed,
             at: now,
         };
-        let level_after = primary.level();
-        let mut profiles = vec![(place.primary_id, primary)];
-        if let (Some(id), Some(p)) = (place.project_id, project) {
+        let mut journal = GradingJournal {
+            session: claimed,
+            graded,
+            reviews,
+            profiles: Vec::new(),
+            asked: None,
+        };
+
+        // What the reviews will do to the profiles as they are now; the
+        // profiles are not saved, applying the journal does that.
+        let mut profiles = vec![(place.primary_id.clone(), primary)];
+        if let (Some(id), Some(p)) = (place.project_id.clone(), project) {
             profiles.push((id, p));
         }
+        let mut recorded = Recorded::default();
+        for (id, profile) in profiles {
+            let indices = journal.review_indices(&id);
+            let reviews: Vec<GradedAnswer> = indices
+                .iter()
+                .map(|&i| journal.reviews[i].review.clone())
+                .collect();
+            let next = profile
+                .with_session_reviews(&grading_mark(&key), &reviews)
+                .map_or(profile, |(next, events)| {
+                    recorded.add(&indices, events);
+                    next
+                });
+            recorded.levels.push((id, next.level()));
+        }
+        let mut events = recorded.events_in_order(journal.reviews.len());
+        events.push(result.event.into());
+        let results = question_results(&questions, answers, &result.grades, &feedback, &events);
+        let level_after = recorded.level_of(&place.primary_id).unwrap_or_default();
         // Kept for feedback where the session's store may hold question
         // text (ADR-0011 D1).
-        let asked = self.feedback_store_for(&identity)?.is_some().then(|| {
+        journal.asked = self.feedback_store_for(&identity)?.is_some().then(|| {
             AskedSession::new(
-                claimed.key().clone(),
+                key.clone(),
                 place.learner.clone(),
                 now,
                 &questions,
                 &results,
             )
         });
-        let journal = GradingJournal {
-            session: claimed,
-            graded,
-            profiles,
-            asked,
-        };
         let outcome = SessionOutcome {
             grades: result.grades,
             passed: result.passed,
@@ -839,7 +928,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             profile_location: place.location,
             results,
         };
-        Ok((journal, outcome))
+        Ok((journal, outcome, place.primary_id))
     }
 
     /// The store `id` names.
@@ -855,15 +944,24 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// Make the writes of `journal`, kept in `store`, then remove it. Every
     /// write is idempotent, so this can run any number of times, also
-    /// concurrently (ADR-0002 D6).
-    async fn apply(&self, store: &S, journal: &GradingJournal) -> Result<()> {
+    /// concurrently (ADR-0002 D6). Returns what recording the reviews did,
+    /// or `None` if the reviews were on the profiles already.
+    async fn apply(&self, store: &S, journal: &GradingJournal) -> Result<Option<Recorded>> {
         let key = journal.key();
+        let mut recorded = None;
         // The graded record is written last: once it exists, the reviews
-        // are saved, and saving the journal's profiles again could undo
-        // later reviews.
+        // are recorded. Without it, recording them again is safe all the
+        // same, since the profiles say which sessions they have.
         if store.load_graded(key).await?.is_none() {
-            for (id, profile) in &journal.profiles {
-                self.store_by_id(id)?.save_profile(profile).await?;
+            if journal.reviews.is_empty() && !journal.profiles.is_empty() {
+                // Written before reviews were journaled: it holds whole
+                // profiles. Saving them again could undo later reviews, but
+                // the graded record, written last, tells whether it was.
+                for (id, profile) in &journal.profiles {
+                    self.store_by_id(id)?.save_profile(profile).await?;
+                }
+            } else {
+                recorded = self.record_reviews(journal).await?;
             }
             if let Some(asked) = &journal.asked {
                 store.save_asked(asked).await?;
@@ -871,7 +969,52 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             store.delete_session(key).await?;
             store.save_graded(&journal.graded).await?;
         }
-        store.end_grading(key).await
+        store.end_grading(key).await?;
+        Ok(recorded)
+    }
+
+    /// Record the reviews of `journal` on the profiles they belong to. Each
+    /// profile is loaded fresh and saved only if nobody saved it since: when
+    /// another session of the learner got there first, the reviews are
+    /// recorded on top of theirs (ADR-0002 D6). `None` if every profile
+    /// had the reviews already.
+    async fn record_reviews(&self, journal: &GradingJournal) -> Result<Option<Recorded>> {
+        /// How often one profile may change under us before giving up.
+        const ATTEMPTS: usize = 100;
+        let mark = grading_mark(journal.key());
+        let key = journal.key();
+        let mut recorded = Recorded::default();
+        let mut any = false;
+        for (id, learner) in journal.review_targets() {
+            let store = self.store_by_id(&id)?;
+            let indices = journal.review_indices(&id);
+            let reviews: Vec<GradedAnswer> = indices
+                .iter()
+                .map(|&i| journal.reviews[i].review.clone())
+                .collect();
+            let mut done = false;
+            for _ in 0..ATTEMPTS {
+                let profile = Self::load_or_new(store, &learner).await?;
+                let Some((next, events)) = profile.with_session_reviews(&mark, &reviews) else {
+                    done = true;
+                    break;
+                };
+                if store.save_profile_if_current(&next).await? {
+                    recorded.add(&indices, events);
+                    recorded.levels.push((id.clone(), next.level()));
+                    any = true;
+                    done = true;
+                    break;
+                }
+            }
+            if !done {
+                return Err(Error::Port(format!(
+                    "the profile of {:?} kept changing while grading {:?}",
+                    learner.0, key.0
+                )));
+            }
+        }
+        Ok(any.then_some(recorded))
     }
 
     /// Finish every grading left behind, e.g. by a crash or a failed write
@@ -1193,6 +1336,16 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     }
 }
 
+/// When `concept` is next due, by the last review scheduled in `events`.
+fn next_review_of(events: &[DomainEvent], concept: &ConceptId) -> Option<DateTime<Utc>> {
+    events.iter().rev().find_map(|e| match e {
+        DomainEvent::Learner(LearnerEvent::ReviewScheduled {
+            concept: c, due, ..
+        }) if c == concept => Some(*due),
+        _ => None,
+    })
+}
+
 /// Per-question results for the author (ADR-0004 D1): the answer, the
 /// correct option, feedback, and when the concept is next due.
 fn question_results(
@@ -1237,14 +1390,7 @@ fn question_results(
                     }
                     _ => q.explanation.clone(),
                 });
-            let next_review = events.iter().rev().find_map(|e| match e {
-                DomainEvent::Learner(crate::learner::LearnerEvent::ReviewScheduled {
-                    concept,
-                    due,
-                    ..
-                }) if *concept == q.concept => Some(*due),
-                _ => None,
-            });
+            let next_review = next_review_of(events, &q.concept);
             QuestionResult {
                 question: q.id.clone(),
                 concept: q.concept.clone(),
@@ -1258,6 +1404,17 @@ fn question_results(
             }
         })
         .collect()
+}
+
+/// The mark a profile keeps of a graded session (ADR-0002 D6): opaque, so
+/// that the learner store holds no PR reference (ADR-0003 D5), and 128 bits
+/// so that two sessions of one learner don't share one.
+fn grading_mark(key: &SessionKey) -> String {
+    format!(
+        "{}{}",
+        opaque_id(&key.0),
+        opaque_id(&format!("grading:{}", key.0))
+    )
 }
 
 /// A stable, non-reversible-at-a-glance ID: 64-bit FNV-1a of `text`. Not a

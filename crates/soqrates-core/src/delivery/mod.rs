@@ -22,7 +22,7 @@ pub use feedback::{
     FeedbackId, FeedbackKind, FeedbackRequest, FeedbackStatus, MAX_FEEDBACK_CHARS,
     QuestionFeedback, QuestionRef, ReviewerKey, clean_feedback_text,
 };
-pub use journal::{GradingJournal, StoreId};
+pub use journal::{GradingJournal, JournaledReview, StoreId};
 
 /// Whether a failed session blocks (ADR-0001 D8, D9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
