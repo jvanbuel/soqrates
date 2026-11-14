@@ -74,11 +74,14 @@ jobs:
           contains(github.event.comment.body, '- [x] **Grade my answers**'))
       ))
     # One run at a time, so state-branch updates never race. Job-level, so
-    # skipped runs (other bots' comments) never queue here and displace a
-    # pending real run.
+    # skipped runs (other bots' comments) never queue here. `queue: max`
+    # keeps every waiting run, in order: without it a group holds one
+    # running and one pending run, and a newer run cancels the pending one,
+    # so with several open PRs their checks were cancelled before running.
     concurrency:
       group: soqrates-state
       cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
