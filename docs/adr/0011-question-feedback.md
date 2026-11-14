@@ -125,6 +125,11 @@ names it by a `ReviewerKey` derived from that, so several entries by one
 person can be counted as one person. This is pseudonymous, not anonymous:
 whoever holds the store can tell which entries share a learner.
 
+When an identity is linked to another learner and its own learner is merged
+away (ADR-0003 D2, D3), that learner's asked sessions become the other
+learner's, with their feedback: the person is the same, so their open
+disputes stay theirs and stay resolvable.
+
 ### D5: Feedback text is untrusted and stays inert
 **Enforcement:** automated
 
@@ -146,6 +151,19 @@ asked again until a maintainer has resolved every dispute on it (D7). `good`
 feedback is recorded the same way and raises the question: among questions
 that suit equally, by seen order and kind, the one with more `good`
 feedback is taken first.
+
+A disputed or retired question is not asked again by being written again
+either: when the examiner writes a question whose content is that of a
+disputed or retired bank question, it is asked to write another, a few
+times, and the round fails rather than ask that question.
+
+Feedback is saved on the asked session first and noted on the bank after,
+each with a save that only succeeds if nobody changed the record in
+between, and is tried again if somebody did. So feedback given at the same
+time on one session, or on one bank question, is all kept. A note on the
+bank that failed after its feedback was saved is made again when the
+feedback is given again, and when a maintainer resolves or exports
+feedback.
 
 ### D7: Grades are final; maintainers resolve feedback
 **Enforcement:** automated

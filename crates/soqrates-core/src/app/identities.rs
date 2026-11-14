@@ -94,6 +94,14 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             return Err(LinkRejection::BelongsToAnotherLearner(identity.clone()).into());
         }
         for store in stores.all() {
+            // Their asked sessions and feedback become the target's, before
+            // the learner is deleted with all that is theirs (ADR-0011 D4,
+            // D8): open disputes stay resolvable and on the bank.
+            for asked in store.asked_sessions().await? {
+                if *asked.learner() == other {
+                    store.save_asked(&asked.owned_by(target.clone())).await?;
+                }
+            }
             let a = store.load_profile(target).await?;
             let b = store.load_profile(&other).await?;
             if a.is_none() && b.is_none() {

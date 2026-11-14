@@ -315,6 +315,14 @@ impl AskedSession {
         }
     }
 
+    /// This asked session as `learner`'s: for a learner merged into
+    /// another, whose feedback stays theirs to give and to see resolved
+    /// (ADR-0003 D2, ADR-0011 D4).
+    pub fn owned_by(mut self, learner: LearnerId) -> Self {
+        self.learner = learner;
+        self
+    }
+
     pub fn reviewer(&self) -> ReviewerKey {
         ReviewerKey::of(&self.learner)
     }

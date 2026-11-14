@@ -552,6 +552,9 @@ pub struct FakeComment {
     pub session: SessionKey,
     pub author: AuthorId,
     pub body: String,
+    /// How many results had been posted, on any pull request, when this
+    /// comment was: the results before it in the forge's order.
+    pub results_before: usize,
 }
 
 /// A question comment as someone edited it: the options ticked and the
@@ -691,12 +694,14 @@ impl FakeScm {
     pub fn comment(&self, pr: &PrRef, session: &SessionKey, author: &AuthorId, body: &str) -> u64 {
         let mut state = self.state.lock().unwrap();
         let id = state.comments.len() as u64 + 1;
+        let results_before = state.results.len();
         state.comments.push(FakeComment {
             id,
             pr: pr.clone(),
             session: session.clone(),
             author: author.clone(),
             body: body.to_string(),
+            results_before,
         });
         id
     }
@@ -984,7 +989,7 @@ impl ScmProvider for FakeScm {
     }
 
     /// The author's feedback comments not answered yet, each about the
-    /// session it was posted under if that session's results were posted,
+    /// session of the latest results posted on the pull request before it,
     /// as the GitHub adapter reads them (ADR-0011 D2, D4).
     async fn feedback_commands(
         &self,
@@ -1000,13 +1005,14 @@ impl ScmProvider for FakeScm {
             .filter(|c| !state.feedback_notes.iter().any(|(id, _)| *id == c.id))
             .filter_map(|c| {
                 let request = read_feedback(&c.body, slug.as_deref())?;
-                let graded = state
-                    .results
+                let session = state.results[..c.results_before]
                     .iter()
-                    .any(|(p, k, _)| p == pr && *k == c.session);
+                    .rev()
+                    .find(|(p, _, _)| p == pr)
+                    .map(|(_, key, _)| key.clone());
                 Some(FeedbackCommand {
                     source: format!("fake:{}", c.id),
-                    session: graded.then(|| c.session.clone()),
+                    session,
                     request,
                 })
             })

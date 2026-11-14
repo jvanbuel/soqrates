@@ -379,7 +379,10 @@ impl<'a, S: StateStore, C: Clock> Access<'a, S, C> {
             .is_some())
     }
 
-    /// Replay durable feedback, including snapshots saved before a bank failure.
+    /// Note on the bank what the feedback kept in `asked` says about its
+    /// questions (ADR-0011 D6, D7). The asked session is saved first and the
+    /// bank follows, so this is also what repairs a bank write that failed
+    /// after the feedback was saved; doing it again changes nothing.
     pub async fn sync_feedback(&self, store: &S, asked: &AskedSession) -> Result<()> {
         for question in asked.questions() {
             if question.feedback.is_empty() {
@@ -389,6 +392,20 @@ impl<'a, S: StateStore, C: Clock> Access<'a, S, C> {
                 asked.update_bank_entry(question, entry);
             })
             .await?;
+        }
+        Ok(())
+    }
+
+    /// [`sync_feedback`](Self::sync_feedback) for every asked session in
+    /// every store that keeps them: a bank write that failed after its
+    /// feedback was saved, and was never retried, is made good here. It
+    /// reads every asked session, so it runs with the maintainer's
+    /// operations that read them all anyway, not with every recovery.
+    pub async fn sync_all_feedback(&self) -> Result<()> {
+        for store in self.feedback_stores() {
+            for asked in store.asked_sessions().await? {
+                self.sync_feedback(store, &asked).await?;
+            }
         }
         Ok(())
     }
@@ -416,18 +433,6 @@ impl<'a, S: StateStore, C: Clock> Access<'a, S, C> {
             };
             for journal in &journals {
                 if let Err(e) = self.apply(store, journal).await {
-                    failed.get_or_insert(e);
-                }
-            }
-            match store.asked_sessions().await {
-                Ok(sessions) => {
-                    for asked in sessions {
-                        if let Err(e) = self.sync_feedback(store, &asked).await {
-                            failed.get_or_insert(e);
-                        }
-                    }
-                }
-                Err(e) => {
                     failed.get_or_insert(e);
                 }
             }

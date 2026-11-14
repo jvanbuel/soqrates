@@ -100,6 +100,17 @@ Feature: Authors give feedback on graded questions
     Then no store keeps an asked question
     And no bank question about "rust.ownership" is disputed
 
+  @adr-0011-d4
+  Scenario: Feedback stays with a learner whose identity is linked to another learner
+    Given the author's wrong answers to a pull request by "github:1001" touching "rust.ownership" were graded
+    And the author comments "/soqrates feedback 1 disagree the answer key is wrong"
+    And the Soqrates check has run
+    And identity "gitlab:678" requested a link code
+    When identity "github:1001" presents that link code
+    Then question 1 of the graded session has 1 "disagree" feedback
+    When a maintainer rejects that feedback
+    Then no bank question about "rust.ownership" is disputed
+
   @adr-0011-d9
   Scenario: The export with feedback includes the question, the answer, the grade and every feedback entry
     Given the author's wrong answers to a pull request by "github:1001" touching "rust.ownership", "rust.traits" were graded

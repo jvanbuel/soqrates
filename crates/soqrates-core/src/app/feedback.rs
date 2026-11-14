@@ -79,6 +79,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         accept: bool,
     ) -> Result<(AskedQuestion, QuestionFeedback)> {
         let stores = self.stores().strict().await?;
+        stores.sync_all_feedback().await?;
         for store in stores.feedback_stores() {
             for mut asked in store.asked_sessions().await? {
                 if asked.find(id).is_none() {
@@ -109,6 +110,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// the answers, grades and feedback.
     pub async fn export_questions(&self, with_feedback: bool) -> Result<Vec<serde_json::Value>> {
         let stores = self.stores().strict().await?;
+        stores.sync_all_feedback().await?;
         let mut sessions = Vec::new();
         for store in stores.feedback_stores() {
             sessions.extend(store.asked_sessions().await?);
