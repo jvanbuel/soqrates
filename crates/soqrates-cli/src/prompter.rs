@@ -4,8 +4,11 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 
+use soqrates_core::answer_command::parse_feedback;
 use soqrates_core::ports::Prompter;
-use soqrates_core::{Answer, AnswerBody, Error, Question, QuestionBody, Result, SessionOutcome};
+use soqrates_core::{
+    Answer, AnswerBody, Error, FeedbackRequest, Question, QuestionBody, Result, SessionOutcome,
+};
 
 pub struct TtyPrompter {
     input: BufReader<File>,
@@ -99,6 +102,40 @@ impl Prompter for TtyPrompter {
         let text = render_results(outcome, chrono::Utc::now());
         let _ = self.say(&text);
     }
+
+    fn ask_feedback(&mut self, outcome: &SessionOutcome) -> Result<Option<FeedbackRequest>> {
+        if outcome.results.is_empty() {
+            return Ok(None);
+        }
+        self.say(FEEDBACK_PROMPT)?;
+        loop {
+            self.say("> ")?;
+            match read_feedback_reply(&self.line()?) {
+                Ok(request) => return Ok(request),
+                Err(why) => self.say(&format!("   {why}\n"))?,
+            }
+        }
+    }
+
+    fn feedback_noted(&mut self, note: &str) {
+        let _ = self.say(&format!("{}\n\n", indent_code(note, "")));
+    }
+}
+
+/// Asked once after the results (ADR-0011 D2).
+pub const FEEDBACK_PROMPT: &str = "Any feedback on a question? Type its number, a kind \
+(disagree, unclear, wrong-explanation, off-topic, good) and why, e.g. \
+`2 disagree b is also right`, or press Enter to skip.\n";
+
+/// A reply to [`FEEDBACK_PROMPT`]: `None` for an empty line, which skips.
+pub fn read_feedback_reply(line: &str) -> std::result::Result<Option<FeedbackRequest>, String> {
+    if line.trim().is_empty() {
+        return Ok(None);
+    }
+    parse_feedback(line).map(Some).map_err(|why| {
+        why.replace("/soqrates feedback ", "")
+            .replace("Say", "Please say")
+    })
 }
 
 /// `code` as it is, every line prefixed with `indent`, without control
@@ -311,6 +348,22 @@ mod tests {
              \x20      let w = &v;\n\
              \x20      let n = 1;\n"
         );
+    }
+
+    // @adr-0011-d2
+    #[test]
+    fn the_feedback_prompt_is_skipped_with_enter() {
+        use soqrates_core::{FeedbackKind, QuestionRef};
+        assert_eq!(super::read_feedback_reply("  "), Ok(None));
+        let request = super::read_feedback_reply("2 disagree b is also right")
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.question, QuestionRef::Number(2));
+        assert_eq!(request.kind, FeedbackKind::Disagree);
+        assert_eq!(request.text.as_deref(), Some("b is also right"));
+        let why = super::read_feedback_reply("disagree").unwrap_err();
+        assert!(why.starts_with("Please say which question"), "{why}");
+        assert!(!why.contains("/soqrates"), "{why}");
     }
 
     #[test]

@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use crate::Result;
 use crate::app::engine::{ProfileLocation, SessionOutcome, SessionState, Soqrates};
 use crate::app::events::DomainEvent;
 use crate::app::ports::{
@@ -11,9 +10,10 @@ use crate::app::ports::{
 };
 use crate::assessment::Question;
 use crate::delivery::{
-    CheckStatus, Mode, PrRef, PrRounds, PullRequest, Round, Session, SessionEvent,
+    CheckStatus, FeedbackCommand, Mode, PrRef, PrRounds, PullRequest, Round, Session, SessionEvent,
 };
-use crate::ids::{ConceptId, SessionKey};
+use crate::ids::{AuthorId, ConceptId, SessionKey};
+use crate::{Error, Result};
 
 /// The check summary while answers are being graded (ADR-0004 D9).
 pub const GRADING: &str = "Grading your answers…";
@@ -44,6 +44,9 @@ pub fn session_key(pr: &PullRequest) -> SessionKey {
 ///   the same commit, and the check stays `Pending` (ADR-0010). Otherwise
 ///   set `Success`, or `Failure` (`Neutral` in `Advisory` mode), from the
 ///   result after the final round.
+///
+/// First of all, the author's new feedback commands are recorded and
+/// answered (ADR-0011 D2).
 ///
 /// The examiner reads the pull request's code from `code`, at the commit
 /// each session was asked about (ADR-0008 D4).
@@ -84,6 +87,7 @@ where
 {
     async fn run(&self, pr: &PrRef) -> Result<CheckStatus> {
         let pull = self.scm.pull_request(pr).await?;
+        self.take_feedback(pr, &pull.author).await?;
         let own_key = session_key(&pull);
         let mut rounds = self.app.rounds(pr, &pull.author).await?;
         // The session that answers for this head: its own, or one carried
@@ -104,6 +108,51 @@ where
             return Ok(status);
         }
         self.start_round(pr, &pull, rounds).await
+    }
+
+    /// Record the PR author's feedback commands that haven't been answered
+    /// yet, and answer each once: that it was recorded, or why not
+    /// (ADR-0011 D2). Commands by anyone else never get here (D4).
+    async fn take_feedback(&self, pr: &PrRef, author: &AuthorId) -> Result<()> {
+        for command in self.scm.feedback_commands(pr, author).await? {
+            let note = self.feedback_note(pr, author, &command).await?;
+            self.scm.answer_feedback(pr, &command, &note).await?;
+        }
+        Ok(())
+    }
+
+    /// What the author is told about `command`. Only a failure to reach a
+    /// store is an error; everything else is a note to the author.
+    async fn feedback_note(
+        &self,
+        pr: &PrRef,
+        author: &AuthorId,
+        command: &FeedbackCommand,
+    ) -> Result<String> {
+        let request = match &command.request {
+            Ok(request) => request,
+            Err(why) => return Ok(why.clone()),
+        };
+        // Only results of this pull request's own sessions.
+        let not_graded = "There are no graded results for this feedback to be about yet: \
+                          feedback is on the questions of a results comment.";
+        let Some(key) = command
+            .session
+            .as_ref()
+            .filter(|k| k.is_of_pr(&pr.repo, pr.number))
+        else {
+            return Ok(not_graded.into());
+        };
+        match self
+            .app
+            .give_feedback(Some(author), key, request, Some(&command.source))
+            .await
+        {
+            Ok(given) => Ok(given.note()),
+            Err(Error::NotFound(_)) => Ok(not_graded.into()),
+            Err(Error::Invalid(why)) => Ok(format!("This feedback was not recorded: {why}.")),
+            Err(e) => Err(e),
+        }
     }
 
     /// The codebase the session `key` of `pr` was asked about: the head

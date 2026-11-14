@@ -17,6 +17,8 @@
 //! check is reported as a commit status with context `soqrates`, which works
 //! with the Actions `GITHUB_TOKEN` given `statuses: write`. Authors are
 //! identified by host and numeric user id, never by login (ADR-0003 D1).
+//! The PR author's `/soqrates feedback` comments are about the results
+//! comment before them, and each gets one short answer (ADR-0011 D2).
 
 mod format;
 
@@ -27,15 +29,17 @@ use octocrab::models::issues::Comment;
 use soqrates_core::answer_command::{hints_due, parse_answers};
 use soqrates_core::ports::{EarlierSessions, Frozen, ScmProvider, Submission};
 use soqrates_core::{
-    AuthorId, CheckStatus, Diff, Error, PrRef, PullRequest, Result, Session, SessionOutcome,
+    AuthorId, CheckStatus, Diff, Error, FeedbackCommand, PrRef, PullRequest, Result, Session,
+    SessionOutcome,
 };
 
 use crate::format::{
-    AnswerComment, AnswerSource, EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id,
-    comments_to_freeze, commit_status, diff_of_files, editor_database_id, graphql_base,
-    hinted_comment, host_of, is_slug, merge_answers, parse_in_place, render_graded_questions,
-    render_hint, render_questions, render_results, render_superseded_questions,
-    select_answer_comment, session_marker, split_repo, superseded_keys,
+    AnswerComment, AnswerSource, EDITOR_QUERY, ListedComment, STATUS_CONTEXT, StatusState,
+    author_id, comments_to_freeze, commit_status, diff_of_files, editor_database_id, graphql_base,
+    hinted_comment, host_of, is_slug, merge_answers, parse_in_place, render_feedback_note,
+    render_graded_questions, render_hint, render_questions, render_results,
+    render_superseded_questions, select_answer_comment, select_feedback, session_marker,
+    split_repo, superseded_keys,
 };
 
 const DEFAULT_SERVER_URL: &str = "https://github.com";
@@ -288,6 +292,12 @@ fn question_comment<'a>(comments: &'a [Comment], marker: &str) -> Option<&'a Com
     comments
         .iter()
         .find(|c| c.body.as_deref().is_some_and(|b| b.contains(marker)))
+}
+
+/// Where a feedback comment came from: its forge and id, so the same
+/// comment counts once (ADR-0011 D2).
+fn feedback_source(host: &str, comment_id: u64) -> String {
+    format!("{host}:comment:{comment_id}")
 }
 
 fn repo(pr: &PrRef) -> Result<(&str, &str)> {
@@ -564,6 +574,103 @@ impl ScmProvider for GitHubProvider {
         }
         if let Err(e) = self.react(pr, receipt.comment_id, "+1").await {
             eprintln!("warning: could not react to the graded answers: {e}");
+        }
+        Ok(())
+    }
+
+    async fn feedback_commands(
+        &self,
+        pr: &PrRef,
+        author: &AuthorId,
+    ) -> Result<Vec<FeedbackCommand>> {
+        // Keep GitHub's app provenance, which octocrab's Comment omits.
+        #[derive(serde::Deserialize)]
+        struct FeedbackComment {
+            #[serde(flatten)]
+            comment: Comment,
+            performed_via_github_app: Option<serde_json::Value>,
+        }
+        let client = self.client()?;
+        let (owner, name) = repo(pr)?;
+        let page: octocrab::Page<FeedbackComment> = client
+            .get(
+                format!("/repos/{owner}/{name}/issues/{}/comments", pr.number),
+                Some(&[("per_page", 100)]),
+            )
+            .await
+            .map_err(port("list feedback comments"))?;
+        let comments = client
+            .all_pages(page)
+            .await
+            .map_err(port("list feedback comments"))?;
+        // User tokens authenticate their account. Installation tokens use
+        // GitHub's app metadata (the configured app, or GitHub Actions).
+        let user: std::result::Result<serde_json::Value, _> =
+            client.get("/user", None::<&()>).await;
+        let poster = user.ok().and_then(|u| u["id"].as_u64());
+        let app = self.app_slug().unwrap_or("github-actions");
+        let listed: Vec<ListedComment> = comments
+            .iter()
+            .map(|entry| {
+                let c = &entry.comment;
+                ListedComment {
+                    trusted: poster == Some(c.user.id.into_inner())
+                        || entry
+                            .performed_via_github_app
+                            .as_ref()
+                            .and_then(|app| app["slug"].as_str())
+                            == Some(app),
+                    id: c.id.into_inner(),
+                    user: c.user.id.into_inner(),
+                    author: self.author(c.user.id.into_inner()),
+                    body: c.body.clone().unwrap_or_default(),
+                }
+            })
+            .collect();
+        Ok(select_feedback(&listed, &author.0, self.app_slug())
+            .into_iter()
+            .map(|(id, session, request)| FeedbackCommand {
+                source: feedback_source(&self.host, id),
+                session,
+                request,
+            })
+            .collect())
+    }
+
+    async fn answer_feedback(
+        &self,
+        pr: &PrRef,
+        command: &FeedbackCommand,
+        note: &str,
+    ) -> Result<()> {
+        let Some(id) = command
+            .source
+            .rsplit_once(':')
+            .and_then(|(_, id)| id.parse::<u64>().ok())
+        else {
+            return Ok(());
+        };
+        let (owner, name) = repo(pr)?;
+        // The provider keeps nothing between calls, so the comment is looked
+        // up again for its URL; without it the note links nothing.
+        let url = match self
+            .client()?
+            .issues(owner, name)
+            .get_comment(id.into())
+            .await
+        {
+            Ok(c) => c.html_url.to_string(),
+            Err(_) => String::new(),
+        };
+        // Best effort, like a hint: the feedback is recorded already, and
+        // the next run answers it if this fails.
+        if let Err(e) = self
+            .client()?
+            .issues(owner, name)
+            .create_comment(pr.number, render_feedback_note(id, &url, note))
+            .await
+        {
+            eprintln!("warning: could not answer a feedback comment: {e}");
         }
         Ok(())
     }

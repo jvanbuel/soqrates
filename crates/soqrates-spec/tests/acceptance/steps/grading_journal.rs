@@ -147,6 +147,7 @@ async fn old_format_journal(w: &mut SpecWorld, id: String) {
         session,
         reviews: Vec::new(),
         profiles: vec![(StoreId::LearnerStore, profile)],
+        asked: None,
     };
     // As stored by the old version, which had no `reviews`.
     let mut doc = serde_json::to_value(&journal).expect("serialise");

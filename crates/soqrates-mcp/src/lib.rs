@@ -6,7 +6,7 @@
 //! - in-process with [`SoqratesMcp::call_tool`], transport-free (used by
 //!   tests and by anything embedding the server);
 //! - over MCP on stdio with [`SoqratesMcp::serve_stdio`], via an `rmcp`
-//!   [`ServerHandler`] that lists the four tools with JSON input schemas and
+//!   [`ServerHandler`] that lists the five tools with JSON input schemas and
 //!   delegates every call to [`SoqratesMcp::call_tool`].
 //!
 //! Other harnesses therefore get exactly the same learner model and
@@ -14,7 +14,8 @@
 //!
 //! # Tools
 //!
-//! Exactly the four tools of ADR-0001 D10 (see [`tool_names`]). An *author*
+//! Exactly the four tools of ADR-0001 D10 and `give_feedback` of ADR-0011
+//! D2 (see [`tool_names`]). An *author*
 //! is an identity string (ADR-0003 D1): `<forge host>:<account id>`, e.g.
 //! `github.com:1001`, or `email:<address>`. Enum values (`format`, `grade`,
 //! `level`) use the core's names, e.g. `"MultipleChoice"`, `"Good"`,
@@ -62,6 +63,18 @@
 //! Arguments: `{author: string}`. Result: `{concepts: [string]}`, earliest
 //! due first (ADR-0002 D8).
 //!
+//! ## `give_feedback`
+//!
+//! Arguments: `{session_key: string, question: string | number, kind:
+//! string, text?: string}`: feedback on a question of a graded session
+//! (ADR-0011 D2). `question` is the question's id, or its 1-based number;
+//! `kind` is one of `disagree`, `unclear`, `wrong-explanation`, `off-topic`
+//! and `good`. Holding the session key shows that the caller is the
+//! session's author. Grades never change (ADR-0011 D7).
+//!
+//! Result: `{feedback_id, question, kind, note}`, where `question` is the
+//! question's number and `note` says what happens next.
+//!
 //! # Errors
 //!
 //! An unknown tool or arguments that do not fit the tool's schema fail with
@@ -82,21 +95,23 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use soqrates_core::ports::{Clock, Examiner, NoCodebase, StateStore};
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, Diff, Error, Identity, QuestionBody, QuestionId, Result,
-    SessionKey, Soqrates,
+    Answer, AnswerBody, AuthorId, Diff, Error, FeedbackKind, FeedbackRequest, Identity,
+    QuestionBody, QuestionId, QuestionRef, Result, SessionKey, Soqrates,
 };
 
-/// Names of the MCP tools this server exposes. ADR-0001 D10 fixes this set.
+/// Names of the MCP tools this server exposes: the four of ADR-0001 D10 and
+/// `give_feedback` (ADR-0011 D2).
 pub fn tool_names() -> Vec<&'static str> {
     vec![
         "start_session",
         "submit_answers",
         "get_learner_profile",
         "due_reviews",
+        "give_feedback",
     ]
 }
 
-/// The MCP server: the four tools of ADR-0001 D10 over a shared engine.
+/// The MCP server: the tools of [`tool_names`] over a shared engine.
 pub struct SoqratesMcp<S, E, C> {
     app: Arc<Soqrates<S, E, C>>,
     /// Disambiguates derived session keys created at the same instant.
@@ -135,6 +150,17 @@ struct AnswerArgs {
 #[serde(deny_unknown_fields)]
 struct AuthorArgs {
     author: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GiveFeedbackArgs {
+    session_key: String,
+    /// The question's id, or its 1-based number.
+    question: Value,
+    kind: String,
+    #[serde(default)]
+    text: Option<String>,
 }
 
 fn parse_args<T: for<'de> Deserialize<'de>>(tool: &str, args: Value) -> Result<T> {
@@ -181,6 +207,7 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
             "submit_answers" => self.submit_answers(parse_args(name, args)?).await,
             "get_learner_profile" => self.get_learner_profile(parse_args(name, args)?).await,
             "due_reviews" => self.due_reviews(parse_args(name, args)?).await,
+            "give_feedback" => self.give_feedback(parse_args(name, args)?).await,
             _ => Err(Error::Invalid(format!(
                 "unknown tool {name:?}; available tools: {}",
                 tool_names().join(", ")
@@ -339,6 +366,48 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
     }
 }
 
+impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
+    async fn give_feedback(&self, args: GiveFeedbackArgs) -> Result<Value> {
+        let question = match &args.question {
+            Value::String(id) => QuestionRef::Id(QuestionId(id.clone())),
+            Value::Number(n) => QuestionRef::Number(
+                n.as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or_else(|| {
+                        Error::Invalid("give_feedback: `question` must be positive".into())
+                    })?,
+            ),
+            _ => {
+                return Err(Error::Invalid(
+                    "give_feedback: `question` is a question id or its 1-based number".into(),
+                ));
+            }
+        };
+        let kind = FeedbackKind::parse(&args.kind).ok_or_else(|| {
+            Error::Invalid(format!(
+                "give_feedback: `kind` must be one of {}, got {:?}",
+                FeedbackKind::names(),
+                args.kind
+            ))
+        })?;
+        let request = FeedbackRequest {
+            question,
+            kind,
+            text: args.text,
+        };
+        let given = self
+            .app
+            .give_feedback(None, &SessionKey(args.session_key), &request, None)
+            .await?;
+        Ok(json!({
+            "feedback_id": given.feedback.id.0,
+            "question": given.number,
+            "kind": given.feedback.kind.name(),
+            "note": given.note(),
+        }))
+    }
+}
+
 // --- MCP --------------------------------------------------------------------
 
 fn schema(value: Value) -> Arc<JsonObject> {
@@ -348,7 +417,7 @@ fn schema(value: Value) -> Arc<JsonObject> {
     }
 }
 
-/// The four tools with their JSON input schemas.
+/// The tools with their JSON input schemas.
 fn tools() -> Vec<Tool> {
     let author = json!({
         "type": "string",
@@ -422,6 +491,30 @@ fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {"author": author},
                 "required": ["author"],
+                "additionalProperties": false
+            })),
+        ),
+        Tool::new(
+            "give_feedback",
+            "The author's feedback on a question of a graded session: the answer key or \
+             grade is wrong (disagree), the question is unclear, the explanation is wrong, \
+             the question is off-topic, or it is a good question. Grades never change; a \
+             maintainer reviews the feedback.",
+            schema(json!({
+                "type": "object",
+                "properties": {
+                    "session_key": {"type": "string"},
+                    "question": {
+                        "type": ["string", "integer"],
+                        "description": "The question's id, or its 1-based number."
+                    },
+                    "kind": {
+                        "type": "string",
+                        "enum": FeedbackKind::ALL.map(FeedbackKind::name)
+                    },
+                    "text": {"type": "string", "description": "Why, in the author's words."}
+                },
+                "required": ["session_key", "question", "kind"],
                 "additionalProperties": false
             })),
         ),

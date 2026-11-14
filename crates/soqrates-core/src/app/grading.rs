@@ -11,7 +11,8 @@ use crate::app::ports::{Clock, Codebase, Examiner, StateStore};
 use crate::app::stores::{Access, ProfileLocation, Recorded, grading_mark, load_or_new};
 use crate::assessment::{Answer, AnswerBody, ConceptScope, Grade, QuestionBody};
 use crate::delivery::{
-    GradedSession, GradingJournal, JournaledReview, QuestionResult, Session, SessionEvent, StoreId,
+    AskedSession, GradedSession, GradingJournal, JournaledReview, QuestionResult, Session,
+    SessionEvent, StoreId,
 };
 use crate::ids::{ConceptId, QuestionId, SessionKey};
 use crate::learner::{GradedAnswer, LearnerEvent, Level};
@@ -259,11 +260,12 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             passed: result.passed,
             at: now,
         };
-        let journal = GradingJournal {
+        let mut journal = GradingJournal {
             session: claimed,
             graded,
             reviews,
             profiles: Vec::new(),
+            asked: None,
         };
 
         // What the reviews will do to the profiles as they are now; the
@@ -296,6 +298,17 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             }
         }
         let level_after = recorded.level_of(&place.primary_id).unwrap_or_default();
+        // Kept for feedback where the session's store may hold question
+        // text (ADR-0011 D1).
+        journal.asked = stores.feedback_store(&identity)?.is_some().then(|| {
+            AskedSession::new(
+                key.clone(),
+                place.learner.clone(),
+                now,
+                &questions,
+                &results,
+            )
+        });
         let outcome = SessionOutcome {
             grades: result.grades,
             passed: result.passed,

@@ -58,6 +58,8 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Rounds | `PrRounds` | delivery | The rounds of one pull request, oldest first. | |
 | Question bank | `BankedQuestion` | delivery | The questions Soqrates wrote, kept per concept so that later rounds can ask them again instead of writing new ones. Holds only checked, general questions without code from a change (ADR-0009). | question pool |
 | Seen questions | `SeenQuestions` | delivery | Which bank questions one learner was shown, and in which of their rounds, so none is shown twice within a few rounds (ADR-0009). Kept with the bank, never in the learner store. | |
+| Asked questions | `AskedSession` | delivery | The questions of one graded session as they were asked, with the author's answers, grades and the explanations shown, kept for feedback in the store of the author's sessions, never in the learner store. Never asked again (ADR-0011). | |
+| Question feedback | `QuestionFeedback` | delivery | What the author of a graded session said about one of its questions: a kind (disagree, unclear, wrong explanation, off-topic, good) and optional text. Never changes a grade (ADR-0011). | complaint, appeal |
 | Follow-up | `FollowUp` | delivery | A round of new questions on the same commit about the concepts a graded session got wrong (ADR-0010). Its session is keyed `…#2`, `#3`. | retry, retake |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
 | Hook | `HookKind` | delivery | A local git `pre-commit` or jj `pre-push` invocation. | |

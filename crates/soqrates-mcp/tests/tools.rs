@@ -345,3 +345,63 @@ async fn engine_errors_pass_through() {
         .await;
     assert!(matches!(r, Err(Error::NotFound(_))), "{r:?}");
 }
+
+// @adr-0011-d2
+#[tokio::test]
+async fn feedback_is_given_on_a_graded_question_by_id_or_number() {
+    let (app, mcp) = setup(3, false);
+    let started = mcp
+        .call_tool(
+            "start_session",
+            json!({"author": "github.com:1001", "diff": diff(&["rust.ownership", "rust.traits"])}),
+        )
+        .await
+        .unwrap();
+    let key = started["session_key"].as_str().unwrap().to_string();
+    let q2 = started["questions"][1]["id"].clone();
+    let early = mcp
+        .call_tool(
+            "give_feedback",
+            json!({"session_key": key, "question": 1, "kind": "good"}),
+        )
+        .await;
+    assert!(
+        matches!(early, Err(Error::NotFound(_))),
+        "not graded yet: {early:?}"
+    );
+    mcp.call_tool(
+        "submit_answers",
+        json!({"session_key": key, "answers": [{"question": q2, "choice": 0}]}),
+    )
+    .await
+    .unwrap();
+    let given = mcp
+        .call_tool(
+            "give_feedback",
+            json!({"session_key": key, "question": q2, "kind": "Disagree", "text": "a is right"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(given["question"], 2);
+    assert_eq!(given["kind"], "disagree");
+    assert!(!given["note"].as_str().unwrap().contains("a is right"));
+    let by_number = mcp
+        .call_tool(
+            "give_feedback",
+            json!({"session_key": key, "question": 1, "kind": "good"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(by_number["question"], 1);
+    let exported = app.export_questions(true).await.unwrap();
+    assert_eq!(exported[1]["feedback"][0]["text"], "a is right");
+    for args in [
+        json!({"session_key": key, "question": 3, "kind": "good"}),
+        json!({"session_key": key, "question": 1, "kind": "meh"}),
+        json!({"session_key": key, "question": true, "kind": "good"}),
+        json!({"session_key": key, "kind": "good"}),
+    ] {
+        let r = mcp.call_tool("give_feedback", args.clone()).await;
+        assert!(matches!(r, Err(Error::Invalid(_))), "{args}: {r:?}");
+    }
+}

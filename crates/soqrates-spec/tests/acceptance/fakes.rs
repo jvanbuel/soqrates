@@ -9,16 +9,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
+use soqrates_core::answer_command::{
+    Command, hints_due, parse_answers, parse_feedback, read_command, read_feedback,
+};
 use soqrates_core::ports::{
     BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, Doc, DocumentStore,
     EarlierSessions, Examiner, Frozen, Kind, Prompter, Removal, ScmProvider, Submission,
 };
 use soqrates_core::{
     Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
-    ConceptScope, Diff, Error, Grade, Grading, PrRef, PullRequest, Question, QuestionBody,
-    QuestionBrief, QuestionFormat, QuestionId, QuestionKind, Result, Session, SessionKey,
-    SessionOutcome, SnippetOrigin, Weight,
+    ConceptScope, Diff, Error, FeedbackCommand, FeedbackRequest, Grade, Grading, PrRef,
+    PullRequest, Question, QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind,
+    Result, Session, SessionKey, SessionOutcome, SnippetOrigin, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -533,6 +535,9 @@ pub struct ScmState {
     /// What the author saw happen on the pull request, in order: check
     /// summaries, reactions and results (ADR-0004 D9).
     pub timeline: Vec<String>,
+    /// Soqrates' answers to feedback comments: the comment id and the note
+    /// (ADR-0011 D2).
+    pub feedback_notes: Vec<(u64, String)>,
     /// The question comment of each session as last edited: the answers in
     /// its boxes and answer fields (ADR-0004 D3, D11).
     pub question_comments: HashMap<SessionKey, FakeQuestionComment>,
@@ -547,6 +552,9 @@ pub struct FakeComment {
     pub session: SessionKey,
     pub author: AuthorId,
     pub body: String,
+    /// How many results had been posted, on any pull request, when this
+    /// comment was: the results before it in the forge's order.
+    pub results_before: usize,
 }
 
 /// A question comment as someone edited it: the options ticked and the
@@ -686,12 +694,14 @@ impl FakeScm {
     pub fn comment(&self, pr: &PrRef, session: &SessionKey, author: &AuthorId, body: &str) -> u64 {
         let mut state = self.state.lock().unwrap();
         let id = state.comments.len() as u64 + 1;
+        let results_before = state.results.len();
         state.comments.push(FakeComment {
             id,
             pr: pr.clone(),
             session: session.clone(),
             author: author.clone(),
             body: body.to_string(),
+            results_before,
         });
         id
     }
@@ -978,6 +988,56 @@ impl ScmProvider for FakeScm {
         Ok(())
     }
 
+    /// The author's feedback comments not answered yet, each about the
+    /// session of the latest results posted on the pull request before it,
+    /// as the GitHub adapter reads them (ADR-0011 D2, D4).
+    async fn feedback_commands(
+        &self,
+        pr: &PrRef,
+        author: &AuthorId,
+    ) -> Result<Vec<FeedbackCommand>> {
+        let state = self.state.lock().unwrap();
+        let slug = state.app_slug.clone();
+        Ok(state
+            .comments
+            .iter()
+            .filter(|c| c.pr == *pr && c.author == *author)
+            .filter(|c| !state.feedback_notes.iter().any(|(id, _)| *id == c.id))
+            .filter_map(|c| {
+                let request = read_feedback(&c.body, slug.as_deref())?;
+                let session = state.results[..c.results_before]
+                    .iter()
+                    .rev()
+                    .find(|(p, _, _)| p == pr)
+                    .map(|(_, key, _)| key.clone());
+                Some(FeedbackCommand {
+                    source: format!("fake:{}", c.id),
+                    session,
+                    request,
+                })
+            })
+            .collect())
+    }
+
+    async fn answer_feedback(
+        &self,
+        _pr: &PrRef,
+        command: &FeedbackCommand,
+        note: &str,
+    ) -> Result<()> {
+        let id = command
+            .source
+            .strip_prefix("fake:")
+            .and_then(|id| id.parse().ok())
+            .expect("a fake feedback source");
+        self.state
+            .lock()
+            .unwrap()
+            .feedback_notes
+            .push((id, note.to_string()));
+        Ok(())
+    }
+
     async fn set_check(
         &self,
         pull: &PullRequest,
@@ -1006,6 +1066,11 @@ pub struct ScriptedPrompter {
     pub correct_from: Option<usize>,
     pub asked: Vec<Question>,
     pub reported: Vec<SessionOutcome>,
+    /// What the author types at the feedback prompt; Enter when `None`
+    /// (ADR-0011 D2).
+    pub feedback: Option<String>,
+    /// What the author was told about their feedback.
+    pub noted: Vec<String>,
 }
 
 impl Prompter for ScriptedPrompter {
@@ -1018,6 +1083,17 @@ impl Prompter for ScriptedPrompter {
 
     fn report(&mut self, outcome: &SessionOutcome) {
         self.reported.push(outcome.clone());
+    }
+
+    fn ask_feedback(&mut self, _outcome: &SessionOutcome) -> Result<Option<FeedbackRequest>> {
+        match self.feedback.take() {
+            None => Ok(None),
+            Some(line) => parse_feedback(&line).map(Some).map_err(Error::Invalid),
+        }
+    }
+
+    fn feedback_noted(&mut self, note: &str) {
+        self.noted.push(note.to_string());
     }
 }
 
@@ -1187,6 +1263,7 @@ fn save_method(kind: Kind) -> &'static str {
         Kind::Rounds => "save_rounds",
         Kind::Bank => "save_bank_question",
         Kind::Seen => "save_seen",
+        Kind::Asked => "save_asked",
     }
 }
 

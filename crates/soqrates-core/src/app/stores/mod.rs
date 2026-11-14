@@ -29,7 +29,9 @@ use std::future::Future;
 use serde::{Deserialize, Serialize};
 
 use crate::app::ports::{Clock, StateStore};
-use crate::delivery::{GradedSession, Session, StoreId};
+use crate::delivery::{
+    AskedQuestion, AskedSession, BankedQuestion, GradedSession, Session, StoreId,
+};
 use crate::ids::{AuthorId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile};
 use crate::{Error, Result};
@@ -205,6 +207,34 @@ impl<'a, S: StateStore, C: Clock> Access<'a, S, C> {
         }
     }
 
+    /// The store that keeps `identity`'s asked sessions and their feedback
+    /// (ADR-0011 D1): the organisation's store, or the single store of a
+    /// deployment without organisations. `None` for an identity outside
+    /// every organisation when there are organisation stores: the remaining
+    /// store is the learner store, which holds no question text.
+    pub fn feedback_store(&self, identity: &Identity) -> Result<Option<&'a S>> {
+        match self.org_store_for(identity)? {
+            Some(store) => Ok(Some(store)),
+            None if self.0.orgs.is_empty() => Ok(Some(self.0.learner)),
+            None => Ok(None),
+        }
+    }
+
+    /// Every store that may keep asked sessions (ADR-0011 D1).
+    pub fn feedback_stores(&self) -> Vec<&'a S> {
+        if self.0.orgs.is_empty() {
+            vec![self.0.learner]
+        } else {
+            self.0.orgs.values().collect()
+        }
+    }
+
+    /// The bank holding the bank questions asked from `store`'s sessions
+    /// (ADR-0009 D2): the shared bank if there is one, else `store`.
+    pub fn bank_of(&self, store: &'a S) -> &'a S {
+        self.0.shared_bank.unwrap_or(store)
+    }
+
     /// The store `id` names.
     pub fn by_id(&self, id: &StoreId) -> Result<&'a S> {
         match id {
@@ -349,6 +379,37 @@ impl<'a, S: StateStore, C: Clock> Access<'a, S, C> {
             .is_some())
     }
 
+    /// Note on the bank what the feedback kept in `asked` says about its
+    /// questions (ADR-0011 D6, D7). The asked session is saved first and the
+    /// bank follows, so this is also what repairs a bank write that failed
+    /// after the feedback was saved; doing it again changes nothing.
+    pub async fn sync_feedback(&self, store: &S, asked: &AskedSession) -> Result<()> {
+        for question in asked.questions() {
+            if question.feedback.is_empty() {
+                continue;
+            }
+            change_bank_entry(self.bank_of(store), question, |entry| {
+                asked.update_bank_entry(question, entry);
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// [`sync_feedback`](Self::sync_feedback) for every asked session in
+    /// every store that keeps them: a bank write that failed after its
+    /// feedback was saved, and was never retried, is made good here. It
+    /// reads every asked session, so it runs with the maintainer's
+    /// operations that read them all anyway, not with every recovery.
+    pub async fn sync_all_feedback(&self) -> Result<()> {
+        for store in self.feedback_stores() {
+            for asked in store.asked_sessions().await? {
+                self.sync_feedback(store, &asked).await?;
+            }
+        }
+        Ok(())
+    }
+
     // --- recovery ------------------------------------------------------------
 
     /// Finish every grading left behind, e.g. by a crash or a failed write
@@ -400,4 +461,30 @@ pub(in crate::app) fn opaque_id(text: &str) -> String {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{hash:016x}")
+}
+
+pub(in crate::app) async fn change_bank_entry<S: StateStore>(
+    bank: &S,
+    asked: &AskedQuestion,
+    change: impl Fn(&mut BankedQuestion),
+) -> Result<()> {
+    let Some(reference) = asked.bank() else {
+        return Ok(());
+    };
+    for _ in 0..100 {
+        let entries = bank.bank_questions(&asked.question.concept).await?;
+        let Some(previous) = entries.iter().find(|e| *e.id() == reference.id) else {
+            return Ok(());
+        };
+        let mut entry = previous.clone();
+        change(&mut entry);
+        if entry == *previous
+            || bank
+                .save_bank_question_if_current(&entry, Some(previous))
+                .await?
+        {
+            return Ok(());
+        }
+    }
+    Err(Error::Port("bank question kept changing".into()))
 }

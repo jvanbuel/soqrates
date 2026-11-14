@@ -4,6 +4,7 @@
 use crate::Result;
 use crate::app::engine::Soqrates;
 use crate::app::ports::{Clock, Examiner, StateStore};
+use crate::app::stores::change_bank_entry;
 use crate::app::stores::{Access, ProfileLocation};
 use crate::ids::{AuthorId, Identity, LearnerId};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode, LinkRejection};
@@ -93,6 +94,14 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             return Err(LinkRejection::BelongsToAnotherLearner(identity.clone()).into());
         }
         for store in stores.all() {
+            // Their asked sessions and feedback become the target's, before
+            // the learner is deleted with all that is theirs (ADR-0011 D4,
+            // D8): open disputes stay resolvable and on the bank.
+            for asked in store.asked_sessions().await? {
+                if *asked.learner() == other {
+                    store.save_asked(&asked.owned_by(target.clone())).await?;
+                }
+            }
             let a = store.load_profile(target).await?;
             let b = store.load_profile(&other).await?;
             if a.is_none() && b.is_none() {
@@ -169,6 +178,23 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let learner = stores
             .resolve_in(&author.identity()?, stores.learner_store())
             .await?;
+        // Their feedback no longer counts on the bank questions it was about
+        // (ADR-0011 D8); the stores delete the feedback itself.
+        for store in stores.all() {
+            for asked in store.asked_sessions().await? {
+                if *asked.learner() != learner {
+                    continue;
+                }
+                for q in asked.questions().iter().filter(|q| !q.feedback.is_empty()) {
+                    change_bank_entry(stores.bank_of(store), q, |entry| {
+                        for f in &q.feedback {
+                            entry.settle(&f.id);
+                        }
+                    })
+                    .await?;
+                }
+            }
+        }
         for store in stores.all_with_bank() {
             store.delete_learner(&learner).await?;
         }

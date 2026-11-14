@@ -78,6 +78,15 @@ impl<S: StateStore, C: Clock> Access<'_, S, C> {
             } else {
                 recorded = self.record_reviews(journal).await?;
             }
+            if let Some(asked) = &journal.asked {
+                // Where feedback reads it (ADR-0011 D1), which is not `store`
+                // for a session asked before its author's organisation got a
+                // store. Only if it isn't there yet: applying again must not
+                // undo feedback given since.
+                let identity = journal.session.author().identity()?;
+                let kept_in = self.feedback_store(&identity)?.unwrap_or(store);
+                kept_in.save_asked_if_current(asked, None).await?;
+            }
             store.delete_session(key).await?;
             store.save_graded(&journal.graded).await?;
         }

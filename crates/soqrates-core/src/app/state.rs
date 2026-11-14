@@ -9,7 +9,8 @@ use crate::Error;
 use crate::Result;
 use crate::app::ports::{Doc, DocumentStore, Kind, Removal, StateStore};
 use crate::delivery::{
-    BankedQuestion, GradedSession, GradingJournal, PrRef, PrRounds, SeenQuestions, Session,
+    AskedSession, BankedQuestion, GradedSession, GradingJournal, PrRef, PrRounds, SeenQuestions,
+    Session,
 };
 use crate::ids::{ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
@@ -55,7 +56,41 @@ async fn all<D: DocumentStore, T: DeserializeOwned>(
         .collect()
 }
 
+async fn compare_put<D: DocumentStore, T: Serialize + DeserializeOwned + PartialEq>(
+    d: &D,
+    kind: Kind,
+    key: &str,
+    value: &T,
+    expected: Option<&T>,
+) -> Result<bool> {
+    let stored = d.load(kind, key).await?;
+    let decoded = stored
+        .clone()
+        .map(|doc| decode::<T>(kind, key, doc))
+        .transpose()?;
+    if decoded.as_ref() != expected {
+        return Ok(false);
+    }
+    d.swap(kind, key, stored.as_ref(), &encode(kind, value)?)
+        .await
+}
+
 impl<D: DocumentStore> StateStore for D {
+    async fn save_bank_question_if_current(
+        &self,
+        value: &BankedQuestion,
+        expected: Option<&BankedQuestion>,
+    ) -> Result<bool> {
+        compare_put(self, Kind::Bank, &value.id().0, value, expected).await
+    }
+    async fn save_asked_if_current(
+        &self,
+        value: &AskedSession,
+        expected: Option<&AskedSession>,
+    ) -> Result<bool> {
+        compare_put(self, Kind::Asked, &value.key().0, value, expected).await
+    }
+
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
         get(self, Kind::Profile, &learner.0).await
     }
@@ -79,6 +114,7 @@ impl<D: DocumentStore> StateStore for D {
         self.remove(&[
             Removal::Group(Kind::Link, &learner.0),
             Removal::Key(Kind::Seen, &learner.0),
+            Removal::Group(Kind::Asked, &learner.0),
             Removal::Key(Kind::Profile, &learner.0),
         ])
         .await
@@ -159,6 +195,16 @@ impl<D: DocumentStore> StateStore for D {
     async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
         get(self, Kind::Seen, &learner.0).await
     }
+    async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
+        get(self, Kind::Asked, &key.0).await
+    }
+    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
+        put(self, Kind::Asked, &asked.key().0, asked).await
+    }
+    async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
+        all(self, Kind::Asked, None).await
+    }
+
     async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
         put(self, Kind::Seen, &seen.learner().0, seen).await
     }

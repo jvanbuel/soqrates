@@ -6,6 +6,7 @@
 //! soqrates ci                     # PR check in GitHub Actions
 //! soqrates mcp                    # MCP server over stdio
 //! soqrates identity ...           # manage linked identities (ADR-0003)
+//! soqrates questions ...          # export asked questions, resolve feedback (ADR-0011)
 //! soqrates install-hook           # install the git pre-commit hook
 //! ```
 
@@ -95,12 +96,43 @@ enum Command {
         #[command(subcommand)]
         command: IdentityCommand,
     },
+    /// The questions Soqrates asked, and the authors' feedback on them
+    /// (ADR-0011).
+    Questions {
+        #[command(subcommand)]
+        command: QuestionsCommand,
+    },
     /// Install `soqrates hook pre-commit` as this repository's git hook.
     InstallHook {
         /// Replace an existing pre-commit hook.
         #[arg(long)]
         force: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum QuestionsCommand {
+    /// Write every asked question as one JSON line to standard output.
+    Export {
+        /// Also write the author's answer, the grade and every feedback
+        /// entry, under a pseudonymous reviewer key.
+        #[arg(long)]
+        with_feedback: bool,
+    },
+    /// Accept or reject a feedback entry, by its id from the export.
+    /// Accepting a dispute retires its bank question; grades stay as they
+    /// are.
+    Resolve {
+        id: String,
+        #[arg(value_enum)]
+        verdict: Verdict,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Verdict {
+    Accept,
+    Reject,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -156,10 +188,46 @@ fn settings(cli: &Cli, project_root: Option<&std::path::Path>) -> Result<config:
     }))
 }
 
+/// Store commands cannot invoke a provider.
+struct StoreOnly;
+impl soqrates_core::ports::Examiner for StoreOnly {
+    async fn extract_concepts(
+        &self,
+        _: &soqrates_core::Diff,
+        _: &impl soqrates_core::ports::Codebase,
+    ) -> soqrates_core::Result<Vec<soqrates_core::Concept>> {
+        Err(soqrates_core::Error::Invalid("store-only command".into()))
+    }
+    async fn write_question(
+        &self,
+        _: &soqrates_core::Concept,
+        _: &soqrates_core::QuestionBrief,
+        _: &impl soqrates_core::ports::Codebase,
+    ) -> soqrates_core::Result<soqrates_core::Question> {
+        Err(soqrates_core::Error::Invalid("store-only command".into()))
+    }
+    async fn grade(
+        &self,
+        _: &soqrates_core::Question,
+        _: &soqrates_core::Answer,
+        _: &impl soqrates_core::ports::Codebase,
+    ) -> soqrates_core::Result<soqrates_core::Grading> {
+        Err(soqrates_core::Error::Invalid("store-only command".into()))
+    }
+}
+
 async fn build_app(cli: &Cli, settings: &config::File) -> Result<App, String> {
     let model = ModelSpec::parse(settings.model.as_deref().unwrap_or(DEFAULT_MODEL))
         .map_err(|e| e.to_string())?;
     let examiner = RigExaminer::new(model).map_err(|e| e.to_string())?;
+    build_with_examiner(cli, settings, examiner).await
+}
+
+async fn build_with_examiner<E: soqrates_core::ports::Examiner>(
+    cli: &Cli,
+    settings: &config::File,
+    examiner: E,
+) -> Result<Soqrates<Store, E, SystemClock>, String> {
     let defaults = soqrates_core::Config::default();
     let core = soqrates_core::Config {
         max_questions: settings.max_questions.unwrap_or(defaults.max_questions),
@@ -342,6 +410,36 @@ async fn run_identity(cli: &Cli, command: &IdentityCommand) -> Result<ExitCode, 
     Ok(ExitCode::SUCCESS)
 }
 
+async fn run_questions(cli: &Cli, command: &QuestionsCommand) -> Result<ExitCode, String> {
+    let settings = settings(cli, std::env::current_dir().ok().as_deref())?;
+    let app = build_with_examiner(cli, &settings, StoreOnly).await?;
+    let err = |e: soqrates_core::Error| e.to_string();
+    match command {
+        QuestionsCommand::Export { with_feedback } => {
+            use std::io::Write;
+            let mut out = std::io::stdout().lock();
+            for line in app.export_questions(*with_feedback).await.map_err(err)? {
+                writeln!(out, "{line}").map_err(|e| e.to_string())?;
+            }
+        }
+        QuestionsCommand::Resolve { id, verdict } => {
+            let accept = matches!(verdict, Verdict::Accept);
+            let (question, feedback) = app
+                .resolve_feedback(&soqrates_core::FeedbackId(id.clone()), accept)
+                .await
+                .map_err(err)?;
+            println!(
+                "soqrates: {} {} feedback {} on a question about {}.",
+                if accept { "accepted" } else { "rejected" },
+                feedback.kind.name(),
+                feedback.id.0,
+                question.question.concept.0
+            );
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// The installed git hook. It fails open: without `soqrates` on `PATH` (as
 /// in many IDE commits) it allows the commit (ADR-0001 D9).
 const HOOK_SCRIPT: &str = "#!/bin/sh\n\
@@ -390,6 +488,7 @@ async fn main() -> ExitCode {
             Err(e) => Err(e),
         },
         Command::Identity { command } => run_identity(&cli, command).await,
+        Command::Questions { command } => run_questions(&cli, command).await,
         Command::InstallHook { force } => install_hook(*force),
     };
     result.unwrap_or_else(|e| {
@@ -408,6 +507,8 @@ mod tests {
         Cli::try_parse_from(["soqrates", "ci", "--repo", "o/r", "--pr", "3"]).unwrap();
         Cli::try_parse_from(["soqrates", "--mode", "blocking", "mcp"]).unwrap();
         Cli::try_parse_from(["soqrates", "identity", "use", "github.com:1001"]).unwrap();
+        Cli::try_parse_from(["soqrates", "questions", "export", "--with-feedback"]).unwrap();
+        Cli::try_parse_from(["soqrates", "questions", "resolve", "fb-1", "accept"]).unwrap();
     }
 
     #[test]

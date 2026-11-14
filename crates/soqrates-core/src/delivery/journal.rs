@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::delivery::{GradedSession, Session};
+use crate::delivery::{AskedSession, GradedSession, Session};
 use crate::ids::{LearnerId, SessionKey};
 use crate::learner::{GradedAnswer, LearnerProfile};
 
@@ -44,6 +44,11 @@ pub struct GradingJournal {
     /// new journals leave this empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<(StoreId, LearnerProfile)>,
+    /// The session's questions with the answers, kept for feedback in the
+    /// store the journal is in (ADR-0011 D1). `None` where nothing may be
+    /// kept, and in journals written before feedback existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<AskedSession>,
 }
 
 impl GradingJournal {
@@ -104,6 +109,7 @@ mod tests {
                 StoreId::LearnerStore,
                 LearnerProfile::new(LearnerId("ada".into())),
             )],
+            asked: None,
         };
         let mut doc = serde_json::to_value(&old).unwrap();
         doc.as_object_mut().unwrap().remove("reviews");

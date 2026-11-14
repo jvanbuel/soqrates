@@ -8,6 +8,7 @@
 //! - `profiles`: a learner's profile and what is due on it
 //! - `compose`: choosing a session's questions and opening it
 //! - `grading`: grading a session through its journal, and where it is
+//! - `feedback`: feedback on the questions of graded sessions (ADR-0011)
 //! - `stores`: the learner and organisation stores, the fallback when the
 //!   learner store is unreachable, and recovery of interrupted gradings
 
@@ -15,6 +16,7 @@ pub mod ci;
 mod compose;
 pub mod engine;
 pub mod events;
+mod feedback;
 mod grading;
 pub mod hook;
 mod identities;

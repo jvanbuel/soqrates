@@ -183,34 +183,62 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         level: Level,
         code: &impl Codebase,
     ) -> Result<Question> {
-        let mut bank = store.bank_questions(&concept.id).await?;
         let gap = self.config.reask_after_rounds;
-        if let Some(i) = pick(&bank, brief, seen, round, gap, in_round) {
-            let entry = &mut bank[i];
-            // Asked as it is: the stored question, in this concept's scope.
+        for _ in 0..100 {
+            let bank = store.bank_questions(&concept.id).await?;
+            let Some(i) = pick(&bank, brief, seen, round, gap, in_round) else {
+                break;
+            };
+            let mut entry = bank[i].clone();
             let mut q = entry.take();
             q.scope = concept.scope;
-            store.save_bank_question(entry).await?;
-            seen.show(entry.id(), round);
-            return Ok(q);
-        }
-        let mut q = self.written(concept, brief, code).await?;
-        let Some(new) = BankedQuestion::new(&q, level, self.clock.now()) else {
-            return Ok(q);
-        };
-        // The same question written again is banked once.
-        let entry = match bank.iter_mut().find(|e| e.id() == new.id()) {
-            Some(existing) if existing.is_retired() => return Ok(q),
-            Some(existing) => {
-                existing.take();
-                existing.clone()
+            if store
+                .save_bank_question_if_current(&entry, Some(&bank[i]))
+                .await?
+            {
+                seen.show(entry.id(), round);
+                return Ok(q);
             }
-            None => new,
-        };
-        store.save_bank_question(&entry).await?;
-        seen.show(entry.id(), round);
-        q.banked = Some(entry.reference());
-        Ok(q)
+        }
+        // A question that was retired, or is disputed, is not asked again
+        // by being written again word for word (ADR-0011 D6, D7): another
+        // one is written instead.
+        const WRITES: usize = 3;
+        'write: for _ in 0..WRITES {
+            let mut q = self.written(concept, brief, code).await?;
+            let Some(new) = BankedQuestion::new(&q, level, self.clock.now()) else {
+                return Ok(q);
+            };
+            for _ in 0..100 {
+                let bank = store.bank_questions(&concept.id).await?;
+                // The same question written again is banked once.
+                let previous = bank.iter().find(|e| e.id() == new.id());
+                let entry = match previous {
+                    Some(existing) if existing.is_retired() || existing.is_disputed() => {
+                        continue 'write;
+                    }
+                    Some(existing) => {
+                        let mut entry = existing.clone();
+                        entry.take();
+                        entry
+                    }
+                    None => new.clone(),
+                };
+                if store
+                    .save_bank_question_if_current(&entry, previous)
+                    .await?
+                {
+                    seen.show(entry.id(), round);
+                    q.banked = Some(entry.reference());
+                    return Ok(q);
+                }
+            }
+            return Err(Error::Port("bank question kept changing".into()));
+        }
+        Err(Error::Port(format!(
+            "examiner: wrote a retired or disputed question about {:?} again",
+            concept.id.0
+        )))
     }
 
     /// Concepts `place`'s learner has a review card for, in either store,

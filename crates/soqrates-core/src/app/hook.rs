@@ -1,17 +1,19 @@
 //! The local hook workflow (ADR-0001 D9). Used by `soqrates hook pre-commit`
 //! (git) and `soqrates hook pre-push` (jj).
 
-use crate::Result;
 use crate::app::engine::Soqrates;
 use crate::app::ports::{Clock, Codebase, Examiner, Prompter, StateStore};
 use crate::assessment::Diff;
 use crate::delivery::{HookDecision, HookKind, Mode};
 use crate::ids::{AuthorId, SessionKey};
+use crate::{Error, Result};
 
 /// Quiz `author` about `diff` at the terminal and decide whether the commit
 /// or push may proceed. An empty diff asks nothing and allows. Wrong
 /// answers get follow-up rounds right away, and the final round decides
-/// (ADR-0010 D7).
+/// (ADR-0010 D7). After the results of the final round the author may give
+/// feedback on one of its questions, once (ADR-0011 D2); feedback never
+/// changes the decision.
 /// The examiner may read `code`, what is being committed or pushed
 /// (ADR-0008 D4).
 pub async fn run_hook<S, E, C, T>(
@@ -45,6 +47,18 @@ where
             None => break outcome,
         }
     };
+    // Best effort: a prompt or store that fails here must not block.
+    if let Ok(Some(request)) = prompter.ask_feedback(&outcome) {
+        let given = app
+            .give_feedback(Some(author), session.key(), &request, None)
+            .await;
+        let note = match given {
+            Ok(given) => given.note(),
+            Err(Error::Invalid(why)) => format!("This feedback was not recorded: {why}."),
+            Err(e) => format!("This feedback could not be recorded: {e}."),
+        };
+        prompter.feedback_noted(&note);
+    }
     Ok(match (outcome.passed, app.config.mode) {
         (false, Mode::Blocking) => HookDecision::Block,
         _ => HookDecision::Allow,

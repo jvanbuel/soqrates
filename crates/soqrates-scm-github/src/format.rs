@@ -4,9 +4,12 @@
 //! all of it is unit tested (ADR-0001 D12).
 
 use chrono::{DateTime, Utc};
-use soqrates_core::answer_command::{ANSWER_COMMAND, Command, read_command};
+use soqrates_core::answer_command::{
+    ANSWER_COMMAND, Command, FEEDBACK_COMMAND, read_command, read_feedback,
+};
 use soqrates_core::{
-    Answer, AnswerBody, CheckStatus, Question, QuestionBody, QuestionResult, Session, SessionKey,
+    Answer, AnswerBody, CheckStatus, FeedbackRequest, Question, QuestionBody, QuestionResult,
+    Session, SessionKey,
 };
 
 /// The commit status context Soqrates reports under.
@@ -801,20 +804,29 @@ pub fn render_results(
         }
         out.push('\n');
         let feedback = inline(&r.feedback);
-        if feedback.is_empty() {
-            continue;
-        }
-        if r.is_correct() {
+        if !feedback.is_empty() && r.is_correct() {
             out.push_str("<details>\n<summary>Why</summary>\n\n");
             out.push_str(&feedback);
             out.push_str("\n\n</details>\n\n");
-        } else {
+        } else if !feedback.is_empty() {
             out.push_str(&format!("**Why:** {feedback}\n\n"));
         }
+        out.push_str(&feedback_hint(i + 1));
+        out.push_str("\n\n");
     }
     out.truncate(out.trim_end().len());
     out.push('\n');
     out
+}
+
+/// The one-line hint under each question of the results (ADR-0011 D2):
+/// fixed text with the feedback command for question `n`.
+pub fn feedback_hint(n: usize) -> String {
+    format!(
+        "<sub>Disagree? Comment <code>{FEEDBACK_COMMAND} {n} disagree why</code>. \
+         Other kinds: <code>unclear</code>, <code>wrong-explanation</code>, \
+         <code>off-topic</code>, <code>good</code>.</sub>"
+    )
 }
 
 /// The question comment once graded (ADR-0004 D5): it says so, and the
@@ -1063,6 +1075,122 @@ pub fn render_hint(comment_id: u64, url: &str, app_slug: Option<&str>) -> String
     }
     out.push('\n');
     out
+}
+
+// ---------------------------------------------------------------------------
+// Feedback commands (ADR-0011 D2)
+
+const RESULTS_MARKER_START: &str = "<!-- soqrates:results=";
+const FEEDBACK_MARKER_START: &str = "<!-- soqrates:feedback=";
+
+/// The session key in the results marker a comment body starts with.
+pub fn results_key(body: &str) -> Option<SessionKey> {
+    let rest = body.trim_start().strip_prefix(RESULTS_MARKER_START)?;
+    let (key, _) = rest.split_once(MARKER_END)?;
+    (!key.is_empty() && !key.contains(char::is_whitespace)).then(|| SessionKey(key.to_string()))
+}
+
+/// The hidden marker of Soqrates' answer to the feedback comment
+/// `comment_id`.
+pub fn feedback_marker(comment_id: u64) -> String {
+    format!("{FEEDBACK_MARKER_START}{comment_id}{MARKER_END}")
+}
+
+/// The feedback comment id in the marker a comment body starts with.
+pub fn answered_feedback(body: &str) -> Option<u64> {
+    let rest = body.trim_start().strip_prefix(FEEDBACK_MARKER_START)?;
+    let (id, _) = rest.split_once(MARKER_END)?;
+    id.parse().ok()
+}
+
+/// Soqrates' answer to the feedback comment `comment_id` at `url`: `note`,
+/// Soqrates' own text, quoting nothing of the comment (ADR-0011 D5).
+pub fn render_feedback_note(comment_id: u64, url: &str, note: &str) -> String {
+    let comment = if is_plain_url(url) {
+        format!("[Your feedback]({url})")
+    } else {
+        "Your feedback".to_string()
+    };
+    format!(
+        "{}\n{comment}: {}\n",
+        feedback_marker(comment_id),
+        inline(note)
+    )
+}
+
+/// A comment as [`select_feedback`] reads it.
+#[derive(Debug, Clone)]
+pub struct ListedComment {
+    /// Account authenticated by the provider, never inferred from comment text.
+    pub trusted: bool,
+    pub id: u64,
+    /// The forge account that posted it.
+    pub user: u64,
+    /// Its author id, `host:account`.
+    pub author: String,
+    pub body: String,
+}
+
+/// A feedback comment to record: its id, the session of the results
+/// comment before it, and what it asks.
+pub type SelectedFeedback = (
+    u64,
+    Option<SessionKey>,
+    std::result::Result<FeedbackRequest, String>,
+);
+
+/// The feedback comments by `author_id` that Soqrates hasn't answered yet,
+/// oldest first (ADR-0011 D2, D4), each with the session of the latest
+/// results comment before it. A results comment counts only if it was
+/// posted by the account that posted that session's question comment, and
+/// an answer only if posted by such an account, so copying a marker into
+/// another comment changes nothing. `comments` are in the forge's order.
+pub fn select_feedback(
+    comments: &[ListedComment],
+    author_id: &str,
+    app_slug: Option<&str>,
+) -> Vec<SelectedFeedback> {
+    let poster_of = |key: &SessionKey| {
+        let marker = session_marker(key);
+        comments
+            .iter()
+            .find(|c| c.trusted && c.body.contains(&marker))
+            .map(|c| c.user)
+    };
+    let trusted_results: Vec<(usize, SessionKey)> = comments
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            let key = results_key(&c.body)?;
+            (poster_of(&key) == Some(c.user)).then_some((i, key))
+        })
+        .collect();
+    // The accounts that post Soqrates' question comments.
+    let posters: Vec<u64> = comments
+        .iter()
+        .filter(|c| c.trusted)
+        .filter_map(|c| marker_key(&c.body))
+        .filter_map(|key| poster_of(&key))
+        .collect();
+    let answered: Vec<u64> = comments
+        .iter()
+        .filter(|c| posters.contains(&c.user))
+        .filter_map(|c| answered_feedback(&c.body))
+        .collect();
+    comments
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.author == author_id && !answered.contains(&c.id))
+        .filter_map(|(i, c)| {
+            let request = read_feedback(&c.body, app_slug)?;
+            let session = trusted_results
+                .iter()
+                .rev()
+                .find(|(at, _)| *at < i)
+                .map(|(_, key)| key.clone());
+            Some((c.id, session, request))
+        })
+        .collect()
 }
 
 /// A GitHub App slug: lowercase letters, digits and dashes.
@@ -2843,6 +2971,62 @@ real answer
             true,
             &[]
         )));
+    }
+
+    // @adr-0011-d2 @adr-0011-d4 @adr-0011-d5
+    #[test]
+    fn feedback_comments_are_about_the_results_before_them_and_answered_once() {
+        let key = |k: &str| SessionKey(k.into());
+        let c = |id: u64, user: u64, body: String| ListedComment {
+            trusted: user == 99,
+            id,
+            user,
+            author: format!("github.com:{user}"),
+            body,
+        };
+        let bot = 99;
+        let comments = vec![
+            c(1, bot, render_questions(&session())),
+            c(2, 7, "/soqrates feedback 1 good".into()),
+            c(3, bot, render_results(&session(), &results(), true, None)),
+            c(
+                4,
+                7,
+                "/soqrates feedback 2 disagree <b>b</b> is right".into(),
+            ),
+            c(5, 8, "/soqrates feedback 1 unclear".into()),
+            // A copied marker by someone else is no results comment.
+            c(6, 8, results_marker(&key("other"))),
+            c(7, 7, "/socrates feedback 1 nonsense".into()),
+            c(8, bot, render_feedback_note(2, "https://x/2", "noted")),
+            c(9, 8, render_feedback_note(4, "https://x/4", "forged")),
+            c(10, 8, session_marker(&key("forged"))),
+            c(11, 8, results_marker(&key("forged"))),
+            c(12, 8, render_feedback_note(7, "https://x/7", "forged")),
+        ];
+        let selected = select_feedback(&comments, "github.com:7", None);
+        let ids: Vec<u64> = selected.iter().map(|(id, ..)| *id).collect();
+        assert_eq!(
+            ids,
+            [4, 7],
+            "answered and other people's comments are left out"
+        );
+        assert_eq!(selected[0].1, Some(session().key().clone()));
+        assert!(selected[0].2.is_ok());
+        assert!(selected[1].2.is_err());
+        // Before any results comment, the command is about no session.
+        let early = select_feedback(&comments[..2], "github.com:7", None);
+        assert_eq!(early, vec![(2, None, early[0].2.clone())]);
+        // The note quotes nothing and uses allowed tags only.
+        let note = render_feedback_note(4, "https://x/4", "Thanks: <b>noted</b> @here");
+        assert_eq!(answered_feedback(&note), Some(4));
+        assert!(!note.contains("<b>") && !note.contains("@here"), "{note}");
+        assert!(feedback_hint(2).contains("/soqrates feedback 2 disagree"));
+        let results = render_results(&session(), &results(), true, None);
+        assert!(results.contains(&feedback_hint(1)), "{results}");
+        for tag in tags(&results).iter().chain(&tags(&note)) {
+            assert!(ALLOWED_TAGS.contains(&tag.as_str()), "{tag}");
+        }
     }
 
     // @adr-0004-d7

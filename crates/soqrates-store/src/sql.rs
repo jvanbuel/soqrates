@@ -66,6 +66,13 @@ const SCHEMA: &[&str] = &[
         learner TEXT PRIMARY KEY,
         doc TEXT NOT NULL
     )",
+    // Asked questions kept for feedback, also within version 1 (ADR-0011 D1).
+    "CREATE TABLE IF NOT EXISTS soqrates_asked (
+        session_key TEXT PRIMARY KEY,
+        learner TEXT NOT NULL,
+        doc TEXT NOT NULL
+    )",
+    "CREATE INDEX IF NOT EXISTS soqrates_asked_by_learner ON soqrates_asked (learner)",
 ];
 
 /// Serialises schema creation between processes sharing one PostgreSQL
@@ -115,6 +122,7 @@ fn table(kind: Kind) -> Table {
         Kind::Rounds => ("soqrates_rounds", "pr", None),
         Kind::Bank => ("soqrates_bank", "id", Some("concept")),
         Kind::Seen => ("soqrates_seen", "learner", None),
+        Kind::Asked => ("soqrates_asked", "session_key", Some("learner")),
     };
     Table { name, key, group }
 }
@@ -299,6 +307,7 @@ impl SqlStore {
             "soqrates_rounds",
             "soqrates_bank",
             "soqrates_seen",
+            "soqrates_asked",
         ] {
             sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
                 .execute(&self.pool)
