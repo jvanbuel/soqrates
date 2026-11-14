@@ -83,7 +83,13 @@ pub struct FakeExaminer {
     reads: Arc<Mutex<Vec<(ExaminerStep, String)>>>,
     /// The concept of every `write_question` call, in order.
     writes: Arc<Mutex<Vec<ConceptId>>>,
+    /// Every follow-up written (ADR-0010 D1): the question it follows and
+    /// the author's answer to it.
+    follow_ups: Arc<Mutex<Vec<FollowedUp>>>,
 }
+
+/// A question a follow-up was written for, and the author's answer to it.
+pub type FollowedUp = (Question, Option<Answer>);
 
 /// The file the [`FakeExaminer`] reads from every codebase it is given.
 pub const PROBE_FILE: &str = "src/lib.rs";
@@ -101,6 +107,7 @@ impl Default for FakeExaminer {
         Self {
             reads: Arc::default(),
             writes: Arc::default(),
+            follow_ups: Arc::default(),
             correct_grade: Arc::new(Mutex::new(Grade::Good)),
             scopes: Arc::new(Mutex::new(HashMap::new())),
             weights: Arc::new(Mutex::new(HashMap::new())),
@@ -113,6 +120,12 @@ impl FakeExaminer {
     /// What each step read from its codebase, in order (ADR-0008 D2).
     pub fn reads(&self) -> Vec<(ExaminerStep, String)> {
         self.reads.lock().unwrap().clone()
+    }
+
+    /// Every follow-up written so far: the question it follows and the
+    /// author's answer to it (ADR-0010 D1).
+    pub fn follow_ups(&self) -> Vec<FollowedUp> {
+        self.follow_ups.lock().unwrap().clone()
     }
 
     /// Read [`PROBE_FILE`] from `code`, if there is any code, as `step`.
@@ -301,6 +314,34 @@ impl Examiner for FakeExaminer {
             checked: true,
             banked: None,
         })
+    }
+
+    /// A question as [`Examiner::write_question`] writes it, with an id and
+    /// prompt of its own: `<previous id>+`, and a prompt naming it, so it
+    /// never repeats `previous` (ADR-0010 D1).
+    async fn write_follow_up(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        previous: &Question,
+        answer: Option<&Answer>,
+        codebase: &impl Codebase,
+    ) -> Result<Question> {
+        self.follow_ups
+            .lock()
+            .unwrap()
+            .push((previous.clone(), answer.cloned()));
+        let mut q = self.write_question(concept, brief, codebase).await?;
+        q.id = QuestionId(format!("{}+", previous.id.0));
+        let prompt = format!(
+            "Follow-up {}: which other statement about {} is true?",
+            q.id.0, concept.title
+        );
+        match &mut q.body {
+            QuestionBody::MultipleChoice { prompt: p, .. }
+            | QuestionBody::Open { prompt: p, .. } => *p = prompt,
+        }
+        Ok(q)
     }
 
     async fn grade(
@@ -492,6 +533,9 @@ pub struct ScmState {
     /// What the author saw happen on the pull request, in order: check
     /// summaries, reactions and results (ADR-0004 D9).
     pub timeline: Vec<String>,
+    /// The question comment of each session as last edited: the answers in
+    /// its boxes and answer fields (ADR-0004 D3, D11).
+    pub question_comments: HashMap<SessionKey, FakeQuestionComment>,
 }
 
 /// A comment on a pull request, posted after the question comment of
@@ -505,11 +549,23 @@ pub struct FakeComment {
     pub body: String,
 }
 
+/// A question comment as someone edited it: the options ticked and the
+/// open answers typed into its answer fields, whether "Grade my answers" is
+/// ticked, and who edited it last (ADR-0004 D3, D11).
+#[derive(Debug, Clone)]
+pub struct FakeQuestionComment {
+    pub answers: Vec<Answer>,
+    pub done: bool,
+    pub editor: AuthorId,
+}
+
 /// What submitted a session's answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Submitter {
-    /// Answers given with [`FakeScm::reply`], e.g. by ticking boxes.
+    /// Answers given with [`FakeScm::reply`].
     Reply,
+    /// The question comment, by ticking "Grade my answers" (ADR-0004 D11).
+    QuestionComment,
     /// The comment with this id.
     Comment(u64),
 }
@@ -638,6 +694,27 @@ impl FakeScm {
             body: body.to_string(),
         });
         id
+    }
+
+    /// Edit the question comment of `session` as `by`: tick options and
+    /// type open answers into the answer fields (`answers`), and tick
+    /// "Grade my answers" if `done` (ADR-0004 D11). `by` becomes its last
+    /// editor.
+    pub fn edit_question_comment(
+        &self,
+        session: &SessionKey,
+        by: &AuthorId,
+        answers: Vec<Answer>,
+        done: bool,
+    ) {
+        self.state.lock().unwrap().question_comments.insert(
+            session.clone(),
+            FakeQuestionComment {
+                answers,
+                done,
+                editor: by.clone(),
+            },
+        );
     }
 
     /// Replace the body of the comment `id`, as an edit does.
@@ -798,10 +875,12 @@ impl ScmProvider for FakeScm {
         Ok(done)
     }
 
-    /// The structured answers given with [`FakeScm::reply`], else the
-    /// latest answer comment of the author, read as the GitHub adapter
-    /// reads it (ADR-0004 D8). Also hints at the author's near-miss
-    /// commands, once each.
+    /// The structured answers given with [`FakeScm::reply`], else those of
+    /// the latest answer comment of the author, read as the GitHub adapter
+    /// reads it (ADR-0004 D8), and of the question comment, if the author
+    /// edited it last (D3, D11). Per question, the answer comment wins. They
+    /// are submitted by the answer comment or by "Grade my answers". Also
+    /// hints at the author's near-miss commands, once each.
     async fn collect_answers(
         &self,
         pr: &PrRef,
@@ -838,13 +917,29 @@ impl ScmProvider for FakeScm {
                     parse_answers(&c.body, session.questions(), slug.as_deref()),
                 )
             });
-        Ok(match found {
-            Some((id, Some(answers))) => Some(Submission {
-                answers,
-                receipt: Submitter::Comment(id),
-            }),
+        let from_comment = match found {
+            Some((id, Some(answers))) => Some((id, answers)),
             _ => None,
-        })
+        };
+        let in_place = state
+            .question_comments
+            .get(session.key())
+            .filter(|q| q.editor == *session.author())
+            .cloned();
+        let done = in_place.as_ref().is_some_and(|q| q.done);
+        let (receipt, mut answers) = match from_comment {
+            Some((id, answers)) => (Submitter::Comment(id), answers),
+            None if done => (Submitter::QuestionComment, Vec::new()),
+            None => return Ok(None),
+        };
+        for a in in_place.map(|q| q.answers).unwrap_or_default() {
+            if !answers.iter().any(|b| b.question == a.question) {
+                answers.push(a);
+            }
+        }
+        let position = |a: &Answer| session.questions().iter().position(|q| q.id == a.question);
+        answers.sort_by_key(position);
+        Ok(Some(Submission { answers, receipt }))
     }
 
     async fn acknowledge_answers(
@@ -906,14 +1001,19 @@ impl ScmProvider for FakeScm {
 #[derive(Debug, Default)]
 pub struct ScriptedPrompter {
     pub answer_correctly: bool,
+    /// Answer correctly from this many questions on, whatever
+    /// `answer_correctly` says, e.g. in a follow-up round (ADR-0010 D7).
+    pub correct_from: Option<usize>,
     pub asked: Vec<Question>,
     pub reported: Vec<SessionOutcome>,
 }
 
 impl Prompter for ScriptedPrompter {
     fn ask(&mut self, question: &Question) -> Result<Answer> {
+        let correct =
+            self.answer_correctly || self.correct_from.is_some_and(|n| self.asked.len() >= n);
         self.asked.push(question.clone());
-        Ok(FakeExaminer::answer(question, self.answer_correctly))
+        Ok(FakeExaminer::answer(question, correct))
     }
 
     fn report(&mut self, outcome: &SessionOutcome) {

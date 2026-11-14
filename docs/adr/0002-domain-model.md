@@ -39,7 +39,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Question | `Question` | assessment | A question about one concept, in one format. | exercise |
 | Format | `QuestionFormat` | assessment | Multiple choice or open. | |
 | Kind | `QuestionKind` | assessment | What a question asks of the author, e.g. predict an outcome or explain their change (ADR-0007). Separate from the format. | |
-| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and at most 15 lines, from the change or written by the examiner (ADR-0007). | |
+| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and about 15 lines (at most 20), from the change or written by the examiner (ADR-0007). | |
 | Hunk | `Hunk` | assessment | A contiguous piece of a change in one file, as it is after the change. | |
 | Brief | `QuestionBrief` | assessment | What the examiner is asked to write for one concept: the format, the kinds allowed and the hunks (ADR-0007). | |
 | Answer | `Answer` | assessment | The author's response to a question. | reply |
@@ -58,6 +58,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Rounds | `PrRounds` | delivery | The rounds of one pull request, oldest first. | |
 | Question bank | `BankedQuestion` | delivery | The questions Soqrates wrote, kept per concept so that later rounds can ask them again instead of writing new ones. Holds only checked, general questions without code from a change (ADR-0009). | question pool |
 | Seen questions | `SeenQuestions` | delivery | Which bank questions one learner was shown, and in which of their rounds, so none is shown twice within a few rounds (ADR-0009). Kept with the bank, never in the learner store. | |
+| Follow-up | `FollowUp` | delivery | A round of new questions on the same commit about the concepts a graded session got wrong (ADR-0010). Its session is keyed `…#2`, `#3`. | retry, retake |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
 | Hook | `HookKind` | delivery | A local git `pre-commit` or jj `pre-push` invocation. | |
 | Mode | `Mode` | delivery | Advisory (never blocks) or Blocking. | |
@@ -182,6 +183,10 @@ The kind of each question is chosen by the examiner, steered by the level
   already-graded session fails with `NotFound` (gap G7).
 - A session passes if the fraction of correct grades is at least
   `pass_threshold`. An empty session passes.
+- *Amended by [ADR-0010](0010-follow-up-rounds.md):* a session is graded
+  once, but a commit is not final: its wrong answers get a follow-up round,
+  a new session keyed `…#2`. A follow-up passes on the first round's
+  concepts, each counted with its latest answer, and records no reviews.
 
 How "at most once" is achieved: grading is written ahead, in a grading
 journal kept with the session.

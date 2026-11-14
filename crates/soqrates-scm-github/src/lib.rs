@@ -2,15 +2,17 @@
 //! depend on `octocrab`.
 //!
 //! Questions are posted as one PR comment carrying a hidden session marker.
-//! The author answers multiple choice by ticking boxes in it and submits by
-//! ticking "Grade my answers", or answers with a `/soqrates answer` comment
-//! (ADR-0001 D8, ADR-0004 D3). The command is read forgivingly (`/socrates`,
-//! any case, or `@<app slug> answer`), and a mistyped one gets a hint
-//! (ADR-0004 D8). Boxes count only when GraphQL reports the PR
+//! The author answers multiple choice by ticking boxes in it, open questions
+//! by typing into their answer fields in it, and submits by ticking "Grade
+//! my answers"; or answers with a `/soqrates answer` comment (ADR-0001 D8,
+//! ADR-0004 D3, D11). The command is read forgivingly (`/socrates`, any
+//! case, or `@<app slug> answer`), and a mistyped one gets a hint (ADR-0004
+//! D8). Boxes and answer fields count only when GraphQL reports the PR
 //! author as the comment's last editor. The comment that submitted the
 //! answers gets a 👀 reaction while they are graded, then a 👍 (ADR-0004
-//! D9). Results are posted as a new comment, saying which answer comment
-//! and boxes were read, and the question comment is frozen (ADR-0004 D5). A newer push freezes
+//! D9). Results are posted as a new comment, saying which answer comment,
+//! boxes and fields were read, and the question comment is frozen (ADR-0004
+//! D5). A newer push freezes
 //! the earlier question comments that were never graded (D7). The
 //! check is reported as a commit status with context `soqrates`, which works
 //! with the Actions `GITHUB_TOKEN` given `statuses: write`. Authors are
@@ -29,9 +31,9 @@ use soqrates_core::{
 };
 
 use crate::format::{
-    AnswerComment, AnswerSource, EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id, boxes_read,
+    AnswerComment, AnswerSource, EDITOR_QUERY, STATUS_CONTEXT, StatusState, author_id,
     comments_to_freeze, commit_status, diff_of_files, editor_database_id, graphql_base,
-    hinted_comment, host_of, is_slug, merge_answers, parse_checkboxes, render_graded_questions,
+    hinted_comment, host_of, is_slug, merge_answers, parse_in_place, render_graded_questions,
     render_hint, render_questions, render_results, render_superseded_questions,
     select_answer_comment, session_marker, split_repo, superseded_keys,
 };
@@ -396,17 +398,25 @@ impl ScmProvider for GitHubProvider {
             }
             let frozen = async {
                 let session = sessions.pending(&key).await?;
-                let body = render_superseded_questions(
-                    &key,
-                    session.as_ref(),
-                    Some(ours.html_url.as_str()),
-                    !current.questions().is_empty(),
-                );
                 for i in comments_to_freeze(&listed, poster, &key) {
+                    // Text left in the answer fields is kept, shown inert,
+                    // so the author can reuse it when the question is asked
+                    // again (ADR-0004 D11).
+                    let drafts = session
+                        .as_ref()
+                        .map(|s| parse_in_place(listed[i].1, s.questions()).fields)
+                        .unwrap_or_default();
+                    let body = render_superseded_questions(
+                        &key,
+                        session.as_ref(),
+                        Some(ours.html_url.as_str()),
+                        !current.questions().is_empty(),
+                        &drafts,
+                    );
                     self.edit_comment(
                         pr,
                         comments[i].id.into_inner(),
-                        body.clone(),
+                        body,
                         "mark question comment superseded",
                     )
                     .await?;
@@ -460,10 +470,10 @@ impl ScmProvider for GitHubProvider {
             )
         });
 
-        // Boxes count only if the PR author made the last edit (ADR-0004
-        // D3). Ask GraphQL only when the boxes could matter: something is
-        // ticked, and the author has submitted.
-        let boxes = parse_checkboxes(
+        // Boxes and answer fields count only if the PR author made the last
+        // edit (ADR-0004 D3, D11). Ask GraphQL only when they could matter:
+        // something is ticked or typed, and the author has submitted.
+        let boxes = parse_in_place(
             question.body.as_deref().unwrap_or_default(),
             session.questions(),
         );
@@ -473,14 +483,16 @@ impl ScmProvider for GitHubProvider {
         } else {
             None
         };
-        let source = AnswerSource {
-            comment: answer_comment.map(|c| AnswerComment {
+        let source = AnswerSource::read(
+            session.questions(),
+            answer_comment.map(|c| AnswerComment {
                 url: c.html_url.to_string(),
                 created_at: c.created_at,
                 updated_at: c.updated_at,
             }),
-            boxes: boxes_read(session.questions(), boxes.as_ref(), from_comment.as_deref()),
-        };
+            from_comment.as_deref(),
+            boxes.as_ref(),
+        );
         let answers = merge_answers(session.questions(), boxes.as_ref(), from_comment);
         // The comment that submitted: the answer comment, else the question
         // comment, whose "Grade my answers" box was ticked.

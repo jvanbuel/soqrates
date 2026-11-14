@@ -1,5 +1,5 @@
 //! Pure logic of the GitHub adapter: rendering the question, graded and
-//! results comments, reading the author's answers from boxes and comments,
+//! results comments, reading the author's answers from boxes, answer fields and comments,
 //! and mapping check statuses (ADR-0004). No I/O, so
 //! all of it is unit tested (ADR-0001 D12).
 
@@ -287,38 +287,145 @@ fn option_item(index: usize, option: &str, language: Option<&str>, bold: bool) -
     }
 }
 
-/// The lines of `body` outside fenced code blocks opened with backticks,
-/// fence lines excluded, as GitHub's markdown sees them. Only the renderer
-/// opens such blocks (prose has its backticks escaped), so this is how
-/// reading a comment ignores the code in it (ADR-0007 D5).
-fn outside_fences(body: &str) -> Vec<&str> {
-    let mut open: Option<usize> = None;
-    let mut out = Vec::new();
-    for line in body.lines() {
+// ---------------------------------------------------------------------------
+// Answer fields (ADR-0004 D11)
+
+/// The hidden line that starts the answer field of a question, followed by
+/// its 1-based number and [`MARKER_END`].
+const FIELD_START: &str = "<!-- soqrates:answer=";
+/// The hidden line that ends it, likewise.
+const FIELD_END: &str = "<!-- soqrates:answer-end=";
+
+/// The marker line `prefix` `n` [`MARKER_END`].
+fn field_marker(prefix: &str, n: usize) -> String {
+    format!("{prefix}{n}{MARKER_END}")
+}
+
+/// The number in a field marker line starting with `prefix`, if `line` is
+/// one (leading and trailing whitespace allowed).
+fn field_number(line: &str, prefix: &str) -> Option<usize> {
+    let rest = line.trim().strip_prefix(prefix)?.strip_suffix(MARKER_END)?;
+    (!rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+        .then(|| rest.parse().ok())
+        .flatten()
+}
+
+/// A question comment split into what Soqrates reads from it.
+struct Scanned<'a> {
+    /// The lines outside fenced code blocks opened with backticks or tildes and
+    /// outside answer fields, fence lines and field markers excluded.
+    outside: Vec<&'a str>,
+    /// The answer fields: the number in their markers and the lines between
+    /// them, in order.
+    fields: Vec<(usize, Vec<&'a str>)>,
+}
+
+/// Split `body` as GitHub's markdown sees it. Only the renderer opens fenced
+/// blocks outside answer fields (prose has its backticks escaped), so this
+/// is how reading a comment ignores the code in it (ADR-0007 D5).
+///
+/// A field starts at a start marker line outside code and ends at the first
+/// end marker line with the same number. Everything between the two is the
+/// author's text, fences and markers included, so nothing typed there can
+/// tick a box, start a question or hide the rest of the comment (ADR-0004
+/// D11). A start marker without its end marker starts no field.
+fn scan_comment(body: &str) -> Scanned<'_> {
+    let lines: Vec<&str> = body.lines().collect();
+    let mut scanned = Scanned {
+        outside: Vec::new(),
+        fields: Vec::new(),
+    };
+    let mut open: Option<(char, usize)> = None;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        i += 1;
         let trimmed = line.trim_start();
-        let run = trimmed.chars().take_while(|&c| c == '`').count();
+        let fence = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'));
+        let run = trimmed.chars().take_while(|&c| Some(c) == fence).count();
         match open {
-            Some(n) if run >= n && trimmed[run..].trim().is_empty() => open = None,
+            Some((c, n)) if fence == Some(c) && run >= n && trimmed[run..].trim().is_empty() => {
+                open = None;
+            }
             Some(_) => {}
-            None if run >= 3 => open = Some(run),
-            None => out.push(line),
+            None if run >= 3 => open = fence.map(|c| (c, run)),
+            None => {
+                let Some(n) = field_number(line, FIELD_START) else {
+                    scanned.outside.push(line);
+                    continue;
+                };
+                if let Some(len) = lines[i..]
+                    .iter()
+                    .position(|l| field_number(l, FIELD_END) == Some(n))
+                {
+                    scanned.fields.push((n, lines[i..i + len].to_vec()));
+                    i += len + 1;
+                }
+            }
         }
     }
-    out
+    scanned
+}
+
+/// The lines of `body` that make up its structure, as Soqrates reads it:
+/// outside fenced code and outside answer fields (see [`scan_comment`]).
+fn structure_lines(body: &str) -> Vec<&str> {
+    scan_comment(body).outside
+}
+
+/// The text in the answer field of each question of a question comment, in
+/// question order: `None` for a multiple-choice question, and for a field
+/// that is missing or blank. If a question has more than one field, the
+/// first counts.
+fn parse_fields(body: &str, questions: &[Question]) -> Vec<Option<String>> {
+    let mut fields: Vec<Option<String>> = vec![None; questions.len()];
+    let mut seen = vec![false; questions.len()];
+    for (n, lines) in scan_comment(body).fields {
+        let Some(i) = n.checked_sub(1).filter(|i| *i < questions.len()) else {
+            continue;
+        };
+        if std::mem::replace(&mut seen[i], true) {
+            continue;
+        }
+        if !matches!(questions[i].body, QuestionBody::Open { .. }) {
+            continue;
+        }
+        let text = lines.join("\n");
+        let text = text.trim();
+        fields[i] = (!text.is_empty()).then(|| text.to_string());
+    }
+    fields
+}
+
+/// The empty answer field of question `n`, with the line that says how to
+/// fill it.
+fn push_field(n: usize, out: &mut String) {
+    out.push_str(&format!(
+        "_Open question: edit this comment and write your answer in your own \
+         words below this line, between `soqrates:answer={n}` and \
+         `soqrates:answer-end={n}`._\n\n"
+    ));
+    out.push_str(&field_marker(FIELD_START, n));
+    out.push_str("\n\n");
+    out.push_str(&field_marker(FIELD_END, n));
+    out.push_str("\n\n");
 }
 
 const HOW_TO_ANSWER: &str = "<details>
 <summary>How to answer</summary>
 
-- **Multiple choice:** tick the box of one option per question, then tick \
-**Grade my answers**.
-- **Open questions:** reply to this pull request with a comment that starts \
-with `/soqrates answer`, followed by one line per question: its number, then \
-your answer. An answer may span several lines. Posting this comment submits \
-all your answers, ticked boxes included, so tick them first.
-- **Can't tick the boxes?** If you can't edit this comment, answer the \
-multiple-choice questions in the same comment with the letter of an option. \
-A letter in the comment replaces the boxes of that question.
+- **Multiple choice:** tick the box of one option per question.
+- **Open questions:** edit this comment (**…** → **Edit**) and write your \
+answer under the question, between the `soqrates:answer` and \
+`soqrates:answer-end` lines. Keep those two lines, and save.
+- **Then tick Grade my answers.** It submits everything in this comment at \
+once, so tick it last.
+- **Can't edit this comment?** Reply to this pull request with a comment \
+that starts with `/soqrates answer`, followed by one line per question: its \
+number, then your answer (the letter of an option for multiple choice). An \
+answer may span several lines. Posting it submits all your answers, ticked \
+boxes and answer fields included. An answer in the comment replaces the \
+boxes or the answer field of that question.
 
 ```
 /soqrates answer
@@ -326,18 +433,19 @@ A letter in the comment replaces the boxes of that question.
 2. Your answer in your own words
 ```
 
-Only answers from the author of this pull request count: boxes ticked by \
-anyone else are ignored. Until your answers are graded, you can still edit \
-your answer comment, and a newer answer comment replaces an earlier one. \
-After grading, answers for this commit are final; a new push asks new \
-questions.
+Only answers from the author of this pull request count: if anyone else \
+edited this comment last, its boxes and answer fields are ignored. Until \
+your answers are graded, you can still edit your answer comment, and a \
+newer answer comment replaces an earlier one. After grading, answers for \
+this commit are final; a new push asks new questions.
 
 </details>
 ";
 
 /// The Markdown comment putting the session's questions to the author
-/// (ADR-0004 D3, D4). Multiple-choice options are task-list boxes, followed
-/// by the "Grade my answers" box. It never contains the correct option, the
+/// (ADR-0004 D3, D4, D11). Multiple-choice options are task-list boxes, each
+/// open question has an empty answer field, and the "Grade my answers" box
+/// comes last. It never contains the correct option, the
 /// rubric or the explanation. A session without questions gets a short note
 /// with no boxes, which earlier question comments can link to (ADR-0004 D7).
 pub fn render_questions(session: &Session) -> String {
@@ -353,11 +461,20 @@ pub fn render_questions(session: &Session) -> String {
         );
         return out;
     }
-    out.push_str(
-        "> **Soqrates learning check.** A few questions about the concepts in \
-         this change, to help you learn and remember them. It is advisory, not a \
-         code review.\n\n",
-    );
+    if session.follow_up().is_some() {
+        // A follow-up round (ADR-0010 D6).
+        out.push_str(
+            "> **Soqrates follow-up.** A new question about each concept answered \
+             wrongly above, now that you have read why. It is advisory, not a code \
+             review.\n\n",
+        );
+    } else {
+        out.push_str(
+            "> **Soqrates learning check.** A few questions about the concepts in \
+             this change, to help you learn and remember them. It is advisory, not a \
+             code review.\n\n",
+        );
+    }
     for (i, q) in questions.iter().enumerate() {
         out.push_str(&question_heading(i + 1, total));
         out.push_str("\n\n");
@@ -375,12 +492,7 @@ pub fn render_questions(session: &Session) -> String {
                 }
                 out.push('\n');
             }
-            QuestionBody::Open { .. } => {
-                out.push_str(
-                    "_Open question: answer it in your own words in a \
-                     `/soqrates answer` comment._\n\n",
-                );
-            }
+            QuestionBody::Open { .. } => push_field(i + 1, &mut out),
         }
     }
     out.push_str("---\n\n");
@@ -390,7 +502,7 @@ pub fn render_questions(session: &Session) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Reading the boxes (ADR-0004 D3)
+// Reading the boxes and answer fields (ADR-0004 D3, D11)
 
 /// The ticked options of one multiple-choice question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,20 +512,26 @@ pub enum Ticked {
     Many,
 }
 
-/// The state of the boxes in a question comment.
+/// The answers given in the question comment itself: its boxes and its
+/// answer fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Checkboxes {
+pub struct InPlaceAnswers {
     /// Whether "Grade my answers" is ticked.
     pub done: bool,
     /// Per question, in question order; always `Ticked::None` for open
     /// questions.
     pub ticked: Vec<Ticked>,
+    /// The text in each question's answer field, in question order; always
+    /// `None` for multiple-choice questions (ADR-0004 D11).
+    pub fields: Vec<Option<String>>,
 }
 
-impl Checkboxes {
-    /// Whether any box at all is ticked.
+impl InPlaceAnswers {
+    /// Whether any box at all is ticked, or any answer field filled in.
     pub fn any(&self) -> bool {
-        self.done || self.ticked.iter().any(|t| *t != Ticked::None)
+        self.done
+            || self.ticked.iter().any(|t| *t != Ticked::None)
+            || self.fields.iter().any(Option::is_some)
     }
 }
 
@@ -445,19 +563,22 @@ fn heading_number(line: &str) -> Option<usize> {
     digits.parse().ok()
 }
 
-/// Read the boxes of a question comment rendered by [`render_questions`].
-/// A box belongs to the question whose section it is in, and an option is
-/// identified by its position in that section, never by its text. The
-/// "How to answer" section and anything after it are ignored, and so is
-/// everything inside fenced code blocks (ADR-0007 D5).
-pub fn parse_checkboxes(body: &str, questions: &[Question]) -> Checkboxes {
-    let mut boxes = Checkboxes {
+/// Read the boxes and answer fields of a question comment rendered by
+/// [`render_questions`]. A box belongs to the question whose section it is
+/// in, and an option is identified by its position in that section, never
+/// by its text. A field belongs to the question numbered in its markers.
+/// The "How to answer" section and anything after it are ignored, and so is
+/// everything inside fenced code blocks (ADR-0007 D5) and, for boxes,
+/// everything typed into answer fields (ADR-0004 D11).
+pub fn parse_in_place(body: &str, questions: &[Question]) -> InPlaceAnswers {
+    let mut boxes = InPlaceAnswers {
         done: false,
         ticked: vec![Ticked::None; questions.len()],
+        fields: parse_fields(body, questions),
     };
     // The current question, and the position of the next box in it.
     let mut current: Option<(usize, usize)> = None;
-    for line in outside_fences(body) {
+    for line in structure_lines(body) {
         let trimmed = line.trim();
         if trimmed.starts_with("<details") {
             break;
@@ -502,18 +623,19 @@ pub fn parse_checkboxes(body: &str, questions: &[Question]) -> Checkboxes {
 /// ticked option; graded wrong (ADR-0004 D3).
 pub const MULTIPLE_TICKED: &str = "multiple options ticked";
 
-/// Combine the boxes and the answer comment into the author's answers
-/// (ADR-0004 D3). `boxes` must be `None` unless the comment's last editor
-/// is the PR author; `comment` is the parsed `/soqrates answer` comment, if
-/// any. Returns `None` until the author has submitted, by ticking "Grade my
-/// answers" or by posting an answer comment.
+/// Combine the question comment's boxes and answer fields with the answer
+/// comment into the author's answers (ADR-0004 D3, D11). `boxes` must be
+/// `None` unless the question comment's last editor is the PR author;
+/// `comment` is the parsed `/soqrates answer` comment, if any. Returns
+/// `None` until the author has submitted, by ticking "Grade my answers" or
+/// by posting an answer comment.
 ///
 /// Per question, an answer in the comment wins; otherwise one ticked option
-/// is that choice, several are wrong and none is unanswered. Open questions
-/// are answered only in the comment.
+/// is that choice, several are wrong and none is unanswered, and an open
+/// question is answered by the text in its answer field.
 pub fn merge_answers(
     questions: &[Question],
-    boxes: Option<&Checkboxes>,
+    boxes: Option<&InPlaceAnswers>,
     comment: Option<Vec<Answer>>,
 ) -> Option<Vec<Answer>> {
     let done = boxes.is_some_and(|b| b.done);
@@ -528,7 +650,14 @@ pub fn merge_answers(
             if let Some(a) = comment.iter().find(|a| a.question == q.id) {
                 return Some(a.clone());
             }
-            let body = match boxes.map(|b| b.ticked[i])? {
+            let boxes = boxes?;
+            if let Some(text) = &boxes.fields[i] {
+                return Some(Answer {
+                    question: q.id.clone(),
+                    body: AnswerBody::Text(text.clone()),
+                });
+            }
+            let body = match boxes.ticked[i] {
                 Ticked::None => return None,
                 Ticked::One(option) => AnswerBody::Choice(option),
                 Ticked::Many => AnswerBody::Text(MULTIPLE_TICKED.into()),
@@ -612,7 +741,27 @@ pub fn render_results(
     let mut out = String::new();
     out.push_str(&results_marker(session.key()));
     out.push('\n');
-    if passed {
+    if let Some(f) = session.follow_up() {
+        // The result after this round, the first attempt kept visible
+        // (ADR-0010 D4).
+        let overall = f.settled + correct;
+        let verdict = if passed {
+            "passed after a follow-up"
+        } else {
+            "not passed"
+        };
+        out.push_str(if passed {
+            "> [!TIP]\n"
+        } else {
+            "> [!WARNING]\n"
+        });
+        out.push_str(&format!(
+            "> **Soqrates follow-up: {correct} of {total} correct.** {overall} of {} \
+             concepts answered correctly in all: {verdict}. Each question below says \
+             why its answer is right.\n\n",
+            f.total
+        ));
+    } else if passed {
         out.push_str("> [!TIP]\n");
         out.push_str(&format!(
             "> **Soqrates: {correct} of {total} correct.** Nice work. Each \
@@ -670,17 +819,18 @@ pub fn render_results(
 
 /// The question comment once graded (ADR-0004 D5): it says so, and the
 /// questions are collapsed, with options as plain text (the author's answer
-/// marked), so no box can be ticked any more.
+/// marked) and open answers shown inert, so no box can be ticked and no
+/// answer field filled in any more (D11).
 pub fn render_graded_questions(session: &Session, results: &[QuestionResult]) -> String {
     let mut out = String::new();
     out.push_str(&session_marker(session.key()));
     out.push_str("\n> [!NOTE]\n");
     out.push_str(
         "> **Soqrates learning check: graded.** The results are in a comment \
-         below. The answers for this commit are final; a new push asks new \
+         below. The answers to these questions are final; a new push asks new \
          questions.\n\n",
     );
-    push_collapsed_questions(session.questions(), Some(results), &mut out);
+    push_collapsed_questions(session.questions(), Some(results), &[], &mut out);
     out
 }
 
@@ -688,12 +838,16 @@ pub fn render_graded_questions(session: &Session, results: &[QuestionResult]) ->
 /// D7): it says its answers no longer count and links the newer question
 /// comment at `newer_url`, if known, saying whether that one asks anything.
 /// The questions of `session`, if still stored, are collapsed with options
-/// as plain text, so no box can be ticked any more.
+/// as plain text, so no box can be ticked and no field filled in any more.
+/// `drafts` is the text that was left in each question's answer field, in
+/// question order; it is shown inert, so the author can reuse it when the
+/// question is asked again (ADR-0004 D11).
 pub fn render_superseded_questions(
     key: &SessionKey,
     session: Option<&Session>,
     newer_url: Option<&str>,
     newer_asks: bool,
+    drafts: &[Option<String>],
 ) -> String {
     let mut out = String::new();
     out.push_str(&session_marker(key));
@@ -714,7 +868,7 @@ pub fn render_superseded_questions(
         (None, false) => "Soqrates found nothing to ask about the newer commit.\n\n".into(),
     });
     if let Some(session) = session {
-        push_collapsed_questions(session.questions(), None, &mut out);
+        push_collapsed_questions(session.questions(), None, drafts, &mut out);
     }
     out
 }
@@ -728,10 +882,13 @@ fn is_plain_url(url: &str) -> bool {
 }
 
 /// The questions in a `<details>` block, options as plain text. With
-/// `results`, the author's answers are marked.
+/// `results`, the author's answers are marked; without, the text left in
+/// each open question's answer field (`drafts`, in question order) is shown,
+/// so it isn't lost.
 fn push_collapsed_questions(
     questions: &[Question],
     results: Option<&[QuestionResult]>,
+    drafts: &[Option<String>],
     out: &mut String,
 ) {
     let total = questions.len();
@@ -764,10 +921,22 @@ fn push_collapsed_questions(
                 }
                 out.push('\n');
             }
-            QuestionBody::Open { .. } if results.is_some() => {
-                out.push_str("_Open question, answered by comment._\n\n");
-            }
-            QuestionBody::Open { .. } => out.push_str("_Open question._\n\n"),
+            // The author's text, from the answer field or the answer
+            // comment, is shown inert like any other text (ADR-0004 D4,
+            // D11).
+            QuestionBody::Open { .. } if results.is_some() => match answer {
+                Some(AnswerBody::Text(t)) if !t.trim().is_empty() => {
+                    out.push_str(&format!("_Open question._ Your answer: {}\n\n", inline(t)));
+                }
+                _ => out.push_str("_Open question, not answered._\n\n"),
+            },
+            QuestionBody::Open { .. } => match drafts.get(i).and_then(Option::as_deref) {
+                Some(draft) => out.push_str(&format!(
+                    "_Open question._ Left in its answer field: {}\n\n",
+                    inline(draft)
+                )),
+                None => out.push_str("_Open question._\n\n"),
+            },
         }
     }
     out.push_str("</details>\n");
@@ -783,7 +952,7 @@ pub fn marker_key(body: &str) -> Option<SessionKey> {
 /// Whether a question comment still takes answers: it still has the
 /// "Grade my answers" box, which the graded and superseded renderings drop.
 pub fn takes_answers(body: &str) -> bool {
-    outside_fences(body)
+    structure_lines(body)
         .into_iter()
         .filter_map(task_item)
         .any(|(_, text)| text == DONE_BOX)
@@ -914,34 +1083,51 @@ pub struct AnswerComment {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
-/// What a session's answers were read from: the answer comment, if any, and
-/// the 1-based numbers of the questions whose ticked boxes were read.
+/// What a session's answers were read from (ADR-0004 D8, D11): the answer
+/// comment, if any, and the 1-based numbers of the questions whose ticked
+/// boxes, and whose answer fields, were read, and of those whose boxes or
+/// field the answer comment replaced.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AnswerSource {
     pub comment: Option<AnswerComment>,
     pub boxes: Vec<usize>,
+    pub fields: Vec<usize>,
+    pub replaced: Vec<usize>,
 }
 
-/// The 1-based numbers of the questions answered by their boxes: something
-/// is ticked, and the answer comment doesn't answer that question (ADR-0004
-/// D3). `boxes` must be `None` unless they count.
-pub fn boxes_read(
-    questions: &[Question],
-    boxes: Option<&Checkboxes>,
-    comment: Option<&[Answer]>,
-) -> Vec<usize> {
-    let Some(boxes) = boxes else {
-        return Vec::new();
-    };
-    questions
-        .iter()
-        .enumerate()
-        .filter(|(i, q)| {
-            boxes.ticked.get(*i).is_some_and(|t| *t != Ticked::None)
-                && !comment.is_some_and(|c| c.iter().any(|a| a.question == q.id))
-        })
-        .map(|(i, _)| i + 1)
-        .collect()
+impl AnswerSource {
+    /// What was read: the answer comment `comment`, if any, with the
+    /// answers parsed from it, and the question comment's boxes and fields
+    /// `in_place`, which must be `None` unless they count. Per question,
+    /// the answer comment wins (ADR-0004 D3, D11).
+    pub fn read(
+        questions: &[Question],
+        comment: Option<AnswerComment>,
+        answered: Option<&[Answer]>,
+        in_place: Option<&InPlaceAnswers>,
+    ) -> Self {
+        let mut source = AnswerSource {
+            comment,
+            ..AnswerSource::default()
+        };
+        let Some(in_place) = in_place else {
+            return source;
+        };
+        for (i, q) in questions.iter().enumerate() {
+            let ticked = in_place.ticked.get(i).is_some_and(|t| *t != Ticked::None);
+            let field = in_place.fields.get(i).is_some_and(Option::is_some);
+            if answered.is_some_and(|c| c.iter().any(|a| a.question == q.id)) {
+                if ticked || field {
+                    source.replaced.push(i + 1);
+                }
+            } else if field {
+                source.fields.push(i + 1);
+            } else if ticked {
+                source.boxes.push(i + 1);
+            }
+        }
+        source
+    }
 }
 
 /// `1`, `1 and 3`, `1, 2 and 3`.
@@ -954,21 +1140,18 @@ fn number_list(numbers: &[usize]) -> String {
     }
 }
 
-/// One sentence saying what the results were graded from, e.g. "Graded
-/// from your answer comment (edited 11:18 UTC) and the boxes you ticked for
-/// question 1."
-fn describe_source(source: &AnswerSource) -> String {
-    let boxes = match source.boxes.len() {
+/// `what question 2`, or `what questions 1 and 3`; `None` for none.
+fn for_questions(what: &str, numbers: &[usize]) -> Option<String> {
+    match numbers.len() {
         0 => None,
-        1 => Some(format!(
-            "the boxes you ticked for question {}",
-            number_list(&source.boxes)
-        )),
-        _ => Some(format!(
-            "the boxes you ticked for questions {}",
-            number_list(&source.boxes)
-        )),
-    };
+        1 => Some(format!("{what} question {}", number_list(numbers))),
+        _ => Some(format!("{what} questions {}", number_list(numbers))),
+    }
+}
+
+/// What the results were graded from, e.g. "Graded from your answer
+/// comment (edited 11:18 UTC) and the boxes you ticked for question 1."
+fn describe_source(source: &AnswerSource) -> String {
     let comment = source.comment.as_ref().map(|c| {
         let link = if is_plain_url(&c.url) {
             format!("your [answer comment]({})", c.url)
@@ -981,12 +1164,30 @@ fn describe_source(source: &AnswerSource) -> String {
         };
         format!("{link} ({when})")
     });
-    match (comment, boxes) {
-        (Some(c), Some(b)) => format!("Graded from {c} and {b}."),
-        (Some(c), None) => format!("Graded from {c}. No ticked boxes were read."),
-        (None, Some(b)) => format!("Graded from {b}."),
-        (None, None) => "Graded from the question comment: no boxes were ticked.".into(),
+    let parts: Vec<String> = [
+        comment.clone(),
+        for_questions("the boxes you ticked for", &source.boxes),
+        for_questions("the answer field of", &source.fields),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let mut out = match parts.split_last() {
+        None => "Graded from the question comment: no boxes were ticked and no answer \
+                 field was filled in."
+            .to_string(),
+        Some((only, [])) if comment.is_some() => {
+            format!("Graded from {only}. No ticked boxes or answer fields were read.")
+        }
+        Some((only, [])) => format!("Graded from {only}."),
+        Some((last, rest)) => format!("Graded from {} and {last}.", rest.join(", ")),
+    };
+    if let Some(replaced) = for_questions("for", &source.replaced) {
+        out.push_str(&format!(
+            " Your answer comment replaced what the question comment said {replaced}."
+        ));
     }
+    out
 }
 
 /// Truncate to at most `max` characters, ending in `…` when cut.
@@ -1119,7 +1320,14 @@ mod tests {
         assert!(s.contains("### Question 1 of 3\n\nPrompt q1?\n\n"));
         assert!(s.contains("- [ ] a. first\n- [ ] b. SECRET-CORRECT\n- [ ] c. third\n"));
         assert!(s.contains("### Question 2 of 3\n\nExplain q2."));
-        assert!(s.contains("Open question: answer it in your own words"));
+        // D11: the open question has an empty answer field, and nothing to
+        // read back from it yet.
+        assert!(s.contains(
+            "Explain q2.\n\n_Open question: edit this comment and write your answer in your own \
+             words below this line, between `soqrates:answer=2` and `soqrates:answer-end=2`._\n\n\
+             <!-- soqrates:answer=2 -->\n\n<!-- soqrates:answer-end=2 -->\n\n### Question 3 of 3"
+        ));
+        assert_eq!(parse_fields(&s, &questions()), vec![None, None, None]);
         assert!(s.contains("advisory"));
         // The done box comes last, separated from the questions.
         assert!(s.contains("---\n\n- [ ] **Grade my answers**\n\n<details>"));
@@ -1391,6 +1599,7 @@ mod tests {
         let both = AnswerSource {
             comment: Some(comment.clone()),
             boxes: vec![1, 3],
+            ..AnswerSource::default()
         };
         let s = render_results(&session(), &results(), true, Some(&both));
         assert!(s.contains(
@@ -1402,28 +1611,73 @@ mod tests {
                 updated_at: Some(comment.created_at),
                 ..comment
             }),
-            boxes: vec![],
+            ..AnswerSource::default()
         };
         let s = render_results(&session(), &results(), true, Some(&posted));
-        assert!(s.contains("(posted 11:02 UTC). No ticked boxes were read."));
+        assert!(s.contains("(posted 11:02 UTC). No ticked boxes or answer fields were read."));
         let boxes = AnswerSource {
-            comment: None,
             boxes: vec![2],
+            ..AnswerSource::default()
         };
         let s = render_results(&session(), &results(), true, Some(&boxes));
         assert!(s.contains("Graded from the boxes you ticked for question 2."));
         assert!(!render_results(&session(), &results(), true, None).contains("Graded from"));
+        let nothing = AnswerSource::default();
+        let s = render_results(&session(), &results(), true, Some(&nothing));
+        assert!(s.contains("no boxes were ticked and no answer field was filled in."));
     }
 
-    // @adr-0004-d8
+    // @adr-0004-d8 @adr-0004-d11
     #[test]
-    fn boxes_read_are_those_the_comment_does_not_override() {
+    fn results_say_which_answer_fields_were_graded_and_which_the_comment_replaced() {
+        let comment = AnswerComment {
+            url: "https://github.com/o/r/pull/1#issuecomment-9".into(),
+            created_at: Utc.with_ymd_and_hms(2026, 11, 8, 11, 2, 0).unwrap(),
+            updated_at: None,
+        };
+        let all = AnswerSource {
+            comment: Some(comment),
+            boxes: vec![1],
+            fields: vec![2],
+            replaced: vec![3],
+        };
+        let s = render_results(&session(), &results(), true, Some(&all));
+        assert!(
+            s.contains(
+                "(posted 11:02 UTC), the boxes you ticked for question 1 and the answer field of \
+                 question 2. Your answer comment replaced what the question comment said for \
+                 question 3.</sub>"
+            ),
+            "{s}"
+        );
+        let fields = AnswerSource {
+            fields: vec![2, 4],
+            ..AnswerSource::default()
+        };
+        let s = render_results(&session(), &results(), true, Some(&fields));
+        assert!(s.contains("<sub>Graded from the answer field of questions 2 and 4.</sub>"));
+    }
+
+    // @adr-0004-d8 @adr-0004-d11
+    #[test]
+    fn what_was_read_is_what_the_comment_does_not_override() {
         let qs = questions();
-        let boxes = checkboxes(true, &[Ticked::One(1), Ticked::None, Ticked::Many]);
-        assert_eq!(boxes_read(&qs, Some(&boxes), None), vec![1, 3]);
-        let comment = vec![answer("q1", AnswerBody::Choice(0))];
-        assert_eq!(boxes_read(&qs, Some(&boxes), Some(&comment)), vec![3]);
-        assert_eq!(boxes_read(&qs, None, Some(&comment)), Vec::<usize>::new());
+        let mut in_place = checkboxes(true, &[Ticked::One(1), Ticked::None, Ticked::Many]);
+        in_place.fields[1] = Some("it moves".into());
+        let read = |comment: Option<&[Answer]>, in_place: Option<&InPlaceAnswers>| {
+            let s = AnswerSource::read(&qs, None, comment, in_place);
+            (s.boxes, s.fields, s.replaced)
+        };
+        assert_eq!(read(None, Some(&in_place)), (vec![1, 3], vec![2], vec![]));
+        let comment = vec![
+            answer("q1", AnswerBody::Choice(0)),
+            answer("q2", text("it borrows")),
+        ];
+        assert_eq!(
+            read(Some(&comment), Some(&in_place)),
+            (vec![3], vec![], vec![1, 2])
+        );
+        assert_eq!(read(Some(&comment), None), (vec![], vec![], vec![]));
     }
 
     #[test]
@@ -1480,10 +1734,11 @@ mod tests {
         format!("{}{}{}", &body[..at], ticked, &body[at + line.len()..])
     }
 
-    fn checkboxes(done: bool, ticked: &[Ticked]) -> Checkboxes {
-        Checkboxes {
+    fn checkboxes(done: bool, ticked: &[Ticked]) -> InPlaceAnswers {
+        InPlaceAnswers {
             done,
             ticked: ticked.to_vec(),
+            fields: vec![None; ticked.len()],
         }
     }
 
@@ -1491,7 +1746,7 @@ mod tests {
     #[test]
     fn reads_ticked_boxes_by_section_and_position() {
         let body = render_questions(&session());
-        let boxes = parse_checkboxes(&body, &questions());
+        let boxes = parse_in_place(&body, &questions());
         assert_eq!(boxes, checkboxes(false, &[Ticked::None; 3]));
         assert!(!boxes.any());
 
@@ -1499,7 +1754,7 @@ mod tests {
         let body = tick(&body, "- [ ] a. x");
         let body = tick(&body, "- [ ] **Grade my answers**");
         assert_eq!(
-            parse_checkboxes(&body, &questions()),
+            parse_in_place(&body, &questions()),
             checkboxes(true, &[Ticked::One(1), Ticked::None, Ticked::One(0)])
         );
     }
@@ -1510,13 +1765,13 @@ mod tests {
         let body = "### Question 1 of 3\n\nP\n\n  * [ ] a. first\n- [X] b. renamed by hand\n- [ ] c. third\n\n\
                     ### Question 3 of 3\n\n   -  [x]  a. x\n+ [ ] b. y\n\n---\n\n * [X] **Grade my answers**\n";
         assert_eq!(
-            parse_checkboxes(body, &questions()),
+            parse_in_place(body, &questions()),
             checkboxes(true, &[Ticked::One(1), Ticked::None, Ticked::One(0)])
         );
         // Not boxes: `[x]` not followed by a space, or no list marker.
         let body = "### Question 1 of 3\n- [x]a. first\n[x] b. second\n-[x] c. third\n";
         assert_eq!(
-            parse_checkboxes(body, &questions()),
+            parse_in_place(body, &questions()),
             checkboxes(false, &[Ticked::None; 3])
         );
     }
@@ -1528,7 +1783,7 @@ mod tests {
                     ### Question 2 of 3\n- [x] a. open question has no options\n---\n- [x] a. after the separator\n\
                     <details>\n- [x] **Grade my answers**\n</details>\n";
         assert_eq!(
-            parse_checkboxes(body, &questions()),
+            parse_in_place(body, &questions()),
             checkboxes(false, &[Ticked::None; 3])
         );
     }
@@ -1540,7 +1795,7 @@ mod tests {
         let body = tick(&body, "- [ ] a. first");
         let body = tick(&body, "- [ ] c. third");
         let body = tick(&body, "- [ ] **Grade my answers**");
-        let boxes = parse_checkboxes(&body, &questions());
+        let boxes = parse_in_place(&body, &questions());
         assert_eq!(boxes.ticked, vec![Ticked::Many, Ticked::None, Ticked::None]);
         assert_eq!(
             merge_answers(&questions(), Some(&boxes), None),
@@ -1553,11 +1808,11 @@ mod tests {
     fn boxes_count_only_once_the_done_box_is_ticked() {
         let body = render_questions(&session());
         let body = tick(&body, "- [ ] b. SECRET-CORRECT");
-        let boxes = parse_checkboxes(&body, &questions());
+        let boxes = parse_in_place(&body, &questions());
         assert!(boxes.any() && !boxes.done);
         assert_eq!(merge_answers(&questions(), Some(&boxes), None), None);
         let body = tick(&body, "- [ ] **Grade my answers**");
-        let boxes = parse_checkboxes(&body, &questions());
+        let boxes = parse_in_place(&body, &questions());
         assert_eq!(
             merge_answers(&questions(), Some(&boxes), None),
             Some(vec![answer("q1", AnswerBody::Choice(1))])
@@ -1617,6 +1872,228 @@ mod tests {
                 answer("q3", text(MULTIPLE_TICKED)),
             ])
         );
+    }
+
+    /// Type `text` into the answer field of question `n`, as an author
+    /// editing the comment does.
+    fn fill(body: &str, n: usize, text: &str) -> String {
+        let empty = format!("<!-- soqrates:answer={n} -->\n\n<!-- soqrates:answer-end={n} -->");
+        assert!(body.contains(&empty), "no empty field {n} in:\n{body}");
+        body.replacen(
+            &empty,
+            &format!("<!-- soqrates:answer={n} -->\n{text}\n<!-- soqrates:answer-end={n} -->"),
+            1,
+        )
+    }
+
+    // @adr-0004-d11
+    #[test]
+    fn an_answer_typed_into_the_field_is_read_and_submitted_by_the_done_box() {
+        let body = fill(
+            &render_questions(&session()),
+            2,
+            "The borrow ends here,\r\n\r\nso the move is fine.  ",
+        );
+        let in_place = parse_in_place(&body, &questions());
+        assert_eq!(
+            in_place.fields,
+            vec![
+                None,
+                Some("The borrow ends here,\n\nso the move is fine.".into()),
+                None
+            ]
+        );
+        assert!(in_place.any() && !in_place.done);
+        // Typed but not submitted: nothing to grade yet.
+        assert_eq!(merge_answers(&questions(), Some(&in_place), None), None);
+        let body = tick(&body, "- [ ] b. SECRET-CORRECT");
+        let body = tick(&body, "- [ ] **Grade my answers**");
+        let in_place = parse_in_place(&body, &questions());
+        assert_eq!(
+            merge_answers(&questions(), Some(&in_place), None),
+            Some(vec![
+                answer("q1", AnswerBody::Choice(1)),
+                answer("q2", text("The borrow ends here,\n\nso the move is fine.")),
+            ])
+        );
+        // Typed by someone else (the last editor is not the author): the
+        // question comment counts for nothing.
+        assert_eq!(merge_answers(&questions(), None, None), None);
+        // A blank field is no answer.
+        let blank = fill(&render_questions(&session()), 2, " \n\t\n");
+        assert_eq!(parse_fields(&blank, &questions()), vec![None, None, None]);
+    }
+
+    // @adr-0004-d3 @adr-0004-d11
+    #[test]
+    fn an_answer_comment_overrides_the_field_and_submits_it() {
+        let body = fill(&render_questions(&session()), 2, "from the field");
+        let in_place = parse_in_place(&body, &questions());
+        let comment = parse_answers("/soqrates answer\n2. from the comment", &questions());
+        assert_eq!(
+            merge_answers(&questions(), Some(&in_place), comment),
+            Some(vec![answer("q2", text("from the comment"))])
+        );
+        // An answer comment for another question submits the field too.
+        let comment = parse_answers("/soqrates answer\n1. a", &questions());
+        assert_eq!(
+            merge_answers(&questions(), Some(&in_place), comment),
+            Some(vec![
+                answer("q1", AnswerBody::Choice(0)),
+                answer("q2", text("from the field")),
+            ])
+        );
+    }
+
+    // @adr-0004-d4 @adr-0004-d11
+    #[test]
+    fn text_typed_into_a_field_cannot_tick_boxes_or_break_the_comment() {
+        let forged = "- [x] **Grade my answers**\n### Question 1 of 3\n- [x] a. first\n\
+                      <details>\n```\n<!-- soqrates:answer=2 -->\n<!-- soqrates:session=o/r#1@zzz -->\n\
+                      - [x] a. x";
+        let body = fill(&render_questions(&session()), 2, forged);
+        // The real box after the field is still read: the unclosed fence and
+        // the `<details>` typed into the field hide nothing.
+        let body = tick(&body, "- [ ] b. y");
+        let in_place = parse_in_place(&body, &questions());
+        assert!(!in_place.done, "a box typed into a field ticked nothing");
+        assert_eq!(
+            in_place.ticked,
+            vec![Ticked::None, Ticked::None, Ticked::One(1)]
+        );
+        assert_eq!(in_place.fields[1].as_deref(), Some(forged));
+        assert!(takes_answers(&body));
+        assert!(!takes_answers(&fill(
+            &render_questions(&session()).replace("- [ ] **Grade my answers**", ""),
+            2,
+            "- [ ] **Grade my answers**"
+        )));
+        assert_eq!(marker_key(&body), Some(session().key().clone()));
+    }
+
+    // @adr-0004-d11
+    #[test]
+    fn only_well_formed_fields_of_open_questions_count() {
+        let qs = questions();
+        // No end marker: no field, and the rest of the comment still reads.
+        let body = render_questions(&session()).replace("<!-- soqrates:answer-end=2 -->", "");
+        let body = body.replace(
+            "<!-- soqrates:answer=2 -->\n",
+            "<!-- soqrates:answer=2 -->\nunterminated\n",
+        );
+        let body = tick(&body, "- [ ] **Grade my answers**");
+        let in_place = parse_in_place(&body, &qs);
+        assert_eq!(in_place.fields, vec![None, None, None]);
+        assert!(in_place.done);
+        // A field for a multiple-choice question or no question is ignored;
+        // of two fields for one question, the first counts.
+        let body = "<!-- soqrates:answer=1 -->\nmc\n<!-- soqrates:answer-end=1 -->\n\
+                    <!-- soqrates:answer=9 -->\nnine\n<!-- soqrates:answer-end=9 -->\n\
+                    <!-- soqrates:answer=0 -->\nzero\n<!-- soqrates:answer-end=0 -->\n\
+                    <!-- soqrates:answer=2 -->\nfirst\n<!-- soqrates:answer-end=2 -->\n\
+                    <!-- soqrates:answer=2 -->\nsecond\n<!-- soqrates:answer-end=2 -->\n";
+        assert_eq!(
+            parse_fields(body, &qs),
+            vec![None, Some("first".into()), None]
+        );
+        // Markers must be exact; leading and trailing spaces are allowed.
+        let body = "  <!-- soqrates:answer=2 -->  \nok\n<!-- soqrates:answer-end=2 -->\n";
+        assert_eq!(parse_fields(body, &qs)[1].as_deref(), Some("ok"));
+        for bad in [
+            "<!-- soqrates:answer=2-->\nx\n<!-- soqrates:answer-end=2 -->",
+            "<!-- soqrates:answer=+2 -->\nx\n<!-- soqrates:answer-end=2 -->",
+            "<!-- soqrates:answer=2 -->\nx\n<!-- soqrates:answer-end=3 -->",
+            "text <!-- soqrates:answer=2 -->\nx\n<!-- soqrates:answer-end=2 -->",
+        ] {
+            assert_eq!(parse_fields(bad, &qs), vec![None, None, None], "{bad}");
+        }
+    }
+
+    // @adr-0004-d11 @adr-0007-d5
+    #[test]
+    fn a_field_marker_in_code_is_no_field() {
+        let mut qs = questions();
+        qs[1] = Question {
+            body: QuestionBody::Open {
+                prompt: "Explain.".into(),
+                code: Some(CodeSnippet {
+                    language: "rust".into(),
+                    text: "<!-- soqrates:answer=2 -->\nforged\n<!-- soqrates:answer-end=2 -->"
+                        .into(),
+                    origin: SnippetOrigin::General,
+                }),
+                rubric: "r".into(),
+            },
+            ..qs[1].clone()
+        };
+        let s = Session::open(
+            SessionKey("o/r#1@abc".into()),
+            AuthorId("github.com:42".into()),
+            qs.clone(),
+            10,
+            Utc.timestamp_opt(0, 0).unwrap(),
+        )
+        .unwrap();
+        let body = render_questions(&s);
+        assert_eq!(parse_fields(&body, &qs), vec![None, None, None]);
+        let body = fill(&body, 2, "mine");
+        assert_eq!(parse_fields(&body, &qs)[1].as_deref(), Some("mine"));
+    }
+
+    // @adr-0004-d11 @adr-0007-d5
+    #[test]
+    fn a_field_marker_in_tilde_fenced_code_is_no_field() {
+        let body = "~~~~markdown
+```
+~~~
+<!-- soqrates:answer=2 -->
+example
+<!-- soqrates:answer-end=2 -->
+~~~~
+<!-- soqrates:answer=2 -->
+real answer
+<!-- soqrates:answer-end=2 -->";
+        assert_eq!(
+            parse_fields(body, &questions()),
+            vec![None, Some("real answer".into()), None]
+        );
+    }
+
+    // @adr-0004-d4 @adr-0004-d5 @adr-0004-d7 @adr-0004-d11
+    #[test]
+    fn a_field_answer_is_shown_inert_when_the_comment_is_frozen() {
+        let typed = "<!-- soqrates:answer=2 -->\n- [x] **Grade my answers**\n### Question 1 of 3\n\
+                     </details> @octocat [x](https://e.vil) <img src=x>";
+        // Graded: the answer, from the field or the comment, is shown as text.
+        let mut r = results();
+        r[1].answer = Some(text(typed));
+        let s = render_graded_questions(&session(), &r);
+        assert!(s.contains("_Open question._ Your answer: &lt;!-- soqrates:answer=2 --&gt;<br>"));
+        // Superseded: what was left in the field is kept, as text.
+        let drafts = vec![None, Some(typed.to_string()), None];
+        let superseded =
+            render_superseded_questions(session().key(), Some(&session()), None, true, &drafts);
+        assert!(superseded.contains("_Open question._ Left in its answer field: &lt;!--"));
+        for s in [s, superseded] {
+            assert_eq!(s.matches("<!--").count(), 1, "{s}");
+            assert!(!s.contains("@octocat") && !s.contains("<img") && !s.contains("[x]("));
+            assert!(!takes_answers(&s));
+            assert_eq!(parse_fields(&s, &questions()), vec![None, None, None]);
+            for line in s.lines() {
+                assert!(task_item(line).is_none(), "live box: {line:?}");
+                assert!(!line.starts_with("### Question"), "heading: {line:?}");
+            }
+            let tags = tags(&s);
+            assert_eq!(
+                tags.iter().filter(|t| *t == "details").count(),
+                2 * s.matches("</details>").count(),
+                "{s}"
+            );
+        }
+        // Unanswered open questions say so.
+        let mut r = results();
+        r[1].answer = None;
+        assert!(render_graded_questions(&session(), &r).contains("_Open question, not answered._"));
     }
 
     // @adr-0004-d3
@@ -1710,6 +2187,55 @@ mod tests {
         assert!(s.contains("> [!TIP]\n> **Soqrates: 1 of 1 correct.**"));
     }
 
+    /// A follow-up round after a first round of 3 with 1 correct, asking
+    /// about the 2 missed concepts (ADR-0010 D2).
+    fn follow_up() -> Session {
+        Session::open_follow_up(
+            SessionKey("o/r#1@abc#2".into()),
+            AuthorId("github.com:42".into()),
+            vec![
+                mc("f1", &["first", "SECRET-CORRECT", "third"], 1),
+                mc("f2", &["x", "y"], 0),
+            ],
+            soqrates_core::FollowUp {
+                round: 2,
+                settled: 1,
+                total: 3,
+            },
+            Utc.timestamp_opt(0, 0).unwrap(),
+        )
+        .unwrap()
+    }
+
+    // @adr-0010-d4 @adr-0010-d6
+    #[test]
+    fn a_follow_up_says_so_and_its_results_say_it_passed_after_a_follow_up() {
+        let s = render_questions(&follow_up());
+        assert!(s.starts_with("<!-- soqrates:session=o/r#1@abc#2 -->\n> [!NOTE]\n"));
+        assert!(s.contains("**Soqrates follow-up.**"), "{s}");
+        assert!(s.contains("- [ ] **Grade my answers**"));
+        // The first round's marker doesn't match the follow-up's comment.
+        assert!(!s.contains(&session_marker(&SessionKey("o/r#1@abc".into()))));
+
+        let q = follow_up().questions().to_vec();
+        let r = vec![
+            result(&q[0], Some(AnswerBody::Choice(1)), Grade::Good, "Yes."),
+            result(&q[1], Some(AnswerBody::Choice(1)), Grade::Again, "No."),
+        ];
+        let s = render_results(&follow_up(), &r, true, None);
+        assert!(s.starts_with("<!-- soqrates:results=o/r#1@abc#2 -->\n> [!TIP]\n"));
+        assert!(
+            s.contains(
+                "**Soqrates follow-up: 1 of 2 correct.** 2 of 3 concepts answered correctly in \
+             all: passed after a follow-up."
+            ),
+            "{s}"
+        );
+        let s = render_results(&follow_up(), &r, false, None);
+        assert!(s.contains("> [!WARNING]\n> **Soqrates follow-up: 1 of 2 correct.**"));
+        assert!(s.contains("in all: not passed."));
+    }
+
     // @adr-0004-d5
     #[test]
     fn graded_question_comment_is_frozen_with_questions_collapsed() {
@@ -1744,7 +2270,7 @@ mod tests {
         assert!(!s.contains("SECRET-EXPLANATION") && !s.contains("SECRET-RUBRIC"));
         // Nothing to read back from it.
         assert_eq!(
-            parse_checkboxes(&s, &questions()),
+            parse_in_place(&s, &questions()),
             checkboxes(false, &[Ticked::None; 3])
         );
     }
@@ -1754,7 +2280,8 @@ mod tests {
     // @adr-0004-d7
     #[test]
     fn superseded_question_comment_links_the_new_questions_and_has_no_boxes() {
-        let s = render_superseded_questions(session().key(), Some(&session()), Some(NEWER), true);
+        let s =
+            render_superseded_questions(session().key(), Some(&session()), Some(NEWER), true, &[]);
         assert!(s.starts_with(
             "<!-- soqrates:session=o/r#1@abc -->\n> [!NOTE]\n> **Soqrates learning check: superseded.**"
         ));
@@ -1776,7 +2303,7 @@ mod tests {
         assert!(!s.contains("your answer") && !s.contains("SECRET-EXPLANATION"));
         assert!(!s.contains("SECRET-RUBRIC"));
         assert_eq!(
-            parse_checkboxes(&s, &questions()),
+            parse_in_place(&s, &questions()),
             checkboxes(false, &[Ticked::None; 3])
         );
     }
@@ -1785,16 +2312,16 @@ mod tests {
     #[test]
     fn superseded_without_session_or_safe_link_still_freezes() {
         let key = SessionKey("o/r#1@old".into());
-        let s = render_superseded_questions(&key, None, None, true);
+        let s = render_superseded_questions(&key, None, None, true, &[]);
         assert!(s.contains("superseded.**") && !s.contains("<details>"));
         assert!(s.contains("newer Soqrates comment"));
         assert_eq!(marker_key(&s), Some(key.clone()));
-        let s = render_superseded_questions(&key, Some(&session()), Some(NEWER), false);
+        let s = render_superseded_questions(&key, Some(&session()), Some(NEWER), false, &[]);
         assert!(s.contains(&format!("[nothing to ask]({NEWER}) about the newer commit")));
         assert!(!s.contains("answer the"), "{s}");
         assert!(!takes_answers(&s));
         for bad in ["javascript:alert(1)", "https://x/a)[b](c", "https://x/<b>"] {
-            let s = render_superseded_questions(&key, None, Some(bad), true);
+            let s = render_superseded_questions(&key, None, Some(bad), true, &[]);
             assert!(!s.contains(bad) && !s.contains("]("), "{s}");
         }
     }
@@ -1847,7 +2374,7 @@ mod tests {
     /// D5).
     fn tags(s: &str) -> Vec<String> {
         let mut out = Vec::new();
-        let outside = outside_fences(s).join("\n");
+        let outside = structure_lines(s).join("\n");
         let mut rest = outside.as_str();
         let mut comments = 0;
         while let Some(at) = rest.find('<') {
@@ -1937,15 +2464,15 @@ mod tests {
             render_questions(&code),
             render_graded_questions(&code, &code_results),
             render_results(&code, &code_results, false, None),
-            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true, &[]),
             render_questions(&session()),
             render_graded_questions(&session(), &results()),
             render_results(&session(), &results(), true, None),
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
             render_results(&nasty, &nasty_results, false, None),
-            render_superseded_questions(session().key(), Some(&session()), Some(NEWER), true),
-            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true),
+            render_superseded_questions(session().key(), Some(&session()), Some(NEWER), true, &[]),
+            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true, &[]),
         ];
         for s in &rendered {
             let tags = tags(s);
@@ -1956,7 +2483,7 @@ mod tests {
             // no model text closes one early.
             for t in ["details", "summary", "code", "b"] {
                 let open = tags.iter().filter(|x| *x == t).count();
-                let close = outside_fences(s)
+                let close = structure_lines(s)
                     .iter()
                     .map(|l| l.matches(&format!("</{t}>")).count())
                     .sum::<usize>();
@@ -1973,9 +2500,21 @@ mod tests {
             render_questions(&nasty),
             render_graded_questions(&nasty, &nasty_results),
             render_results(&nasty, &nasty_results, false, None),
-            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true),
+            render_superseded_questions(nasty.key(), Some(&nasty), Some(NEWER), true, &[]),
         ] {
-            assert_eq!(s.matches("<!--").count(), 1, "one marker only:\n{s}");
+            // The session marker, and two field markers per open question
+            // in the live question comment (D11); no model text adds one.
+            let open = nasty
+                .questions()
+                .iter()
+                .filter(|q| matches!(q.body, QuestionBody::Open { .. }))
+                .count();
+            let live = takes_answers(&s);
+            assert_eq!(
+                s.matches("<!--").count(),
+                1 + if live { 2 * open } else { 0 },
+                "markers only:\n{s}"
+            );
             assert!(!s.contains("<script") && !s.contains("<img"));
             assert!(!s.contains("@octocat") && !s.contains("@org") && !s.contains("@here"));
             assert!(s.contains("@\u{200B}octocat"));
@@ -1996,7 +2535,7 @@ mod tests {
         // none of them is ticked.
         let q = render_questions(&nasty);
         assert_eq!(
-            parse_checkboxes(&q, nasty.questions()),
+            parse_in_place(&q, nasty.questions()),
             checkboxes(false, &[Ticked::None; 3])
         );
         assert_eq!(q.matches("- [ ] ").count(), 3 + 3 + 1);
@@ -2157,7 +2696,7 @@ mod tests {
             render_questions(&code),
             render_graded_questions(&code, &results),
             render_results(&code, &results, false, None),
-            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true, &[]),
         ] {
             assert!(s.contains(&block), "{s}");
             // The snippet follows its prompt, and the prompt is prose.
@@ -2222,7 +2761,7 @@ mod tests {
             render_questions(&code),
             render_graded_questions(&code, &results),
             render_results(&code, &results, false, None),
-            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true, &[]),
             // An author's comment that starts with code.
             format!("```\n{commands}\n```"),
             format!("    {}", commands.replace('\n', "\n    ")),
@@ -2239,7 +2778,7 @@ mod tests {
         assert_eq!(hints_due(&listed, &[], slug), Vec::<usize>::new());
         // The question comment's boxes are untouched by the code.
         assert_eq!(
-            parse_checkboxes(&comments[0], code.questions()),
+            parse_in_place(&comments[0], code.questions()),
             checkboxes(false, &[Ticked::None, Ticked::None])
         );
     }
@@ -2253,11 +2792,11 @@ mod tests {
             live.clone(),
             render_graded_questions(&code, &results),
             render_results(&code, &results, false, None),
-            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true),
+            render_superseded_questions(code.key(), Some(&code), Some(NEWER), true, &[]),
         ] {
             // Outside the fences there is nothing of the code: no tag,
             // mention, box, heading or second marker.
-            let outside = outside_fences(&s).join("\n");
+            let outside = structure_lines(&s).join("\n");
             assert_eq!(outside.matches("<!--").count(), 1, "{outside}");
             for forged in [
                 "<script",
@@ -2276,23 +2815,23 @@ mod tests {
             }
             // Every fence that opens closes, so the end of the comment is
             // not code.
-            assert_eq!(outside_fences(&s).last().copied(), s.lines().last(), "{s}");
+            assert_eq!(structure_lines(&s).last().copied(), s.lines().last(), "{s}");
         }
         // The boxes are exactly the renderer's: 3 options and the done box.
-        let boxes = outside_fences(&live)
+        let boxes = structure_lines(&live)
             .into_iter()
             .filter(|l| task_item(l).is_some())
             .count();
         assert_eq!(boxes, 3 + 1);
         assert_eq!(
-            parse_checkboxes(&live, code.questions()),
+            parse_in_place(&live, code.questions()),
             checkboxes(false, &[Ticked::None, Ticked::None])
         );
         assert!(takes_answers(&live));
         // Ticking a real box counts; the forged ones in the code never do.
         let ticked = live.replacen("- [ ] b.", "- [x] b.", 1);
         assert_eq!(
-            parse_checkboxes(&ticked, code.questions()),
+            parse_in_place(&ticked, code.questions()),
             checkboxes(false, &[Ticked::None, Ticked::One(1)])
         );
         // A frozen comment takes no answers, even with a done box in its code.
@@ -2301,7 +2840,8 @@ mod tests {
             code.key(),
             Some(&code),
             Some(NEWER),
-            true
+            true,
+            &[]
         )));
     }
 

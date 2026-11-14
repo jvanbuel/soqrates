@@ -88,11 +88,14 @@ code. Code is never extracted from the model's prose: the examiner asks
 for it in its own field of the structured reply, and prose keeps being
 rendered as prose (ADR-0004 D4).
 
-A snippet, and each code option, is at most 15 lines
-(`MAX_SNIPPET_LINES`), so the comment stays readable. Hunks are cut to
-that length before the writer sees them. A snippet the model writes that
-is longer is rejected and asked for again, never cut, so that the
-question and its explanation are about the code as shown (D7).
+A snippet, and each code option, is asked for in at most 15 lines
+(`SNIPPET_LINES`), so the comment stays readable, and hunks are cut to
+that length before the writer sees them. A snippet the model writes may
+run a little over, up to 20 lines (`MAX_SNIPPET_LINES`): in live runs
+(PRs #34 and #37) the model wrote 16 lines twice in a row, and one
+rejected question failed the whole round. A snippet longer than that is
+rejected and asked for again, never cut, so that the question and its
+explanation are about the code as shown (D7).
 
 ### D4: The writer gets the hunks of its concept
 **Enforcement:** automated

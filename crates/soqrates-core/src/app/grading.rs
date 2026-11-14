@@ -11,7 +11,7 @@ use crate::app::ports::{Clock, Codebase, Examiner, StateStore};
 use crate::app::stores::{Access, ProfileLocation, Recorded, grading_mark, load_or_new};
 use crate::assessment::{Answer, AnswerBody, ConceptScope, Grade, QuestionBody};
 use crate::delivery::{
-    GradedSession, GradingJournal, JournaledReview, QuestionResult, Session, StoreId,
+    GradedSession, GradingJournal, JournaledReview, QuestionResult, Session, SessionEvent, StoreId,
 };
 use crate::ids::{ConceptId, QuestionId, SessionKey};
 use crate::learner::{GradedAnswer, LearnerEvent, Level};
@@ -33,6 +33,11 @@ pub struct SessionOutcome {
 }
 
 impl SessionOutcome {
+    /// The answers graded correct, in this round.
+    pub fn correct(&self) -> usize {
+        self.grades.iter().filter(|(_, g)| g.is_correct()).count()
+    }
+
     /// Replace what was worked out at grading time by what `recorded`
     /// says happened: the level of the profile in `primary`, the review
     /// events and the next review dates. The grades and the session's own
@@ -119,6 +124,21 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         stores.grading_recorded(key).await
     }
 
+    /// The latest round of the session `key`: its latest follow-up that is
+    /// pending, being graded or graded, or `key` itself (ADR-0010 D2).
+    pub async fn latest_follow_up(&self, key: &SessionKey) -> Result<SessionKey> {
+        let (first, mut round) = key.round();
+        let mut latest = key.clone();
+        loop {
+            let next = first.follow_up(round + 1);
+            if matches!(self.session_state(&next).await?, SessionState::Absent) {
+                return Ok(latest);
+            }
+            latest = next;
+            round += 1;
+        }
+    }
+
     /// Grade `answers` for the session `key`, record each review on the
     /// author's profile, persist it and remove the session. Fails with
     /// `NotFound` for an unknown or already graded session and `Invalid`
@@ -177,6 +197,9 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             }
         }
         let claimed = session.clone();
+        // Only a first round records reviews; a follow-up only settles the
+        // session (ADR-0010 D5).
+        let records = session.follow_up().is_none();
         let key = session.key().clone();
         let author = session.author().clone();
         let questions = session.questions().to_vec();
@@ -189,9 +212,11 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             Some(store) => Some(load_or_new(store, &place.learner).await?),
             None => None,
         };
+        // A follow-up records no reviews (ADR-0010 D5).
         let reviews: Vec<JournaledReview> = questions
             .iter()
             .zip(&result.grades)
+            .filter(|_| records)
             .map(|(q, (_, grade))| {
                 let store = match (&place.project_id, q.scope) {
                     (Some(id), ConceptScope::Project) => id.clone(),
@@ -210,11 +235,27 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 }
             })
             .collect();
+        // Where nothing is rescheduled, the next review is the one the first
+        // round set.
+        let kept_reviews: Vec<Option<DateTime<Utc>>> = questions
+            .iter()
+            .map(|q| {
+                let profile = match (&project, q.scope) {
+                    (Some(p), ConceptScope::Project) => p,
+                    _ => &primary,
+                };
+                profile.card(&q.concept).map(|c| c.due())
+            })
+            .collect();
+        // For a follow-up, about every concept of its first round
+        // (ADR-0010 D4).
+        let SessionEvent::SessionGraded { correct, total, .. } = &result.event;
+        let (correct, total) = (*correct, *total);
         let graded = GradedSession {
             key: key.clone(),
             author,
-            correct: result.grades.iter().filter(|(_, g)| g.is_correct()).count(),
-            total: result.grades.len(),
+            correct,
+            total,
             passed: result.passed,
             at: now,
         };
@@ -248,7 +289,12 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         }
         let mut events = recorded.events_in_order(journal.reviews.len());
         events.push(result.event.into());
-        let results = question_results(&questions, answers, &result.grades, &feedback, &events);
+        let mut results = question_results(&questions, answers, &result.grades, &feedback, &events);
+        if !records {
+            for (r, kept) in results.iter_mut().zip(kept_reviews) {
+                r.next_review = kept;
+            }
+        }
         let level_after = recorded.level_of(&place.primary_id).unwrap_or_default();
         let outcome = SessionOutcome {
             grades: result.grades,

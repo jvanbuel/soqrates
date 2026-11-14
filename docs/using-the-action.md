@@ -2,8 +2,10 @@
 
 Soqrates runs as a GitHub Action (ADR-0006). On every pull request it asks the
 author a few questions about the concepts in their change, as a comment. The
-author answers by ticking boxes or with a `/soqrates answer` comment, and gets
-the results in a new comment. `/socrates answer`, any letter case, and, when
+author answers in that comment, ticking boxes for multiple choice and typing
+open answers into the answer field under each open question, then ticks
+**Grade my answers**; authors who can't edit the comment answer with a
+`/soqrates answer` comment instead. They get the results in a new comment. `/socrates answer`, any letter case, and, when
 Soqrates posts as your own app, `@<app slug> answer` work too. A mistyped
 command gets a hint, and an answer comment can be edited until it is graded.
 While the answers are graded, the comment that submitted them shows 👀, then
@@ -43,8 +45,8 @@ jobs:
     # `/soqrates ...` and `/socrates ...` comments (startsWith ignores case)
     # and comments starting with a mention that say "answer", also when the
     # PR author edits them, and when Soqrates' own question comment is
-    # edited with "Grade my answers" ticked, so ticking an option doesn't
-    # start a run.
+    # edited with "Grade my answers" ticked, so ticking an option or typing
+    # into an answer field doesn't start a run.
     if: >-
       (github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot') ||
       (github.event.issue.pull_request && (
@@ -119,6 +121,11 @@ commit SHA if you prefer.
 
 Questions are multiple choice. To give experts open questions instead, set
 `SOQRATES_OPEN_QUESTIONS: "true"` in the job's `env` (ADR-0002 D5).
+
+Each wrong answer gets a new question about its concept in a follow-up
+comment, at most two rounds, and the check waits for it. To change the
+number of rounds, or turn them off, set `SOQRATES_MAX_FOLLOW_UPS` (e.g.
+`"0"`) in the job's `env` (ADR-0010 D2).
 
 Without the key of the chosen provider, for example on pull requests from
 forks, which get no secrets, the action skips the check with a notice.

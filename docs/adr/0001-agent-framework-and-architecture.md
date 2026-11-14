@@ -230,6 +230,11 @@ what changed since the previous one, that also asks again whatever the
 previous session left unanswered; a push with nothing new keeps the
 previous session (ADR-0002 D9).
 
+*Amended by [ADR-0010](0010-follow-up-rounds.md):* a graded session is
+final, but its commit is not: each wrong answer gets a new question in a
+follow-up round on the same commit, and the check stays `Pending` until
+the final round is graded.
+
 ### D9: Local hooks share one entry point
 **Enforcement:** automated
 

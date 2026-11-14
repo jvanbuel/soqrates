@@ -5,10 +5,13 @@
 use std::collections::BTreeSet;
 
 use crate::app::engine::Soqrates;
+use crate::app::grading::SessionOutcome;
 use crate::app::ports::{Clock, Codebase, Examiner, StateStore};
 use crate::app::stores::{Placement, load_or_new};
-use crate::assessment::{Concept, Diff, Question, QuestionBrief, QuestionKind, Weight};
-use crate::delivery::{BankedQuestion, PrRef, PrRounds, SeenQuestions, Session, pick};
+use crate::assessment::{
+    Answer, Concept, Diff, Question, QuestionBrief, QuestionFormat, QuestionKind, Weight,
+};
+use crate::delivery::{BankedQuestion, FollowUp, PrRef, PrRounds, SeenQuestions, Session, pick};
 use crate::ids::{AuthorId, BankId, ConceptId, SessionKey};
 use crate::learner::{Level, policy};
 use crate::{Error, Result};
@@ -254,6 +257,104 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         Ok(session)
     }
 
+    /// Open and persist the follow-up round after `session`, graded with
+    /// `outcome` (ADR-0010): one new multiple-choice question about each
+    /// concept answered wrongly, written from another angle than the
+    /// question it follows. `None` when every answer was right, or the
+    /// session was the last round `config.max_follow_ups` allows. The
+    /// examiner may read `code`, the codebase the session was asked about.
+    pub async fn follow_up(
+        &self,
+        session: &Session,
+        outcome: &SessionOutcome,
+        code: &impl Codebase,
+    ) -> Result<Option<Session>> {
+        let (first, round) = session.key().round();
+        if round > self.config.max_follow_ups {
+            return Ok(None);
+        }
+        let missed: Vec<(&Question, Option<Answer>)> = session
+            .questions()
+            .iter()
+            .filter_map(|q| {
+                let result = outcome.results.iter().find(|r| r.question == q.id)?;
+                (!result.is_correct()).then(|| {
+                    let answer = result.answer.clone().map(|body| Answer {
+                        question: q.id.clone(),
+                        body,
+                    });
+                    (q, answer)
+                })
+            })
+            .collect();
+        if missed.is_empty() {
+            return Ok(None);
+        }
+        let stores = self.stores().strict().await?;
+        let place = stores.place(session.author()).await?;
+        let level = load_or_new(place.primary, &place.learner).await?.level();
+        let mut questions: Vec<Question> = Vec::new();
+        for (previous, answer) in missed {
+            let concept = Concept {
+                id: previous.concept.clone(),
+                title: previous.concept.0.clone(),
+                summary: String::new(),
+                scope: previous.scope,
+                weight: Weight::Core,
+                locations: Vec::new(),
+            };
+            // Always multiple choice, from another angle: the earlier kind
+            // goes to the back (ADR-0010 D3).
+            let format = QuestionFormat::MultipleChoice;
+            let asked: Vec<QuestionKind> = std::iter::once(previous.kind)
+                .chain(questions.iter().map(|q| q.kind))
+                .collect();
+            let brief =
+                QuestionBrief::new(format, &policy::kinds_for(level, format, &asked), vec![]);
+            let mut q = self
+                .examiner
+                .write_follow_up(&concept, &brief, previous, answer.as_ref(), code)
+                .await?;
+            brief
+                .check(&q)
+                .map_err(|why| Error::Port(format!("examiner: {why}")))?;
+            if q.concept != previous.concept {
+                return Err(Error::Port(format!(
+                    "examiner: a follow-up about {:?} asks about {:?}",
+                    previous.concept.0, q.concept.0
+                )));
+            }
+            if same_text(q.body.prompt(), previous.body.prompt()) {
+                return Err(Error::Port(format!(
+                    "examiner: the follow-up about {:?} repeats the question",
+                    previous.concept.0
+                )));
+            }
+            q.scope = previous.scope;
+            questions.push(q);
+        }
+        let (settled, total) = match session.follow_up() {
+            Some(f) => (f.settled + outcome.correct(), f.total),
+            None => (outcome.correct(), session.questions().len()),
+        };
+        let follow_up = Session::open_follow_up(
+            first.follow_up(round + 1),
+            session.author().clone(),
+            questions,
+            FollowUp {
+                round: round + 1,
+                settled,
+                total,
+            },
+            self.clock.now(),
+        )?;
+        stores
+            .session_store(session.author())?
+            .save_session(&follow_up)
+            .await?;
+        Ok(Some(follow_up))
+    }
+
     /// The rounds asked so far on `pr`, authored by `author` (ADR-0002 D9).
     /// Kept with the author's sessions, never in the shared learner store
     /// when an organisation store exists (ADR-0003 D5).
@@ -271,4 +372,14 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let stores = self.stores().without_recovery();
         stores.session_store(author)?.save_rounds(rounds).await
     }
+}
+
+/// Whether `a` and `b` are the same text, ignoring case and whitespace.
+fn same_text(a: &str, b: &str) -> bool {
+    let words = |s: &str| {
+        s.split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+    };
+    words(a) == words(b)
 }

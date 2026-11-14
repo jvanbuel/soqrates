@@ -31,6 +31,10 @@ pub struct Config {
     /// gets multiple choice.
     #[serde(default)]
     pub open_questions: bool,
+    /// Follow-up rounds per session at most: new questions about the
+    /// concepts answered wrongly (ADR-0010 D2). 0 turns them off.
+    #[serde(default = "default_max_follow_ups")]
+    pub max_follow_ups: u32,
     /// Forge host -> the organisation that administers it (ADR-0003 D2, D5).
     pub forges: BTreeMap<String, String>,
     /// Whether rounds reuse questions from the question bank (ADR-0009).
@@ -57,11 +61,16 @@ impl Default for Config {
             pass_threshold: 0.6,
             mode: Mode::Advisory,
             open_questions: false,
+            max_follow_ups: default_max_follow_ups(),
             forges: BTreeMap::new(),
             question_bank: true,
             reask_after_rounds: default_reask_after_rounds(),
         }
     }
+}
+
+fn default_max_follow_ups() -> u32 {
+    2
 }
 
 pub struct Soqrates<S, E, C> {

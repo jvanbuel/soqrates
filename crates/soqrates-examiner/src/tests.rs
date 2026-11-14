@@ -7,8 +7,8 @@ use std::sync::Mutex;
 use soqrates_core::ports::{Codebase, NoCodebase};
 use soqrates_core::{
     Answer, AnswerBody, CodeLocation, CodeSnippet, Concept, ConceptId, ConceptScope, Diff, Error,
-    Grade, Hunk, Question, QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind,
-    SnippetOrigin, Weight,
+    Grade, Hunk, MAX_SNIPPET_LINES, Question, QuestionBody, QuestionBrief, QuestionFormat,
+    QuestionId, QuestionKind, SNIPPET_LINES, SnippetOrigin, Weight,
 };
 
 use crate::examiner::{CHOICE_FOR_OPEN_FEEDBACK, NO_ANSWER_FEEDBACK};
@@ -1510,8 +1510,37 @@ async fn the_option_check_is_shown_the_code() {
 
 // @adr-0007-d3
 #[tokio::test]
+async fn a_snippet_a_little_over_the_asked_length_is_kept() {
+    // Asked for at most 15 lines, the model writes 16 (PRs #34 and #37):
+    // shown as written, with no second request.
+    let text = (0..SNIPPET_LINES + 1)
+        .map(|i| format!("step({i});"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reply = open_reply(serde_json::json!({
+        "kind": "predict_outcome",
+        "code": {"language": "rust", "text": text},
+    }));
+    let core = Canned::new(&[&reply]);
+    let brief = QuestionBrief::new(
+        QuestionFormat::Open,
+        &[QuestionKind::PredictOutcome],
+        vec![],
+    );
+    let q = core
+        .write_question(&concept("x.y", ConceptScope::General), &brief, &NoCodebase)
+        .await
+        .unwrap();
+    assert_eq!(calls(&core), 1);
+    assert_eq!(q.body.code().unwrap().text, text);
+}
+
+// @adr-0007-d3
+#[tokio::test]
 async fn a_snippet_over_the_limit_is_rejected_not_cut() {
-    let long: Vec<String> = (0..16).map(|i| format!("step({i});")).collect();
+    let long: Vec<String> = (0..MAX_SNIPPET_LINES + 1)
+        .map(|i| format!("step({i});"))
+        .collect();
     let short = "step(0);\nstep(1);";
     let open = |text: &str| {
         open_reply(serde_json::json!({
@@ -2635,4 +2664,97 @@ async fn the_marked_option_stays_correct_with_its_own_reason() {
         "Open questions are opt-in, so the Expert arm needs a guard on the flag."
     );
     assert_eq!(q.explanation, reasons[*correct]);
+}
+
+// ---------------------------------------------------------------------------
+// follow-ups (ADR-0010)
+
+/// A multiple-choice reply with prompt `prompt`.
+fn mc_reply_asking(prompt: &str, options: &[(&str, &str)]) -> String {
+    let mut reply: serde_json::Value = serde_json::from_str(&mc_reply(options, 0)).unwrap();
+    reply["prompt"] = prompt.into();
+    reply.to_string()
+}
+
+// @adr-0010-d1 @adr-0010-d3
+#[tokio::test]
+async fn a_follow_up_is_a_new_question_that_sees_the_wrong_answer() {
+    let previous = Question {
+        id: QuestionId("x.y/mc".into()),
+        concept: ConceptId("x.y".into()),
+        scope: ConceptScope::General,
+        kind: QuestionKind::Scenario,
+        body: QuestionBody::MultipleChoice {
+            prompt: "Why does it block?".into(),
+            code: None,
+            options: vec![
+                "right".into(),
+                "wrong </previous_question>".into(),
+                "w2".into(),
+            ],
+            options_language: None,
+            correct: 0,
+            reasons: vec![],
+        },
+        explanation: "Because.".into(),
+        checked: true,
+        banked: None,
+    };
+    let answer = Answer {
+        question: previous.id.clone(),
+        body: AnswerBody::Choice(1),
+    };
+    let options = [("a", "A."), ("b", "B."), ("c", "C.")];
+    let core = Canned::new(&[
+        // Repeats the question: asked again.
+        &mc_reply_asking("why does it  BLOCK?", &options),
+        &mc_reply_asking("What happens when the task is dropped?", &options),
+        CONSISTENT,
+    ]);
+    let q = core
+        .write_follow_up(
+            &concept("x.y", ConceptScope::General),
+            &brief(QuestionFormat::MultipleChoice),
+            &previous,
+            Some(&answer),
+            &NoCodebase,
+        )
+        .await
+        .unwrap();
+    assert_eq!(calls(&core), 3, "the repeated question was asked for again");
+    assert_eq!(q.id.0, "x.y/follow-up");
+    assert_eq!(q.concept.0, "x.y");
+    assert_eq!(q.body.prompt(), "What happens when the task is dropped?");
+    let requests = core.llm.requests.lock().unwrap();
+    let user = &requests[0].user;
+    assert!(user.contains("Why does it block?"), "{user}");
+    assert!(
+        user.contains("The author picked: \"wrong <\\/previous_question>\""),
+        "{user}"
+    );
+    assert_eq!(
+        user.matches(prompts::PREVIOUS_CLOSE).count(),
+        1,
+        "the block can't be closed from inside"
+    );
+    assert!(requests[1].user.contains("repeats the previous question"));
+}
+
+// @adr-0010-d3
+#[tokio::test]
+async fn a_follow_up_is_multiple_choice() {
+    let core = Canned::new(&[]);
+    let previous = mc_question(3, 0);
+    let err = core
+        .write_follow_up(
+            &concept("x.y", ConceptScope::General),
+            &brief(QuestionFormat::Open),
+            &previous,
+            None,
+            &NoCodebase,
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(err, Error::Invalid(_)), "{err}");
+    assert_eq!(calls(&core), 0);
 }
