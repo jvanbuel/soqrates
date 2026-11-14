@@ -7,8 +7,8 @@ use std::sync::Mutex;
 use soqrates_core::ports::{Codebase, NoCodebase};
 use soqrates_core::{
     Answer, AnswerBody, CodeLocation, CodeSnippet, Concept, ConceptId, ConceptScope, Diff, Error,
-    Grade, Hunk, Question, QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind,
-    SnippetOrigin, Weight,
+    Grade, Hunk, MAX_SNIPPET_LINES, Question, QuestionBody, QuestionBrief, QuestionFormat,
+    QuestionId, QuestionKind, SNIPPET_LINES, SnippetOrigin, Weight,
 };
 
 use crate::examiner::{CHOICE_FOR_OPEN_FEEDBACK, NO_ANSWER_FEEDBACK};
@@ -1510,8 +1510,37 @@ async fn the_option_check_is_shown_the_code() {
 
 // @adr-0007-d3
 #[tokio::test]
+async fn a_snippet_a_little_over_the_asked_length_is_kept() {
+    // Asked for at most 15 lines, the model writes 16 (PRs #34 and #37):
+    // shown as written, with no second request.
+    let text = (0..SNIPPET_LINES + 1)
+        .map(|i| format!("step({i});"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let reply = open_reply(serde_json::json!({
+        "kind": "predict_outcome",
+        "code": {"language": "rust", "text": text},
+    }));
+    let core = Canned::new(&[&reply]);
+    let brief = QuestionBrief::new(
+        QuestionFormat::Open,
+        &[QuestionKind::PredictOutcome],
+        vec![],
+    );
+    let q = core
+        .write_question(&concept("x.y", ConceptScope::General), &brief, &NoCodebase)
+        .await
+        .unwrap();
+    assert_eq!(calls(&core), 1);
+    assert_eq!(q.body.code().unwrap().text, text);
+}
+
+// @adr-0007-d3
+#[tokio::test]
 async fn a_snippet_over_the_limit_is_rejected_not_cut() {
-    let long: Vec<String> = (0..16).map(|i| format!("step({i});")).collect();
+    let long: Vec<String> = (0..MAX_SNIPPET_LINES + 1)
+        .map(|i| format!("step({i});"))
+        .collect();
     let short = "step(0);\nstep(1);";
     let open = |text: &str| {
         open_reply(serde_json::json!({

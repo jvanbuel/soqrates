@@ -10,3 +10,4 @@ soqrates-core.workspace = true
 octocrab = "0.54"
 chrono.workspace = true
 serde_json.workspace = true
+serde.workspace = true

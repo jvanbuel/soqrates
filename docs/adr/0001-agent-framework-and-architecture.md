@@ -109,7 +109,7 @@ sequenceDiagram
     Author->>GH: reply with answers
     GH->>CI: workflow run (issue_comment)
     CI->>Core: run_check(pr)
-    Core->>GH: fetch_answers
+    Core->>GH: collect_answers
     Core->>LLM: grade(question, answer)
     Core->>Store: update FSRS cards and level, save profile
     Core->>GH: check = Success / Failure (Neutral if Advisory)
@@ -135,8 +135,8 @@ named `soqrates` (crate `soqrates-cli`) with the subcommands `hook`, `ci` and
 **Enforcement:** automated
 
 `soqrates-core` holds the domain (learner profiles, question policy, scheduling,
-the CI and hook workflows) and defines the *ports* `StateStore`, `Examiner`,
-`ScmProvider`, `Clock` and `Prompter`. It depends on no other workspace crate
+the CI and hook workflows) and defines the *ports* `StateStore`,
+`DocumentStore`, `Examiner`, `ScmProvider`, `Clock` and `Prompter`. It depends on no other workspace crate
 and only on this allowlist: `rs-fsrs`, `chrono`, `serde`, `serde_json`,
 `thiserror`. Adapters live in their own crates.
 
@@ -163,20 +163,34 @@ It is the only crate that may depend on `rig-core`.
 ### D4: SCM/CI providers behind `ScmProvider`; GitHub first
 **Enforcement:** automated
 
-CI and SCM interaction goes through the `ScmProvider` port (fetch a PR, post
-questions, read answers, set a check status). The first adapter is
+CI and SCM interaction goes through the `ScmProvider` port (fetch a PR,
+publish questions, collect answers, set a check status). The port says what
+the check wants to happen, not how a forge does it, and the provider keeps no
+state between calls: what a later call needs, such as the receipt of a
+submission, is a value the core passes along. The first adapter is
 `soqrates-scm-github`, using `octocrab`. It is the only crate that may depend
 on `octocrab`. Other providers (GitLab, Forgejo, ...) are new adapter crates.
 
 ### D5: Per-author state behind `StateStore`
 **Enforcement:** automated
 
-Learner profiles and pending sessions are persisted through the `StateStore`
-port, keyed by a stable `AuthorId` (a forge user ID such as `github:12345`, or
-`email:<address>` locally). Profiles of different authors never affect each
-other, and a profile survives across sessions. `soqrates-store` provides an
-in-memory store and a file store (one JSON document per author). A
-git-branch store and a hosted store can be added later behind the same port.
+Learner profiles, pending sessions and the other records are persisted
+through the `StateStore` port, keyed by a stable `AuthorId` (a forge user ID
+such as `github:12345`, or `email:<address>` locally). Profiles of different
+authors never affect each other, and a profile survives across sessions.
+
+`StateStore` is what the engine and every other caller use. It is implemented
+once, in the core, for every `DocumentStore`: the small storage port that
+backends implement. A `DocumentStore` holds JSON documents by kind and key,
+lists them (by group for the kinds looked up by another value: links by
+learner, bank questions by concept), removes them, and offers the two atomic
+steps the engine relies on: a compare-and-swap of one document (the
+conditional profile save) and the claim of a document into another kind
+(`begin_grading`). Serialisation lives in that one implementation, so a new
+record type or a new backend is not a change in every adapter. `soqrates-store`
+provides an in-memory, a file (one JSON document per record) and a SQL store
+(ADR-0005), each only a `DocumentStore`. A git-branch store and a hosted store
+can be added later behind the same port.
 
 ### D6: Spaced repetition with FSRS
 **Enforcement:** automated
@@ -237,6 +251,8 @@ push. An empty diff never asks any questions.
 SDK, with exactly these tools: `start_session`, `submit_answers`,
 `get_learner_profile` and `due_reviews`. Other harnesses get the same learner
 model and scheduling as the Soqrates agent. The agent is just one client.
+[ADR-0011](0011-question-feedback.md) D2 adds a fifth tool, `give_feedback`,
+for the author's feedback on graded questions.
 
 ### D11: Skills are portable `SKILL.md` files
 **Enforcement:** automated

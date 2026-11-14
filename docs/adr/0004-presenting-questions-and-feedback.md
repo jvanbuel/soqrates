@@ -158,7 +158,9 @@ fix by editing counted only by luck. So:
 - The answer command is `/soqrates answer` or `/socrates answer`, in any
   letter case, or a mention of the app Soqrates posts as, `@<app slug>
   answer` (ADR-0006 D4). One function in `soqrates-core` decides what a
-  command is, and the workflow filters list the same prefixes.
+  command is, and the workflow filters list the same prefixes. The syntax is
+  meant to be the same on every forge, so it stays in the core and is not
+  left to each `ScmProvider` adapter.
 - A bare `@soqrates` is never a command, even for an app with that slug: a
   person of that name would be notified of every answer, while an app is
   not notified when mentioned.
@@ -252,8 +254,10 @@ run, and its text is only read once the author submits.
 - Each multiple-choice question costs a second, short model call for the
   option check, and two more when it fails.
 - `Examiner::grade` returns a grade with feedback, and `ScmProvider`
-  gains `post_results`, `superseded_questions`, `supersede_questions`,
-  `hint_commands` and `acknowledge_answers` (D8, D9).
+  gains `post_results`, `freeze_superseded` and `acknowledge_answers`, and
+  `collect_answers` also hints at mistyped commands (D7, D8, D9). A
+  submission's receipt is passed from `collect_answers` to
+  `acknowledge_answers` and `post_results`, so the provider keeps no state.
 - The dogfooding workflow also runs on `issue_comment.edited` for comments
   that carry a Soqrates marker, and for the PR author's own command
   comments (D8).

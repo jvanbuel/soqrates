@@ -32,14 +32,14 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Verification | `Verification` | shared | Whether the forge vouches for an identity. Forge accounts are verified; a commit e-mail on its own is not. | |
 | Link | `IdentityLink` | learner | The fact that an identity belongs to a learner. Every identity has at most one link. | alias |
 | Link code | `LinkCode` | learner | A short-lived, single-use code that proves one person controls two identities. | token, OTP |
-| Learner store | `LearnerStore` | app | The store holding the profiles of linked learners, reachable from several forges. Owned by the learner or by an organisation. | |
+| Learner store | `StateStore` | app | The store (a `StateStore`) holding the profiles of linked learners, reachable from several forges. Owned by the learner or by an organisation. | |
 | Change | `Diff` | assessment | The unified diff Soqrates asks about. | |
 | Concept | `Concept` | assessment | One idea that a change exercises, e.g. Rust borrowing. The unit of learning. | topic, skill |
 | Concept scope | `ConceptScope` | assessment | `General` (a technology concept, e.g. `rust.async.cancellation`) or `Project` (specific to one organisation's code, ADR-0003). | |
 | Question | `Question` | assessment | A question about one concept, in one format. | exercise |
 | Format | `QuestionFormat` | assessment | Multiple choice or open. | |
 | Kind | `QuestionKind` | assessment | What a question asks of the author, e.g. predict an outcome or explain their change (ADR-0007). Separate from the format. | |
-| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and at most 15 lines, from the change or written by the examiner (ADR-0007). | |
+| Code snippet | `CodeSnippet` | assessment | Code shown with a question: a language and about 15 lines (at most 20), from the change or written by the examiner (ADR-0007). | |
 | Hunk | `Hunk` | assessment | A contiguous piece of a change in one file, as it is after the change. | |
 | Brief | `QuestionBrief` | assessment | What the examiner is asked to write for one concept: the format, the kinds allowed and the hunks (ADR-0007). | |
 | Answer | `Answer` | assessment | The author's response to a question. | reply |
@@ -58,6 +58,8 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Rounds | `PrRounds` | delivery | The rounds of one pull request, oldest first. | |
 | Question bank | `BankedQuestion` | delivery | The questions Soqrates wrote, kept per concept so that later rounds can ask them again instead of writing new ones. Holds only checked, general questions without code from a change (ADR-0009). | question pool |
 | Seen questions | `SeenQuestions` | delivery | Which bank questions one learner was shown, and in which of their rounds, so none is shown twice within a few rounds (ADR-0009). Kept with the bank, never in the learner store. | |
+| Asked questions | `AskedSession` | delivery | The questions of one graded session as they were asked, with the author's answers, grades and the explanations shown, kept for feedback in the store of the author's sessions, never in the learner store. Never asked again (ADR-0011). | |
+| Question feedback | `QuestionFeedback` | delivery | What the author of a graded session said about one of its questions: a kind (disagree, unclear, wrong explanation, off-topic, good) and optional text. Never changes a grade (ADR-0011). | complaint, appeal |
 | Follow-up | `FollowUp` | delivery | A round of new questions on the same commit about the concepts a graded session got wrong (ADR-0010). Its session is keyed `…#2`, `#3`. | retry, retake |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
 | Hook | `HookKind` | delivery | A local git `pre-commit` or jj `pre-push` invocation. | |
@@ -70,7 +72,7 @@ flowchart RL
     learner["learner<br/>profiles, levels, scheduling"] --> assessment["assessment<br/>concepts, questions, grades"]
     delivery["delivery<br/>sessions, checks, hooks"] --> learner
     delivery --> assessment
-    app["app<br/>engine, CI and hook workflows,<br/>ports, events"] --> delivery
+    app["app<br/>engine, store router, CI and hook<br/>workflows, ports, events"] --> delivery
     app --> learner
     app --> assessment
 ```
@@ -120,6 +122,14 @@ that their rules cannot be bypassed:
 Serde deserialization is how a store rehydrates them, and is used for
 nothing else. The `app` layer orchestrates (load, call the aggregate, save,
 emit events) and holds no domain rules.
+
+Inside `app`, `Soqrates` is a facade. Its operations are split by use case
+into services, one module and one `impl` each: identities, a learner's
+profile, composing a session, and grading. The services reach a store only
+through the store router (`app/stores`), which owns the knowledge of where
+data lives (ADR-0003 D4, D5) and of what to do when the learner store is
+unreachable, and which finishes interrupted gradings (D6) before it hands a
+store out. The router is crate-private, so it is not a glossary term.
 
 ### D4: Level rules
 **Enforcement:** automated
@@ -184,27 +194,68 @@ How "at most once" is achieved: grading is written ahead, in a grading
 journal kept with the session.
 
 1. **Grade.** The examiner grades the answers and the engine works out the
-   graded record and the learner profiles with the new reviews. Nothing is
-   written yet.
+   graded record and the reviews to add: for each question, the concept,
+   format, grade, time and identity (what `LearnerProfile::record` takes)
+   and the store whose profile gets it (ADR-0003 D4, D5). Nothing is
+   written yet. The `SessionOutcome` (level after, events, next review
+   dates) is worked out from the profiles as they are now.
 2. **Claim.** In one atomic step (`StateStore::begin_grading`), the pending
    session is removed and a journal entry holding the session, the graded
-   record and the profiles is stored. Of concurrent submissions exactly one
-   claims the session; the others fail with `NotFound`. A failure before
-   this step leaves the session pending.
-3. **Apply.** The profiles are saved, the session removed if a file store
-   still holds it, then the graded record. Each write replaces or removes
-   a whole document, so applying again changes nothing.
+   record and the reviews is stored. The journal holds what happened, not
+   what the profiles should look like afterwards: a whole profile in it
+   would, when applied, replace the reviews another session of the same
+   learner added meanwhile. Of concurrent submissions exactly one claims
+   the session; the others fail with `NotFound`. A failure before this
+   step leaves the session pending.
+3. **Apply.** For each profile the reviews go to, the engine loads it
+   fresh, records the journaled reviews on it and saves it with
+   `StateStore::save_profile_if_current`: a profile carries a version, and
+   the save is refused, saving nothing, if the stored profile is no longer
+   the version that was loaded (an optimistic check, one step in every
+   store). On a refusal the engine loads, records and saves again, so of
+   several sessions of one learner graded at the same moment all reviews
+   end up on the profile. The profile also keeps an opaque mark of every
+   session whose reviews it holds, and records the reviews of a session
+   only if its mark is not there yet, so applying again records nothing
+   twice. The marks are opaque so that the learner store holds no PR
+   reference (ADR-0003 D5); they are never removed, one per graded session
+   per profile, which is acceptable for now. Then the session is removed if
+   a file store still holds it, then the graded record.
 4. **Commit.** The journal entry is removed.
+
+The `SessionOutcome` is then corrected to what was recorded: the level,
+the events and the next review dates come from the profiles the reviews
+landed on, which may differ from those grading saw if another session was
+graded meanwhile.
+
+Journals written before the reviews were journaled hold the whole profiles
+to save instead (`profiles`, and no `reviews`). Such a journal is applied
+the old way, once: its profiles are saved, unless the graded record shows
+that was done. Profiles stored without a version or marks load as version 0
+with none.
 
 While the entry exists, the session is being graded. Every engine operation
 that touches a learner or a session first finishes the entries left behind,
-e.g. by a crash or a failed write, by applying them again. Entries whose
-graded record exists only need removing: their profiles are not saved
-again, since that could undo later reviews. An operation that can't finish
+e.g. by a crash or a failed write, by applying them again. The store
+router does this, not each operation: a service gets at the stores only
+through `strict` (finish them, fail if one can't be finished), `best_effort`
+(try, carry on) or `without_recovery` (for documents no grading writes,
+such as the rounds of a pull request), so a new operation has to choose.
+Applying a journal is part of the router, since recovery is nothing but
+applying the journals found in its stores. Entries whose
+graded record exists only need removing. An operation that can't finish
 an entry fails, except looking up a session: the CI check then reports
-"being graded" rather than asking again. It looks a session up in the
-order grading moves it, pending, being graded, graded, so it never misses a
-grading by another run and never opens a second session for its key.
+"being graded" rather than asking again. `Soqrates::session_state` is the
+one query for where a session is: `Absent`, `Pending`, `Grading` or
+`Graded`. It looks a session up in the order grading moves it, pending,
+being graded, graded, so it never misses a grading by another run and never
+opens a second session for its key.
+
+A `SessionKey` keeps its string form, which stores and comment markers hold
+and MCP clients may choose freely. Its CI form `{repo}#{number}@{head}`,
+the hook form and the MCP form are built and read only in `ids`, through
+typed constructors and accessors, so no other code formats or parses a
+key.
 
 ### D7: Domain events
 **Enforcement:** automated
@@ -275,7 +326,10 @@ check (ADR-0001 D8) decides each new round like this:
   new head. If it was graded, its result is reported again. So a push can't
   wipe out a failed or unanswered round by asking nothing.
 
-A round records every concept its session asks, carried ones included.
+A round records every concept its session asks, carried ones included, and
+whether its session is its own or carried forward. Rounds stored before
+that was recorded are read as own when the head in the session key is the
+round's head, and as carried otherwise.
 The rounds hold heads, session keys and concept IDs, no question or answer
 text, and are kept with the author's sessions: in the organisation's store
 when there is one, never in the shared learner store (ADR-0003 D5). The

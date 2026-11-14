@@ -1,11 +1,12 @@
 @adr-0001-d10
 Feature: The core is exposed as an MCP server
   soqrates-mcp exposes the core through MCP with exactly these tools:
-  start_session, submit_answers, get_learner_profile and due_reviews. Other
+  start_session, submit_answers, get_learner_profile and due_reviews, plus
+  give_feedback for feedback on graded questions (ADR-0011). Other
   harnesses get the same learner profiles and scheduling as the Soqrates agent.
 
-  @adr-0001-d10
-  Scenario: The MCP server exposes exactly the four core tools
+  @adr-0001-d10 @adr-0011-d2
+  Scenario: The MCP server exposes exactly the four core tools and give_feedback
     When I list the MCP tools
     Then the MCP tools are exactly:
       | tool                |
@@ -13,6 +14,7 @@ Feature: The core is exposed as an MCP server
       | submit_answers      |
       | get_learner_profile |
       | due_reviews         |
+      | give_feedback       |
     And no MCP tool is listed twice
 
   @adr-0001-d10

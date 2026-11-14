@@ -5,20 +5,22 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Duration, TimeZone, Utc};
-use soqrates_core::answer_command::{Command, hints_due, parse_answers, read_command};
+use soqrates_core::answer_command::{
+    Command, hints_due, parse_answers, parse_feedback, read_command, read_feedback,
+};
 use soqrates_core::ports::{
-    BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, Examiner, LearnerStore,
-    Prompter, ScmProvider, StateStore,
+    BlameLine, Clock, CodeCommit, CodeMatch, CodeSource, Codebase, Doc, DocumentStore,
+    EarlierSessions, Examiner, Frozen, Kind, Prompter, Removal, ScmProvider, Submission,
 };
 use soqrates_core::{
-    Answer, AnswerBody, AuthorId, BankedQuestion, CheckStatus, CodeLocation, CodeSnippet, Concept,
-    ConceptId, ConceptScope, Diff, Error, Grade, GradedSession, Grading, GradingJournal, Identity,
-    IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, PullRequest, Question,
-    QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind, Result, SeenQuestions,
-    Session, SessionKey, SessionOutcome, SnippetOrigin, Weight,
+    Answer, AnswerBody, AuthorId, CheckStatus, CodeLocation, CodeSnippet, Concept, ConceptId,
+    ConceptScope, Diff, Error, FeedbackCommand, FeedbackRequest, Grade, Grading, PrRef,
+    PullRequest, Question, QuestionBody, QuestionBrief, QuestionFormat, QuestionId, QuestionKind,
+    Result, Session, SessionKey, SessionOutcome, SnippetOrigin, Weight,
 };
 use soqrates_store::{FileStore, InMemoryStore, SqlStore};
 
@@ -502,7 +504,7 @@ pub struct ScmState {
     pub commits: HashMap<PrRef, Vec<(String, Diff)>>,
     /// Every `diff_between` call, in order: the pull request, from and to.
     pub compared: Vec<(PrRef, String, String)>,
-    /// Every `post_questions` call, in order.
+    /// Every `publish_questions` call, in order.
     pub posted: Vec<(PrRef, Session)>,
     /// Every `set_check` call, in order.
     pub checks: Vec<(PrRef, CheckStatus)>,
@@ -513,14 +515,14 @@ pub struct ScmState {
     /// Answers that don't count as a reply (ADR-0004 D3): ticked but not
     /// submitted, or given by someone other than the author.
     pub ignored: Vec<(SessionKey, Vec<Answer>)>,
-    /// Make the next `post_questions` call fail, as on a transient error.
+    /// Make the next `publish_questions` call fail, as on a transient error.
     pub fail_next_post: bool,
     /// Every `post_results` call, in order.
     pub results: Vec<(PrRef, SessionKey, SessionOutcome)>,
     /// Question comments frozen as superseded: the session key, the session
     /// shown (if it was still stored) and the key of the newer session.
     pub superseded: Vec<(PrRef, SessionKey, Option<Session>, SessionKey)>,
-    /// Make the next `supersede_questions` call fail.
+    /// Make freezing the next superseded question comment fail.
     pub fail_next_supersede: bool,
     /// The slug of the app Soqrates posts as, if any (ADR-0004 D8).
     pub app_slug: Option<String>,
@@ -528,14 +530,14 @@ pub struct ScmState {
     pub comments: Vec<FakeComment>,
     /// The comments that got a hint, by id, in order (ADR-0004 D8).
     pub hints: Vec<u64>,
-    /// What submitted the answers that `fetch_answers` last found, by
-    /// session (ADR-0004 D9).
-    pub submitted_by: HashMap<SessionKey, Submitter>,
     /// The reactions currently on submitting comments (ADR-0004 D9).
     pub reactions: Vec<(Submitter, Reaction)>,
     /// What the author saw happen on the pull request, in order: check
     /// summaries, reactions and results (ADR-0004 D9).
     pub timeline: Vec<String>,
+    /// Soqrates' answers to feedback comments: the comment id and the note
+    /// (ADR-0011 D2).
+    pub feedback_notes: Vec<(u64, String)>,
     /// The question comment of each session as last edited: the answers in
     /// its boxes and answer fields (ADR-0004 D3, D11).
     pub question_comments: HashMap<SessionKey, FakeQuestionComment>,
@@ -550,6 +552,9 @@ pub struct FakeComment {
     pub session: SessionKey,
     pub author: AuthorId,
     pub body: String,
+    /// How many results had been posted, on any pull request, when this
+    /// comment was: the results before it in the forge's order.
+    pub results_before: usize,
 }
 
 /// A question comment as someone edited it: the options ticked and the
@@ -689,12 +694,14 @@ impl FakeScm {
     pub fn comment(&self, pr: &PrRef, session: &SessionKey, author: &AuthorId, body: &str) -> u64 {
         let mut state = self.state.lock().unwrap();
         let id = state.comments.len() as u64 + 1;
+        let results_before = state.results.len();
         state.comments.push(FakeComment {
             id,
             pr: pr.clone(),
             session: session.clone(),
             author: author.clone(),
             body: body.to_string(),
+            results_before,
         });
         id
     }
@@ -787,6 +794,8 @@ impl CodeSource for FakeCheckout {
 }
 
 impl ScmProvider for FakeScm {
+    type Receipt = Submitter;
+
     async fn pull_request(&self, pr: &PrRef) -> Result<PullRequest> {
         self.state
             .lock()
@@ -820,7 +829,7 @@ impl ScmProvider for FakeScm {
         )))
     }
 
-    async fn post_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
+    async fn publish_questions(&self, pr: &PrRef, session: &Session) -> Result<()> {
         let mut state = self.state.lock().unwrap();
         if std::mem::take(&mut state.fail_next_post) {
             return Err(Error::Port("the forge is unavailable".into()));
@@ -829,42 +838,83 @@ impl ScmProvider for FakeScm {
         Ok(())
     }
 
-    async fn post_results(
+    async fn freeze_superseded(
         &self,
         pr: &PrRef,
-        session: &Session,
-        outcome: &SessionOutcome,
-    ) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
-        state
-            .results
-            .push((pr.clone(), session.key().clone(), outcome.clone()));
-        state.timeline.push("results".into());
-        // 👀 becomes ✅ (ADR-0004 D9).
-        if let Some(by) = state.submitted_by.get(session.key()).copied() {
+        current: &Session,
+        sessions: &impl EarlierSessions,
+    ) -> Result<Frozen> {
+        let keys = {
+            let state = self.state.lock().unwrap();
+            let posted = |k: &SessionKey| state.posted.iter().any(|(p, s)| p == pr && s.key() == k);
+            if !posted(current.key()) {
+                return Ok(Frozen::default());
+            }
+            let frozen = |k: &SessionKey| {
+                state.results.iter().any(|(p, r, _)| p == pr && r == k)
+                    || state
+                        .superseded
+                        .iter()
+                        .any(|(p, r, _, _)| p == pr && r == k)
+            };
+            let mut keys: Vec<SessionKey> = Vec::new();
+            for (_, s) in state.posted.iter().filter(|(p, _)| p == pr) {
+                let k = s.key();
+                if k != current.key() && !frozen(k) && !keys.contains(k) {
+                    keys.push(k.clone());
+                }
+            }
+            keys
+        };
+        let mut done = Frozen::default();
+        for key in keys {
+            if !sessions.may_freeze(&key) {
+                continue;
+            }
+            let session = sessions.pending(&key).await?;
+            let mut state = self.state.lock().unwrap();
+            if std::mem::take(&mut state.fail_next_supersede) {
+                done.failure = Some(Error::Port("the forge is unavailable".into()));
+                break;
+            }
             state
-                .reactions
-                .retain(|(s, r)| !(*s == by && *r == Reaction::Eyes));
-            state.reactions.push((by, Reaction::Done));
-            state.timeline.push(format!("{by:?}: {:?}", Reaction::Done));
+                .superseded
+                .push((pr.clone(), key.clone(), session, current.key().clone()));
+            done.frozen.push(key);
         }
-        Ok(())
+        Ok(done)
     }
 
     /// The structured answers given with [`FakeScm::reply`], else those of
     /// the latest answer comment of the author, read as the GitHub adapter
     /// reads it (ADR-0004 D8), and of the question comment, if the author
     /// edited it last (D3, D11). Per question, the answer comment wins. They
-    /// are submitted by the answer comment or by "Grade my answers".
-    async fn fetch_answers(&self, pr: &PrRef, session: &Session) -> Result<Option<Vec<Answer>>> {
+    /// are submitted by the answer comment or by "Grade my answers". Also
+    /// hints at the author's near-miss commands, once each.
+    async fn collect_answers(
+        &self,
+        pr: &PrRef,
+        session: &Session,
+    ) -> Result<Option<Submission<Submitter>>> {
         let mut state = self.state.lock().unwrap();
-        if let Some(answers) = state.replies.get(session.key()).cloned() {
-            state
-                .submitted_by
-                .insert(session.key().clone(), Submitter::Reply);
-            return Ok(Some(answers));
-        }
         let slug = state.app_slug.clone();
+        let candidates: Vec<(u64, String)> = state
+            .comments
+            .iter()
+            .filter(|c| c.pr == *pr && c.session == *session.key() && c.author == *session.author())
+            .map(|c| (c.id, c.body.clone()))
+            .collect();
+        let candidates: Vec<(u64, &str)> =
+            candidates.iter().map(|(i, b)| (*i, b.as_str())).collect();
+        let due = hints_due(&candidates, &state.hints, slug.as_deref());
+        state.hints.extend(due);
+
+        if let Some(answers) = state.replies.get(session.key()).cloned() {
+            return Ok(Some(Submission {
+                answers,
+                receipt: Submitter::Reply,
+            }));
+        }
         let found = state
             .comments
             .iter()
@@ -887,7 +937,7 @@ impl ScmProvider for FakeScm {
             .filter(|q| q.editor == *session.author())
             .cloned();
         let done = in_place.as_ref().is_some_and(|q| q.done);
-        let (submitter, mut answers) = match from_comment {
+        let (receipt, mut answers) = match from_comment {
             Some((id, answers)) => (Submitter::Comment(id), answers),
             None if done => (Submitter::QuestionComment, Vec::new()),
             None => return Ok(None),
@@ -899,82 +949,104 @@ impl ScmProvider for FakeScm {
         }
         let position = |a: &Answer| session.questions().iter().position(|q| q.id == a.question);
         answers.sort_by_key(position);
-        state.submitted_by.insert(session.key().clone(), submitter);
-        Ok(Some(answers))
+        Ok(Some(Submission { answers, receipt }))
     }
 
-    async fn hint_commands(&self, pr: &PrRef, session: &Session) -> Result<()> {
+    async fn acknowledge_answers(
+        &self,
+        _pr: &PrRef,
+        _session: &Session,
+        receipt: Submitter,
+    ) -> Result<Submitter> {
         let mut state = self.state.lock().unwrap();
-        let slug = state.app_slug.clone();
-        let candidates: Vec<(u64, String)> = state
-            .comments
-            .iter()
-            .filter(|c| c.pr == *pr && c.session == *session.key() && c.author == *session.author())
-            .map(|c| (c.id, c.body.clone()))
-            .collect();
-        let candidates: Vec<(u64, &str)> =
-            candidates.iter().map(|(i, b)| (*i, b.as_str())).collect();
-        let due = hints_due(&candidates, &state.hints, slug.as_deref());
-        state.hints.extend(due);
-        Ok(())
+        state.reactions.push((receipt, Reaction::Eyes));
+        state
+            .timeline
+            .push(format!("{receipt:?}: {:?}", Reaction::Eyes));
+        Ok(receipt)
     }
 
-    async fn acknowledge_answers(&self, _pr: &PrRef, session: &Session) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
-        if let Some(by) = state.submitted_by.get(session.key()).copied() {
-            state.reactions.push((by, Reaction::Eyes));
-            state.timeline.push(format!("{by:?}: {:?}", Reaction::Eyes));
-        }
-        Ok(())
-    }
-
-    async fn superseded_questions(&self, pr: &PrRef, current: &Session) -> Result<Vec<SessionKey>> {
-        let state = self.state.lock().unwrap();
-        let posted = |k: &SessionKey| state.posted.iter().any(|(p, s)| p == pr && s.key() == k);
-        if !posted(current.key()) {
-            return Ok(Vec::new());
-        }
-        let frozen = |k: &SessionKey| {
-            state.results.iter().any(|(p, r, _)| p == pr && r == k)
-                || state
-                    .superseded
-                    .iter()
-                    .any(|(p, r, _, _)| p == pr && r == k)
-        };
-        let mut keys: Vec<SessionKey> = Vec::new();
-        for (_, s) in state.posted.iter().filter(|(p, _)| p == pr) {
-            let k = s.key();
-            if k != current.key() && !frozen(k) && !keys.contains(k) {
-                keys.push(k.clone());
-            }
-        }
-        Ok(keys)
-    }
-
-    async fn supersede_questions(
+    async fn post_results(
         &self,
         pr: &PrRef,
-        superseded: &SessionKey,
-        session: Option<&Session>,
-        current: &Session,
+        session: &Session,
+        outcome: &SessionOutcome,
+        receipt: &Submitter,
     ) -> Result<()> {
         let mut state = self.state.lock().unwrap();
-        if std::mem::take(&mut state.fail_next_supersede) {
-            return Err(Error::Port("the forge is unavailable".into()));
-        }
-        state.superseded.push((
-            pr.clone(),
-            superseded.clone(),
-            session.cloned(),
-            current.key().clone(),
-        ));
+        state
+            .results
+            .push((pr.clone(), session.key().clone(), outcome.clone()));
+        state.timeline.push("results".into());
+        // 👀 becomes ✅ (ADR-0004 D9).
+        let by = *receipt;
+        state
+            .reactions
+            .retain(|(s, r)| !(*s == by && *r == Reaction::Eyes));
+        state.reactions.push((by, Reaction::Done));
+        state.timeline.push(format!("{by:?}: {:?}", Reaction::Done));
         Ok(())
     }
 
-    async fn set_check(&self, pr: &PrRef, status: CheckStatus, summary: &str) -> Result<()> {
+    /// The author's feedback comments not answered yet, each about the
+    /// session of the latest results posted on the pull request before it,
+    /// as the GitHub adapter reads them (ADR-0011 D2, D4).
+    async fn feedback_commands(
+        &self,
+        pr: &PrRef,
+        author: &AuthorId,
+    ) -> Result<Vec<FeedbackCommand>> {
+        let state = self.state.lock().unwrap();
+        let slug = state.app_slug.clone();
+        Ok(state
+            .comments
+            .iter()
+            .filter(|c| c.pr == *pr && c.author == *author)
+            .filter(|c| !state.feedback_notes.iter().any(|(id, _)| *id == c.id))
+            .filter_map(|c| {
+                let request = read_feedback(&c.body, slug.as_deref())?;
+                let session = state.results[..c.results_before]
+                    .iter()
+                    .rev()
+                    .find(|(p, _, _)| p == pr)
+                    .map(|(_, key, _)| key.clone());
+                Some(FeedbackCommand {
+                    source: format!("fake:{}", c.id),
+                    session,
+                    request,
+                })
+            })
+            .collect())
+    }
+
+    async fn answer_feedback(
+        &self,
+        _pr: &PrRef,
+        command: &FeedbackCommand,
+        note: &str,
+    ) -> Result<()> {
+        let id = command
+            .source
+            .strip_prefix("fake:")
+            .and_then(|id| id.parse().ok())
+            .expect("a fake feedback source");
+        self.state
+            .lock()
+            .unwrap()
+            .feedback_notes
+            .push((id, note.to_string()));
+        Ok(())
+    }
+
+    async fn set_check(
+        &self,
+        pull: &PullRequest,
+        status: CheckStatus,
+        summary: &str,
+    ) -> Result<()> {
         let mut state = self.state.lock().unwrap();
-        state.checks.push((pr.clone(), status));
-        state.summaries.push((pr.clone(), summary.to_string()));
+        state.checks.push((pull.pr.clone(), status));
+        state.summaries.push((pull.pr.clone(), summary.to_string()));
         state.timeline.push(format!("check {status:?}: {summary}"));
         Ok(())
     }
@@ -994,6 +1066,11 @@ pub struct ScriptedPrompter {
     pub correct_from: Option<usize>,
     pub asked: Vec<Question>,
     pub reported: Vec<SessionOutcome>,
+    /// What the author types at the feedback prompt; Enter when `None`
+    /// (ADR-0011 D2).
+    pub feedback: Option<String>,
+    /// What the author was told about their feedback.
+    pub noted: Vec<String>,
 }
 
 impl Prompter for ScriptedPrompter {
@@ -1006,6 +1083,17 @@ impl Prompter for ScriptedPrompter {
 
     fn report(&mut self, outcome: &SessionOutcome) {
         self.reported.push(outcome.clone());
+    }
+
+    fn ask_feedback(&mut self, _outcome: &SessionOutcome) -> Result<Option<FeedbackRequest>> {
+        match self.feedback.take() {
+            None => Ok(None),
+            Some(line) => parse_feedback(&line).map(Some).map_err(Error::Invalid),
+        }
+    }
+
+    fn feedback_noted(&mut self, note: &str) {
+        self.noted.push(note.to_string());
     }
 }
 
@@ -1039,6 +1127,29 @@ pub struct Faults {
     pub allowed: usize,
     /// Writes that fail after those; `usize::MAX` for all of them.
     pub failing: usize,
+    /// Makes the first two conditional profile saves collide (ADR-0002 D6).
+    pub meet: Option<Arc<Meeting>>,
+}
+
+/// Holds back the first of two conditional profile saves until the second
+/// arrives, so that both were loaded before either is saved: two sessions
+/// of one learner graded at the same moment.
+#[derive(Debug, Default)]
+pub struct Meeting {
+    arrived: AtomicUsize,
+    /// How many saves the store refused because the profile had changed.
+    pub refused: AtomicUsize,
+}
+
+impl Meeting {
+    async fn arrive(&self) {
+        if self.arrived.fetch_add(1, Ordering::SeqCst) >= 2 {
+            return;
+        }
+        while self.arrived.load(Ordering::SeqCst) < 2 {
+            tokio::task::yield_now().await;
+        }
+    }
 }
 
 impl AnyStore {
@@ -1117,105 +1228,92 @@ fn unreachable() -> Error {
     Error::Port("the learner store cannot be reached".into())
 }
 
-macro_rules! delegate {
-    ($self:ident, $method:ident($($arg:expr),*)) => {
-        match $self {
-            AnyStore::Memory(s) => s.$method($($arg),*).await,
-            AnyStore::File(s) => s.$method($($arg),*).await,
-            AnyStore::Sql(s) => s.$method($($arg),*).await,
-            AnyStore::Unreachable(_) => Err(unreachable()),
-            // Not recursive, so the futures stay nameable.
-            AnyStore::Faulty(s, _) => match &**s {
-                AnyStore::Memory(s) => s.$method($($arg),*).await,
-                AnyStore::File(s) => s.$method($($arg),*).await,
-                AnyStore::Sql(s) => s.$method($($arg),*).await,
-                _ => unreachable!("faults are injected into a base store"),
-            },
+/// Runs `$call` on the base store, whichever it is.
+macro_rules! on_base {
+    ($store:expr, $s:ident => $call:expr) => {
+        match $store {
+            AnyStore::Memory($s) => $call,
+            AnyStore::File($s) => $call,
+            AnyStore::Sql($s) => $call,
+            _ => unreachable!("faults are injected into a base store"),
         }
     };
 }
 
-/// A write: fails if injected faults say so, else is delegated.
-macro_rules! write {
-    ($self:ident, $method:ident($($arg:expr),*)) => {{
-        $self.fault(stringify!($method))?;
-        delegate!($self, $method($($arg),*))
-    }};
-}
-
-impl StateStore for AnyStore {
-    async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
-        delegate!(self, load_profile(learner))
-    }
-    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        write!(self, save_profile(profile))
-    }
-    async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
-        write!(self, delete_learner(learner))
-    }
-    async fn learner_of(&self, identity: &Identity) -> Result<Option<LearnerId>> {
-        delegate!(self, learner_of(identity))
-    }
-    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        write!(self, save_link(link))
-    }
-    async fn delete_link(&self, identity: &Identity) -> Result<()> {
-        write!(self, delete_link(identity))
-    }
-    async fn links_of(&self, learner: &LearnerId) -> Result<Vec<IdentityLink>> {
-        delegate!(self, links_of(learner))
-    }
-    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        write!(self, save_link_code(code))
-    }
-    async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
-        delegate!(self, load_link_code(code))
-    }
-    async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        delegate!(self, load_session(key))
-    }
-    async fn save_session(&self, session: &Session) -> Result<()> {
-        write!(self, save_session(session))
-    }
-    async fn delete_session(&self, key: &SessionKey) -> Result<()> {
-        write!(self, delete_session(key))
-    }
-    async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
-        write!(self, begin_grading(journal))
-    }
-    async fn load_grading(&self, key: &SessionKey) -> Result<Option<GradingJournal>> {
-        delegate!(self, load_grading(key))
-    }
-    async fn gradings(&self) -> Result<Vec<GradingJournal>> {
-        delegate!(self, gradings())
-    }
-    async fn end_grading(&self, key: &SessionKey) -> Result<()> {
-        write!(self, end_grading(key))
-    }
-    async fn save_graded(&self, graded: &GradedSession) -> Result<()> {
-        write!(self, save_graded(graded))
-    }
-    async fn load_graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
-        delegate!(self, load_graded(key))
-    }
-    async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
-        delegate!(self, load_rounds(pr))
-    }
-    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        write!(self, save_rounds(rounds))
-    }
-    async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
-        delegate!(self, bank_questions(concept))
-    }
-    async fn save_bank_question(&self, question: &BankedQuestion) -> Result<()> {
-        write!(self, save_bank_question(question))
-    }
-    async fn load_seen(&self, learner: &LearnerId) -> Result<Option<SeenQuestions>> {
-        delegate!(self, load_seen(learner))
-    }
-    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
-        write!(self, save_seen(seen))
+/// Faults are injected by `StateStore` method, as scenarios name them. A
+/// `StateStore` is the core's one implementation over the document port, so
+/// each write on the port is the write of one such method.
+fn write_method(removals: &[Removal<'_>]) -> &'static str {
+    match removals {
+        [Removal::Key(Kind::Session, _)] => "delete_session",
+        [Removal::Key(Kind::Link, _)] => "delete_link",
+        [Removal::Key(Kind::Grading, _)] => "end_grading",
+        _ => "delete_learner",
     }
 }
 
-impl LearnerStore for AnyStore {}
+fn save_method(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Profile => "save_profile",
+        Kind::Link => "save_link",
+        Kind::LinkCode => "save_link_code",
+        Kind::Session => "save_session",
+        Kind::Grading => "begin_grading",
+        Kind::Graded => "save_graded",
+        Kind::Rounds => "save_rounds",
+        Kind::Bank => "save_bank_question",
+        Kind::Seen => "save_seen",
+        Kind::Asked => "save_asked",
+    }
+}
+
+macro_rules! delegate {
+    ($self:ident, $method:ident($($arg:expr),*)) => {
+        match $self {
+            AnyStore::Unreachable(_) => Err(unreachable()),
+            // Not recursive, so the futures stay nameable.
+            AnyStore::Faulty(s, _) => on_base!(&**s, s => s.$method($($arg),*).await),
+            base => on_base!(base, s => s.$method($($arg),*).await),
+        }
+    };
+}
+
+impl DocumentStore for AnyStore {
+    async fn load(&self, kind: Kind, key: &str) -> Result<Option<Doc>> {
+        delegate!(self, load(kind, key))
+    }
+    async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        self.fault(save_method(kind))?;
+        delegate!(self, save(kind, key, doc))
+    }
+    async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
+        delegate!(self, list(kind, group))
+    }
+    async fn remove(&self, removals: &[Removal<'_>]) -> Result<()> {
+        self.fault(write_method(removals))?;
+        delegate!(self, remove(removals))
+    }
+    async fn swap(&self, kind: Kind, key: &str, expected: Option<&Doc>, new: &Doc) -> Result<bool> {
+        // The conditional save of a profile is the same write to the
+        // learner as `save_profile`, for faults.
+        self.fault(save_method(kind))?;
+        let meet = match self {
+            AnyStore::Faulty(_, faults) if kind == Kind::Profile => {
+                faults.lock().unwrap().meet.clone()
+            }
+            _ => None,
+        };
+        if let Some(meet) = &meet {
+            meet.arrive().await;
+        }
+        let swapped = delegate!(self, swap(kind, key, expected, new))?;
+        if let (false, Some(meet)) = (swapped, &meet) {
+            meet.refused.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(swapped)
+    }
+    async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
+        self.fault(save_method(to))?;
+        delegate!(self, claim(from, to, key, doc))
+    }
+}

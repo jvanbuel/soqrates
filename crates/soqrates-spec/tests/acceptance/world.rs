@@ -127,6 +127,10 @@ pub struct SpecWorld {
     pub mcp_result: Option<soqrates_core::Result<serde_json::Value>>,
     /// The question about the concept of each round, in order (ADR-0009).
     pub bank_rounds: Vec<Question>,
+    /// The lines of the latest export of asked questions (ADR-0011 D9).
+    pub export: Vec<serde_json::Value>,
+    /// The sessions of one learner that are graded together (ADR-0002 D6).
+    pub racing: Vec<Session>,
     sessions_started: usize,
 }
 
@@ -185,6 +189,8 @@ impl SpecWorld {
             identity: IdentityState::default(),
             mcp_result: None,
             bank_rounds: Vec::new(),
+            export: Vec::new(),
+            racing: Vec::new(),
             sessions_started: 0,
         }
     }

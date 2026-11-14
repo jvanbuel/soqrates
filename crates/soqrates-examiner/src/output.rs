@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use soqrates_core::{
     CodeLocation, CodeSnippet, Concept, ConceptId, ConceptScope, Grade, Grading, MAX_SNIPPET_LINES,
-    Question, QuestionBody, QuestionBrief, QuestionKind, SnippetOrigin, Weight,
+    Question, QuestionBody, QuestionBrief, QuestionKind, SNIPPET_LINES, SnippetOrigin, Weight,
 };
 
 use crate::prompts::MAX_CONCEPTS;
@@ -68,7 +68,7 @@ pub struct RawLocation {
 pub struct RawCode {
     /// A language tag such as `rust` or `python`.
     pub language: String,
-    /// At most 15 lines of code, as shown to the author.
+    /// About 15 lines of code, at most 20, as shown to the author.
     pub text: String,
 }
 
@@ -344,7 +344,7 @@ pub fn validate_multiple_choice(
             .find(|o| o.lines().count() > MAX_SNIPPET_LINES)
     {
         return Err(format!(
-            "a code option has {} lines; options have at most {MAX_SNIPPET_LINES}",
+            "a code option has {} lines; options have at most {SNIPPET_LINES}",
             long.lines().count()
         ));
     }
@@ -453,8 +453,9 @@ pub fn parse_kind(kind: &str, brief: &QuestionBrief) -> Result<QuestionKind, Str
 /// - `explain_your_change` shows one of the brief's hunks, chosen by its
 ///   1-based number and copied from it, never retyped by the model.
 /// - The other kinds show the snippet the model wrote: 1 to
-///   [`MAX_SNIPPET_LINES`] lines. A longer one is rejected, never cut, so
-///   that the question is about the code as shown.
+///   [`MAX_SNIPPET_LINES`] lines, though the model is asked for at most
+///   [`SNIPPET_LINES`]. A longer one is rejected, never cut, so that the
+///   question is about the code as shown.
 /// - `spot_the_bug` and `choose_the_fix` quote their flawed line, which
 ///   must be a line of the snippet as shown.
 pub fn validate_code(
@@ -484,7 +485,7 @@ pub fn validate_code(
             let lines = text.lines().count();
             if lines > MAX_SNIPPET_LINES {
                 return Err(format!(
-                    "the code has {lines} lines; write a snippet of at most {MAX_SNIPPET_LINES}"
+                    "the code has {lines} lines; write a snippet of at most {SNIPPET_LINES}"
                 ));
             }
             let language = match clean_language(&code.language) {

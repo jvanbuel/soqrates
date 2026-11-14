@@ -9,14 +9,24 @@
 //! while an app is not notified when mentioned. A comment that starts like a
 //! command but isn't one is a near miss, which the forge answers with a hint.
 //!
+//! A comment that starts with `/soqrates feedback`, read just as forgivingly,
+//! gives feedback on a graded question (ADR-0011 D2).
+//!
 //! This is the one place that decides what a command looks like, so the
 //! workflow filters (which list [`COMMAND_PREFIXES`]) and the parser cannot
 //! drift apart.
 
 use crate::assessment::{Answer, AnswerBody, Question, QuestionBody};
+use crate::delivery::{FeedbackKind, FeedbackRequest, QuestionRef};
 
 /// The canonical answer command, as shown to authors.
 pub const ANSWER_COMMAND: &str = "/soqrates answer";
+
+/// The canonical feedback command, as shown to authors (ADR-0011 D2).
+pub const FEEDBACK_COMMAND: &str = "/soqrates feedback";
+
+/// The verb of the feedback command.
+const FEEDBACK_VERB: &str = "feedback";
 
 /// The words a command may start with, besides a mention of the posting
 /// app. Compared case-insensitively.
@@ -37,6 +47,8 @@ const NEAR_MISS_DISTANCE: usize = 2;
 pub enum Command<'a> {
     /// An answer command, with the text after it.
     Answer(&'a str),
+    /// A feedback command, with the text after it (ADR-0011 D2).
+    Feedback(&'a str),
     /// Starts like a command but isn't a valid one, e.g. `/socrates answr`
     /// or `/soqrate answer`. Gets a hint.
     NearMiss,
@@ -78,6 +90,8 @@ pub fn read_command<'a>(body: &'a str, app_slug: Option<&str>) -> Command<'a> {
     if addressed {
         return if verb.eq_ignore_ascii_case(VERB) {
             Command::Answer(after)
+        } else if verb.eq_ignore_ascii_case(FEEDBACK_VERB) {
+            Command::Feedback(after)
         } else {
             Command::NearMiss
         };
@@ -133,6 +147,50 @@ fn distance(a: &str, b: &str) -> usize {
         }
     }
     row[b.len()]
+}
+
+/// The feedback a comment `body` gives, if it is a feedback command
+/// (ADR-0011 D2): `Err` with a short reason when it can't be read.
+pub fn read_feedback(
+    body: &str,
+    app_slug: Option<&str>,
+) -> Option<std::result::Result<FeedbackRequest, String>> {
+    match read_command(body, app_slug) {
+        Command::Feedback(rest) => Some(parse_feedback(rest)),
+        _ => None,
+    }
+}
+
+/// `<question> <kind> [text]`, as after the feedback command or at the
+/// terminal prompt (ADR-0011 D2, D3). The question is its number (`2`,
+/// `#2`, `2.`); the text, if any, may span lines.
+pub fn parse_feedback(args: &str) -> std::result::Result<FeedbackRequest, String> {
+    let usage = format!(
+        "write `{FEEDBACK_COMMAND} <question number> <kind> [why]`, e.g. \
+         `{FEEDBACK_COMMAND} 2 disagree option c is also correct`"
+    );
+    let (number, rest) = split_word(args.trim_start());
+    let number = number.strip_prefix('#').unwrap_or(number);
+    let number = number
+        .strip_suffix(['.', ':', ')'])
+        .unwrap_or(number)
+        .parse::<usize>()
+        .ok()
+        .filter(|n| *n > 0)
+        .ok_or_else(|| format!("Say which question the feedback is about: {usage}."))?;
+    let (kind, text) = split_word(rest.trim_start());
+    let kind = FeedbackKind::parse(kind).ok_or_else(|| {
+        format!(
+            "Say what kind of feedback it is, one of {}: {usage}.",
+            FeedbackKind::names()
+        )
+    })?;
+    let text = text.trim();
+    Ok(FeedbackRequest {
+        question: QuestionRef::Number(number),
+        kind,
+        text: (!text.is_empty()).then(|| text.to_string()),
+    })
 }
 
 /// The comments that get a hint (ADR-0004 D8): near misses that have none
@@ -430,6 +488,46 @@ mod tests {
         let answers = parse_answers(body, &qs, None).unwrap();
         assert_eq!(answers.len(), 1);
         assert_eq!(answers[0].question, QuestionId("b".into()));
+    }
+
+    // @adr-0011-d2 @adr-0011-d3
+    #[test]
+    fn feedback_commands_are_read_forgivingly() {
+        for body in [
+            "/soqrates feedback 2 disagree option c is also correct",
+            "/Socrates FEEDBACK #2 Disagree option c is also correct",
+            "@soqrates-review feedback 2. disagree option c is also correct",
+        ] {
+            let request = read_feedback(body, SLUG).unwrap().unwrap();
+            assert_eq!(request.question, QuestionRef::Number(2), "{body:?}");
+            assert_eq!(request.kind, FeedbackKind::Disagree);
+            assert_eq!(request.text.as_deref(), Some("option c is also correct"));
+        }
+        let request = read_feedback("/soqrates feedback 1 good", SLUG)
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.text, None);
+        let text = read_feedback("/soqrates feedback 1 unclear\nwhich one?\n\nb or c", None)
+            .unwrap()
+            .unwrap()
+            .text;
+        assert_eq!(text.as_deref(), Some("which one?\n\nb or c"));
+        for bad in [
+            "/soqrates feedback",
+            "/soqrates feedback disagree 2",
+            "/soqrates feedback 0 good",
+            "/soqrates feedback 2 wrong",
+        ] {
+            assert!(read_feedback(bad, SLUG).unwrap().is_err(), "{bad:?}");
+        }
+        assert!(read_feedback("/soqrates answer 1. a", SLUG).is_none());
+        assert!(read_feedback("```\n/soqrates feedback 1 good\n```", SLUG).is_none());
+        // Neither an answer nor a near miss.
+        assert!(matches!(
+            read_command("/soqrates feedback 1 good", SLUG),
+            Command::Feedback(_)
+        ));
+        assert!(parse_answers("/soqrates feedback 1 good", &[], SLUG).is_none());
     }
 
     #[test]
