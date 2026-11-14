@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "number": 55,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-14T15:41:59.414224692Z",
+      "carried": false,
+      "concepts": [
+        "examiner.multiple-choice.option-check",
+        "concurrency.atomic-claim.mutual-exclusion",
+        "project.session.slot_allocation_policy",
+        "project.session.related_review_prioritization",
+        "rust.slices.stable_sort_by_key"
+      ],
+      "head": "a6efc45ed5acaf3ac350e660263dc22f74482bff",
+      "session": "jvanbuel/soqrates#55@a6efc45ed5acaf3ac350e660263dc22f74482bff"
+    }
+  ]
+}
