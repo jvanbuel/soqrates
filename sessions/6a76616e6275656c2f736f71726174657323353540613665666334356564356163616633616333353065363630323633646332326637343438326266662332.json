@@ -1,0 +1,108 @@
+{
+  "author": "github.com:16427728",
+  "created_at": "2026-11-14T18:12:21.265794475Z",
+  "follow_up": {
+    "round": 2,
+    "settled": 2,
+    "total": 5
+  },
+  "key": "jvanbuel/soqrates#55@a6efc45ed5acaf3ac350e660263dc22f74482bff#2",
+  "questions": [
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "fn claim(&self, key: &str, doc: Doc) -> bool {\n    let present = self.sessions.lock().unwrap().contains_key(key);\n    if !present {\n        return false;\n    }\n    self.sessions.lock().unwrap().remove(key);\n    self.gradings.lock().unwrap().insert(key.to_string(), doc);\n    true\n}"
+          },
+          "correct": 3,
+          "options": [
+            "Locking `sessions` and then `gradings` in separate statements can deadlock when two threads claim different keys.",
+            "Calling `unwrap` on the lock result can panic, so a poisoned mutex lets a second claimant through.",
+            "`remove` on a mutex-protected map is not atomic by itself, so the map needs a read-write lock to make removal safe.",
+            "The mutex guard from the check is dropped before the removal, and the result of `remove` is discarded. Two threads can both see the session as present, both remove, and both return true."
+          ],
+          "prompt": "This in-memory store method must let exactly one of many concurrent callers claim a pending session: it moves the session into the grading records and returns true only for the winner. Under concurrent calls with the same key, more than one caller can return true. Which line is the bug, and why?",
+          "reasons": [
+            "Each guard is a temporary dropped at the end of its statement, so no thread holds one lock while waiting for the other. The real defect is the gap between the check and the removal, not lock ordering.",
+            "A poisoned mutex makes `unwrap` panic and gives the caller no success. It does not let two callers both succeed, and it is not what this line gets wrong.",
+            "Each `lock()` gives exclusive access, so the removal is atomic on its own. A read-write lock would not help, since the race comes from separating the check from the removal and ignoring what `remove` returned.",
+            "The decision to win is made from a stale check, not from the atomic act of removing. The fix is to hold the lock across the whole step, or to return false unless `remove` actually returned the session, so that only one caller can succeed."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "concurrency.atomic-claim.mutual-exclusion",
+      "explanation": "The decision to win is made from a stale check, not from the atomic act of removing. The fix is to hold the lock across the whole step, or to return false unless `remove` actually returned the session, so that only one caller can succeed.",
+      "id": "concurrency.atomic-claim.mutual-exclusion/follow-up",
+      "kind": "SpotTheBug",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "fn split(open: usize, due: usize, mine: usize, fresh: usize) -> (usize, usize) {\n    let mine = mine.min(due);\n    let kept = fresh.min(open.div_ceil(2));\n    let other = (due - mine).min((fresh + mine).max(1));\n    let n_due = (mine + other).min(open - kept);\n    let n_fresh = fresh.min(open - n_due);\n    (n_due, n_fresh)\n}\n\nfn main() {\n    println!(\"{:?}\", split(4, 6, 2, 3));\n}"
+          },
+          "correct": 2,
+          "options": [
+            "(2, 3)",
+            "(1, 3)",
+            "(2, 2)",
+            "(3, 1)",
+            "(4, 0)"
+          ],
+          "prompt": "A session has 4 open slots. A change has 3 new concepts, and 6 reviews are due, 2 of which are for concepts the change also touches. Using the allocation function shown, what does the `println!` print?",
+          "reasons": [
+            "This totals five slots but only four are open. The new count is capped by `open - n_due`, so the two parts can never add up to more than the open slots.",
+            "This would need the reviews squeezed below the reserved remainder, or the new concepts to get more than the half they are guaranteed. The new concepts are guaranteed half the slots, and they take only what the reviews leave, which is two. The reviews are not cut below that.",
+            "Two slots are reserved for the new concepts, because half of four is two and there are three new concepts. The unrelated cap and the due count both allow four reviews, so the final cap of `open - kept` limits the reviews to two. The new concepts then get `min(3, 4 - 2)`, which is two.",
+            "This assumes only one slot is kept for the new concepts. The reserved share is half of the four open slots, which is two, and it is not reduced further, because three new concepts are available to fill it.",
+            "This treats the due reviews as limited only by the open slots. But the reserved share for new concepts is subtracted before the reviews are capped, so reviews cannot take all four slots."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "project.session.slot_allocation_policy",
+      "explanation": "Two slots are reserved for the new concepts, because half of four is two and there are three new concepts. The unrelated cap and the due count both allow four reviews, so the final cap of `open - kept` limits the reviews to two. The new concepts then get `min(3, 4 - 2)`, which is two.",
+      "id": "project.session.slot_allocation_policy/follow-up",
+      "kind": "PredictOutcome",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "use std::collections::BTreeSet;\n\nstruct Review { id: String, due: u32 }\n\nfn compose(mut reviews: Vec<Review>, related: &BTreeSet<String>) -> Vec<Review> {\n    // `reviews` arrives sorted by `due`, earliest first.\n    // Goal: reviews whose id is in `related` come first,\n    // and within each group the due order is kept.\n    reviews.sort_unstable_by_key(|r| !related.contains(&r.id));\n    reviews\n}"
+          },
+          "correct": 2,
+          "options": [
+            "reviews.sort_unstable_by_key(|r| related.contains(&r.id));",
+            "reviews.sort_unstable_by_key(|r| (!related.contains(&r.id), r.id.clone()));",
+            "reviews.sort_by_key(|r| !related.contains(&r.id));",
+            "reviews.sort_by_key(|r| related.contains(&r.id));"
+          ],
+          "options_language": "rust",
+          "prompt": "A composition step must put the reviews that the change also touches ahead of the others, while keeping each group in its original due-date order. The snippet shows the current attempt. The flagged line does not guarantee the required order within each group. Which replacement fixes it?",
+          "reasons": [
+            "Removing the `!` puts the unrelated reviews first, because false sorts before true. It also keeps the unstable sort, so the due order inside each group is still not guaranteed.",
+            "The related reviews do come first, but within each group the order is now alphabetical by id, not by due date. The due order the input arrived in is lost.",
+            "The key is a bool that only separates the two groups, and the stable `sort_by_key` keeps elements with equal keys in their existing order. Related reviews therefore come first, and each group stays in due order.",
+            "The sort is stable, which is good, but the key is inverted. Unrelated reviews (false) sort before related ones (true), the opposite of the goal."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "project.session.related_review_prioritization",
+      "explanation": "The key is a bool that only separates the two groups, and the stable `sort_by_key` keeps elements with equal keys in their existing order. Related reviews therefore come first, and each group stays in due order.",
+      "id": "project.session.related_review_prioritization/follow-up",
+      "kind": "ChooseTheFix",
+      "scope": "Project"
+    }
+  ]
+}

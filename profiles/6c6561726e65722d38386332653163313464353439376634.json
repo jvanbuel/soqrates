@@ -4,7 +4,8 @@
     "283f1237330d939c7cea0782b068e4b6",
     "2b7e606d084b6a23eefd4d4950b94915",
     "7a813861d5851f111e3d69990410a907",
-    "8fc0b22b22c83aba7743212de71634a4"
+    "8fc0b22b22c83aba7743212de71634a4",
+    "a0e16de720856e44929b9c83edc4072a"
   ],
   "cards": {
     "architecture.facade.split-impl-blocks": {
@@ -35,14 +36,14 @@
     },
     "concurrency.atomic-claim.mutual-exclusion": {
       "card": {
-        "difficulty": 7.2102,
-        "due": "2026-11-09T17:37:59.141682093Z",
-        "elapsed_days": 0,
-        "lapses": 0,
-        "last_review": "2026-11-08T17:37:59.141682093Z",
-        "reps": 1,
+        "difficulty": 9.198653481986167,
+        "due": "2026-11-15T18:11:25.126244589Z",
+        "elapsed_days": 6,
+        "lapses": 1,
+        "last_review": "2026-11-14T18:11:25.126244589Z",
+        "reps": 2,
         "scheduled_days": 1,
-        "stability": 0.4072,
+        "stability": 0.5600832249701275,
         "state": "Review"
       }
     },
@@ -100,14 +101,14 @@
     },
     "examiner.multiple-choice.option-check": {
       "card": {
-        "difficulty": 7.2102,
-        "due": "2026-11-09T17:28:17.414240934Z",
-        "elapsed_days": 0,
+        "difficulty": 7.118300161986166,
+        "due": "2026-11-21T18:11:25.126244589Z",
+        "elapsed_days": 6,
         "lapses": 0,
-        "last_review": "2026-11-08T17:28:17.414240934Z",
-        "reps": 1,
-        "scheduled_days": 1,
-        "stability": 0.4072,
+        "last_review": "2026-11-14T18:11:25.126244589Z",
+        "reps": 2,
+        "scheduled_days": 7,
+        "stability": 7.2566894767541275,
         "state": "Review"
       }
     },
@@ -501,6 +502,32 @@
         "state": "Review"
       }
     },
+    "project.session.related_review_prioritization": {
+      "card": {
+        "difficulty": 7.2102,
+        "due": "2026-11-15T18:11:25.126244589Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-14T18:11:25.126244589Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
+      }
+    },
+    "project.session.slot_allocation_policy": {
+      "card": {
+        "difficulty": 7.2102,
+        "due": "2026-11-15T18:11:25.126244589Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-14T18:11:25.126244589Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
+        "state": "Review"
+      }
+    },
     "project.store.postgres-conformance-suite": {
       "card": {
         "difficulty": 5.314577829570867,
@@ -716,6 +743,19 @@
         "elapsed_days": 0,
         "lapses": 0,
         "last_review": "2026-11-09T08:58:28.977822508Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
+      }
+    },
+    "rust.slices.stable_sort_by_key": {
+      "card": {
+        "difficulty": 5.314577829570867,
+        "due": "2026-11-17T18:11:25.126244589Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-14T18:11:25.126244589Z",
         "reps": 1,
         "scheduled_days": 3,
         "stability": 3.1262,
@@ -1741,11 +1781,46 @@
       "format": "MultipleChoice",
       "grade": "Good",
       "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T18:11:25.126244589Z",
+      "concept": "examiner.multiple-choice.option-check",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T18:11:25.126244589Z",
+      "concept": "concurrency.atomic-claim.mutual-exclusion",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T18:11:25.126244589Z",
+      "concept": "project.session.slot_allocation_policy",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T18:11:25.126244589Z",
+      "concept": "project.session.related_review_prioritization",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-14T18:11:25.126244589Z",
+      "concept": "rust.slices.stable_sort_by_key",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
     }
   ],
   "learner": "learner-88c2e1c14d5497f4",
-  "level": "Expert",
-  "level_since": 68,
+  "level": "Intermediate",
+  "level_since": 103,
   "starting_level": "Novice",
-  "version": 5
+  "version": 6
 }
