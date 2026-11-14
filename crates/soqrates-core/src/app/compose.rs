@@ -67,7 +67,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let place = stores.place(author).await?;
         let level = load_or_new(place.primary, &place.learner).await?.level();
         let taken = |id: &ConceptId| carried.iter().any(|q| q.concept == *id);
-        let reviews: Vec<Concept> = self
+        let mut reviews: Vec<Concept> = self
             .due_with_scope(&place)
             .await?
             .into_iter()
@@ -83,7 +83,11 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             .collect();
         let known = self.known_concepts(&place).await?;
         let mut new: Vec<Concept> = Vec::new();
+        let mut related: BTreeSet<ConceptId> = BTreeSet::new();
         for c in self.examiner.extract_concepts(diff, code).await? {
+            if c.weight != Weight::Incidental && reviews.iter().any(|k| k.id == c.id) {
+                related.insert(c.id.clone());
+            }
             let asked = taken(&c.id)
                 || reviews.iter().any(|k| k.id == c.id)
                 || new.iter().any(|k| k.id == c.id);
@@ -98,7 +102,10 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         // Core before supporting, each in the examiner's order.
         new.sort_by_key(|c| c.weight);
 
-        let (n_reviews, n_new) = policy::split_slots(open, reviews.len(), new.len());
+        // Due reviews the change also touches come first, in due order.
+        reviews.sort_by_key(|c| !related.contains(&c.id));
+
+        let (n_reviews, n_new) = policy::split_slots(open, reviews.len(), related.len(), new.len());
         let concepts = reviews
             .into_iter()
             .take(n_reviews)
