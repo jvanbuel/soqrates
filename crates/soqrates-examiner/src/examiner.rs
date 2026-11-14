@@ -487,17 +487,21 @@ impl<L: Llm> Core<L> {
     /// The question is written as `brief` asks (ADR-0007), and the check
     /// is shown its code too (D7). Also returns whether the check passed:
     /// `false` when its reply couldn't be parsed (ADR-0009 D3).
+    ///
+    /// A follow-up (ADR-0010 D1) is asked for with its own `user` prompt,
+    /// and must not repeat `previous`.
     async fn multiple_choice(
         &self,
-        concept: &Concept,
+        user: String,
         brief: &QuestionBrief,
+        previous: Option<&Question>,
         code: &impl Codebase,
     ) -> Result<(MultipleChoice, bool)> {
         let schema = schemars::schema_for!(MultipleChoiceOutput);
         let schema = &schema;
         self.retrying(
             "a multiple-choice question",
-            prompts::write_multiple_choice(concept, brief),
+            user,
             |prompt, transcript| async move {
                 let (mc, after) = self
                     .attempt(
@@ -509,7 +513,10 @@ impl<L: Llm> Core<L> {
                         &|out| output::validate_multiple_choice(out, brief),
                     )
                     .await?;
-                let mc = match mc {
+                let mc = match mc.and_then(|mc| match previous {
+                    Some(previous) => output::new_follow_up(mc, previous),
+                    None => Ok(mc),
+                }) {
                     Ok(mc) => mc,
                     Err(why) => return Ok((Err(why), after)),
                 };
@@ -591,7 +598,8 @@ impl<L: Llm> Core<L> {
             QuestionFormat::MultipleChoice => {
                 // One reason per option, written with the options and
                 // checked to discuss only those (issue #5).
-                let (mc, checked) = self.multiple_choice(concept, brief, code).await?;
+                let user = prompts::write_multiple_choice(concept, brief);
+                let (mc, checked) = self.multiple_choice(user, brief, None, code).await?;
                 // The reasons name options by content, so they survive the
                 // shuffle unchanged.
                 let mc = output::shuffle(mc, &concept.id.0);
@@ -632,6 +640,48 @@ impl<L: Llm> Core<L> {
             scope: concept.scope,
             kind,
             body,
+            explanation,
+            checked,
+            banked: None,
+        })
+    }
+
+    /// Write a follow-up question about `concept` (ADR-0010 D1, D3): a new
+    /// multiple-choice question, shown `previous` and the author's wrong
+    /// `answer`, that doesn't repeat it. Checked like any multiple-choice
+    /// question (issue #5).
+    pub async fn write_follow_up(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        previous: &Question,
+        answer: Option<&Answer>,
+        code: &impl Codebase,
+    ) -> Result<Question> {
+        if brief.format != QuestionFormat::MultipleChoice {
+            return Err(Error::Invalid(
+                "a follow-up question is multiple choice".to_owned(),
+            ));
+        }
+        let user = prompts::write_follow_up(concept, brief, previous, answer);
+        let (mc, checked) = self
+            .multiple_choice(user, brief, Some(previous), code)
+            .await?;
+        let mc = output::shuffle(mc, &format!("{}/follow-up", concept.id.0));
+        let explanation = mc.explanation().to_owned();
+        Ok(Question {
+            id: QuestionId(format!("{}/follow-up", concept.id.0)),
+            concept: concept.id.clone(),
+            scope: concept.scope,
+            kind: mc.kind,
+            body: QuestionBody::MultipleChoice {
+                prompt: mc.prompt,
+                code: mc.code,
+                options: mc.options,
+                options_language: mc.options_language,
+                correct: mc.correct,
+                reasons: mc.reasons,
+            },
             explanation,
             checked,
             banked: None,

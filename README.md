@@ -36,6 +36,7 @@ model = "anthropic:claude-sonnet-5-5"
 mode = "advisory"          # or "blocking"
 max_questions = 5          # a cap: rounds ask only what the change and your history call for
 open_questions = false     # true: experts get open questions; off by default, so everyone gets multiple choice
+max_follow_ups = 2         # follow-up rounds asking a new question for each wrong answer; 0 turns them off
 [identities]
 "github.com" = "github.com:1001"
 ```

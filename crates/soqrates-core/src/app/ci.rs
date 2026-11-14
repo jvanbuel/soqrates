@@ -4,12 +4,15 @@ use std::collections::BTreeSet;
 
 use crate::Result;
 use crate::app::engine::{ProfileLocation, SessionOutcome, Soqrates};
+use crate::app::events::DomainEvent;
 use crate::app::ports::{
-    Clock, CodeSource, EarlierSessions, Examiner, Frozen, NoCodebase, ScmProvider, StateStore,
-    Submission,
+    Clock, CodeSource, Codebase, EarlierSessions, Examiner, Frozen, NoCodebase, ScmProvider,
+    StateStore, Submission,
 };
 use crate::assessment::Question;
-use crate::delivery::{CheckStatus, Mode, PrRef, PrRounds, PullRequest, Round, Session};
+use crate::delivery::{
+    CheckStatus, Mode, PrRef, PrRounds, PullRequest, Round, Session, SessionEvent,
+};
 use crate::ids::{ConceptId, SessionKey};
 
 /// The check summary while answers are being graded (ADR-0004 D9).
@@ -26,10 +29,11 @@ fn key_prefix(pr: &PrRef) -> String {
 }
 
 /// The codebase the session `key` of `pr` was asked about: the head commit
-/// in its key, even after a newer push (ADR-0008 D4). `fallback` for a key
-/// of another form.
+/// in its key, even after a newer push (ADR-0008 D4), also for a follow-up
+/// round (ADR-0010 D2). `fallback` for a key of another form.
 fn codebase_of<K: CodeSource>(code: &K, pr: &PrRef, key: &SessionKey, fallback: &str) -> K::Code {
-    let revision = key
+    let (first, _) = key.round();
+    let revision = first
         .0
         .strip_prefix(&key_prefix(pr))
         .filter(|head| !head.is_empty())
@@ -54,8 +58,10 @@ fn codebase_of<K: CodeSource>(code: &K, pr: &PrRef, key: &SessionKey, fallback: 
 /// - Session exists but no answers yet: keep `Pending`.
 /// - Answers being graded, e.g. by an overlapping run: keep `Pending`
 ///   (ADR-0002 D6).
-/// - Answers present: grade them and set `Success`, or `Failure` (`Neutral`
-///   in `Advisory` mode).
+/// - Answers present: grade them. Wrong answers get a follow-up round on
+///   the same commit, and the check stays `Pending` (ADR-0010). Otherwise
+///   set `Success`, or `Failure` (`Neutral` in `Advisory` mode), from the
+///   result after the final round.
 ///
 /// The examiner reads the pull request's code from `code`, at the commit
 /// each session was asked about (ADR-0008 D4).
@@ -89,6 +95,8 @@ where
         // A run posted the questions but failed to record the round.
         record_round(app, &mut rounds, &pull, &session).await?;
     }
+    // The latest round of that session: a follow-up, if any (ADR-0010 D2).
+    let key = app.latest_follow_up(&key).await?;
     if let Some(status) = report(app, scm, code, pr, &pull, &key).await? {
         return Ok(status);
     }
@@ -153,9 +161,49 @@ where
             let codebase = codebase_of(code, pr, key, &pull.head_sha);
             let outcome = app.submit(key, &answers, &codebase).await?;
             scm.post_results(pr, &session, &outcome, &receipt).await?;
+            if let Some(status) =
+                ask_follow_up(app, scm, pull, &session, &outcome, &codebase).await?
+            {
+                return Ok(Some(status));
+            }
             finish(app, scm, pull, &outcome).await.map(Some)
         }
     }
+}
+
+/// Ask the follow-up round after `session`, graded with `outcome`, if it
+/// has one: post its questions and keep the check `Pending` (ADR-0010 D1,
+/// D4). `None` when there is none to ask. If the follow-up can't be
+/// posted, its session is discarded and the graded result stands.
+async fn ask_follow_up<S, E, C, P>(
+    app: &Soqrates<S, E, C>,
+    scm: &P,
+    pull: &PullRequest,
+    session: &Session,
+    outcome: &SessionOutcome,
+    code: &impl Codebase,
+) -> Result<Option<CheckStatus>>
+where
+    S: StateStore,
+    E: Examiner,
+    C: Clock,
+    P: ScmProvider,
+{
+    let Some(follow_up) = app.follow_up(session, outcome, code).await? else {
+        return Ok(None);
+    };
+    if let Err(e) = scm.publish_questions(&pull.pr, &follow_up).await {
+        let _ = app.discard_session(follow_up.key()).await;
+        return Err(e);
+    }
+    let summary = format!(
+        "{} answer(s) were wrong: Soqrates asked a follow-up question about each. Answer them in \
+         the new Soqrates comment.{}",
+        follow_up.questions().len(),
+        location_note(&outcome.profile_location)
+    );
+    scm.set_check(pull, CheckStatus::Pending, &summary).await?;
+    Ok(Some(CheckStatus::Pending))
 }
 
 /// Report the result of the session `key` again if it was graded.
@@ -175,16 +223,7 @@ where
         return Ok(None);
     };
     let status = final_status(graded.passed, app.config.mode);
-    let summary = format!(
-        "{} of {} answers correct: {}.",
-        graded.correct,
-        graded.total,
-        if graded.passed {
-            "passed"
-        } else {
-            "not passed"
-        }
-    );
+    let summary = result_summary(graded.correct, graded.total, graded.passed, key);
     scm.set_check(pull, status, &summary).await?;
     Ok(Some(status))
 }
@@ -210,7 +249,8 @@ where
     // failed, doesn't count.
     rounds.forget(&pull.head_sha);
     // Answers submitted before the push count: grade them first, so the
-    // latest round is graded rather than carried (ADR-0002 D9).
+    // latest round is graded rather than carried (ADR-0002 D9); also those
+    // to a follow-up round, which then asks no further one (ADR-0010 D6).
     grade_submitted(app, scm, code, pr, &rounds).await?;
     // From the latest round that asked its own questions: a round that
     // carried an earlier session forward asked nothing about its head, e.g.
@@ -253,7 +293,9 @@ where
         && let Some(prev) = rounds.latest()
     {
         let standing = prev.session.clone();
-        if let Some(status) = report(app, scm, code, pr, pull, &standing).await? {
+        // Its latest round: a follow-up stays open too (ADR-0010 D6).
+        let latest = app.latest_follow_up(&standing).await?;
+        if let Some(status) = report(app, scm, code, pr, pull, &latest).await? {
             // Nothing new: the latest round still stands (ADR-0002 D9).
             rounds.record(Round {
                 head: pull.head_sha.clone(),
@@ -315,7 +357,8 @@ where
     let Some(prev) = rounds.latest() else {
         return Ok(());
     };
-    let Some(session) = app.pending_session(&prev.session).await? else {
+    let latest = app.latest_follow_up(&prev.session).await?;
+    let Some(session) = app.pending_session(&latest).await? else {
         return Ok(());
     };
     if session.questions().is_empty() {
@@ -447,23 +490,40 @@ where
     P: ScmProvider,
 {
     let status = final_status(outcome.passed, app.config.mode);
-    let correct = outcome
-        .grades
-        .iter()
-        .filter(|(_, g)| g.is_correct())
-        .count();
-    let mut summary = format!(
-        "{correct} of {} answers correct: {}.",
-        outcome.grades.len(),
-        if outcome.passed {
-            "passed"
-        } else {
-            "not passed"
-        }
-    );
+    // For a follow-up, about every concept of its first round (ADR-0010 D4).
+    let graded = outcome.events.iter().find_map(|e| match e {
+        DomainEvent::Session(SessionEvent::SessionGraded {
+            key,
+            correct,
+            total,
+            ..
+        }) => Some((key, *correct, *total)),
+        _ => None,
+    });
+    let mut summary = match graded {
+        Some((key, correct, total)) => result_summary(correct, total, outcome.passed, key),
+        None => result_summary(
+            outcome.correct(),
+            outcome.grades.len(),
+            outcome.passed,
+            &SessionKey(String::new()),
+        ),
+    };
     summary.push_str(&location_note(&outcome.profile_location));
     scm.set_check(pull, status, &summary).await?;
     Ok(status)
+}
+
+/// The check summary of the session `key`, graded with `correct` of `total`
+/// answers right. A pass in a follow-up round says so, so that the first
+/// attempt stays visible (ADR-0010 D4).
+fn result_summary(correct: usize, total: usize, passed: bool, key: &SessionKey) -> String {
+    let verdict = match (passed, key.round().1 > 1) {
+        (true, true) => "passed after a follow-up",
+        (true, false) => "passed",
+        (false, _) => "not passed",
+    };
+    format!("{correct} of {total} answers correct: {verdict}.")
 }
 
 /// The status of a graded session (ADR-0001 D8).

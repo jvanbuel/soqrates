@@ -299,6 +299,26 @@ pub trait Examiner: Send + Sync {
         brief: &QuestionBrief,
         code: &impl Codebase,
     ) -> impl Future<Output = Result<Question>> + Send;
+    /// Write a follow-up question about `concept` as `brief` asks
+    /// (ADR-0010 D1, D3): a new question, from another angle than
+    /// `previous`, which the author answered with `answer` (`None` when
+    /// unanswered) and got wrong. It must not repeat `previous`. The default
+    /// fails: an examiner that can't write follow-ups asks none.
+    fn write_follow_up(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        previous: &Question,
+        answer: Option<&Answer>,
+        code: &impl Codebase,
+    ) -> impl Future<Output = Result<Question>> + Send {
+        let _ = (concept, brief, previous, answer, code);
+        async {
+            Err(crate::Error::Port(
+                "examiner: writes no follow-up questions".into(),
+            ))
+        }
+    }
     /// Grade `answer` and explain the grade to the author (ADR-0004 D1).
     fn grade(
         &self,

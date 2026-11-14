@@ -50,6 +50,22 @@ pub struct Session {
     author: AuthorId,
     questions: Vec<Question>,
     created_at: DateTime<Utc>,
+    /// Where a follow-up round stands; `None` for a first round
+    /// (ADR-0010 D2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    follow_up: Option<FollowUp>,
+}
+
+/// Where a follow-up round stands (ADR-0010 D2): a round of new questions
+/// on the same commit about the concepts its first round got wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FollowUp {
+    /// The round: 2 for the first follow-up.
+    pub round: u32,
+    /// The first round's concepts answered correctly before this round.
+    pub settled: usize,
+    /// The concepts the first round asked.
+    pub total: usize,
 }
 
 /// The record that a session was graded, kept so that grading happens at
@@ -133,7 +149,28 @@ impl Session {
             author,
             questions,
             created_at: at,
+            follow_up: None,
         })
+    }
+
+    /// Open follow-up round `follow_up.round` with `questions`, one about
+    /// each concept still answered wrongly (ADR-0010 D1, D2). Fails with
+    /// `Invalid` for a first round, for more questions than concepts left
+    /// to settle, or as [`Session::open`] does.
+    pub fn open_follow_up(
+        key: SessionKey,
+        author: AuthorId,
+        questions: Vec<Question>,
+        follow_up: FollowUp,
+        at: DateTime<Utc>,
+    ) -> Result<Self> {
+        if follow_up.round < 2 || follow_up.settled > follow_up.total {
+            return Err(Error::Invalid(format!("not a follow-up: {follow_up:?}")));
+        }
+        let open = follow_up.total - follow_up.settled;
+        let mut session = Self::open(key, author, questions, open, at)?;
+        session.follow_up = Some(follow_up);
+        Ok(session)
     }
 
     pub fn key(&self) -> &SessionKey {
@@ -150,6 +187,12 @@ impl Session {
 
     pub fn created_at(&self) -> DateTime<Utc> {
         self.created_at
+    }
+
+    /// Where this follow-up round stands; `None` for a first round
+    /// (ADR-0010 D2).
+    pub fn follow_up(&self) -> Option<&FollowUp> {
+        self.follow_up.as_ref()
     }
 
     /// Check that `answers` refer to questions in this session, at most one
@@ -176,6 +219,9 @@ impl Session {
     /// Grade the session with the examiner's `grades`. Questions missing from
     /// `grades` count as `Again`. Passes if the fraction of correct grades is
     /// at least `pass_threshold`; an empty session passes (ADR-0002 D6).
+    /// A follow-up round counts every concept of its first round, each with
+    /// its latest answer: the event's `correct` and `total` are about the
+    /// first round's concepts (ADR-0010 D4).
     /// Consumes the session: it can be graded only once.
     pub fn conclude(
         self,
@@ -194,8 +240,11 @@ impl Session {
                 (q.id.clone(), grade)
             })
             .collect();
-        let total = grades.len();
         let correct = grades.iter().filter(|(_, g)| g.is_correct()).count();
+        let (correct, total) = match self.follow_up {
+            Some(f) => (f.settled + correct, f.total),
+            None => (correct, grades.len()),
+        };
         let passed = total == 0 || correct as f64 >= pass_threshold * total as f64;
         SessionResult {
             grades,

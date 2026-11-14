@@ -168,6 +168,7 @@ async fn check_runs_and_fails(w: &mut SpecWorld) {
 }
 
 #[given(regex = r"^the author replies with (correct|wrong) answers$")]
+#[when(regex = r"^the author replies with (correct|wrong) answers$")]
 fn replies(w: &mut SpecWorld, how: String) {
     let s = latest_posted(w);
     let answers = s
