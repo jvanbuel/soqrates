@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "number": 51,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-14T10:12:49.121340163Z",
+      "carried": false,
+      "concepts": [
+        "soqrates.ci.submitted-answers-semantics",
+        "delivery.answer-command.forgiving-parsing",
+        "rust.refactoring.struct-with-impl-bounds",
+        "architecture.facade.split-impl-blocks",
+        "rust.enums.state-modelling"
+      ],
+      "head": "79e878c76bf3db298947fb03b117ee21a6cc9ca2",
+      "session": "jvanbuel/soqrates#51@79e878c76bf3db298947fb03b117ee21a6cc9ca2"
+    }
+  ]
+}

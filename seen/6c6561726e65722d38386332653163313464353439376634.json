@@ -1,9 +1,9 @@
 {
-  "learner": "learner-88c2e1c14d5497f4",
-  "rounds": 6,
   "last_seen": {
     "bank-3674bc27c325b6a0": 3,
     "bank-a14b4c2105b7c2d6": 2,
     "bank-fc6d0e0efaffbc9a": 5
-  }
+  },
+  "learner": "learner-88c2e1c14d5497f4",
+  "rounds": 7
 }
