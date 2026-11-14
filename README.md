@@ -80,10 +80,12 @@ stays on a branch of your repository or in your own database
 action from this checkout (`uses: ./`), with `soqrates` built from source,
 on every PR, and posts the questions as a PR comment (ADR-0004):
 
-- **Multiple choice:** tick one option per question, then tick
-  **Grade my answers**.
+- **Multiple choice:** tick one option per question.
 - **Open questions** (asked only of experts, and only with `open_questions`
-  on), and authors who can't tick boxes, answer with a comment:
+  on): edit the comment and type your answer into the field under the
+  question, between its `soqrates:answer` lines.
+- Then tick **Grade my answers**, which submits everything at once.
+- Authors who can't edit the comment answer with a comment instead:
 
   ```
   /soqrates answer
