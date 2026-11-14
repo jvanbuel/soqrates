@@ -312,7 +312,7 @@ fn field_number(line: &str, prefix: &str) -> Option<usize> {
 
 /// A question comment split into what Soqrates reads from it.
 struct Scanned<'a> {
-    /// The lines outside fenced code blocks opened with backticks and
+    /// The lines outside fenced code blocks opened with backticks or tildes and
     /// outside answer fields, fence lines and field markers excluded.
     outside: Vec<&'a str>,
     /// The answer fields: the number in their markers and the lines between
@@ -335,17 +335,20 @@ fn scan_comment(body: &str) -> Scanned<'_> {
         outside: Vec::new(),
         fields: Vec::new(),
     };
-    let mut open: Option<usize> = None;
+    let mut open: Option<(char, usize)> = None;
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
         i += 1;
         let trimmed = line.trim_start();
-        let run = trimmed.chars().take_while(|&c| c == '`').count();
+        let fence = trimmed.chars().next().filter(|c| matches!(c, '`' | '~'));
+        let run = trimmed.chars().take_while(|&c| Some(c) == fence).count();
         match open {
-            Some(n) if run >= n && trimmed[run..].trim().is_empty() => open = None,
+            Some((c, n)) if fence == Some(c) && run >= n && trimmed[run..].trim().is_empty() => {
+                open = None;
+            }
             Some(_) => {}
-            None if run >= 3 => open = Some(run),
+            None if run >= 3 => open = fence.map(|c| (c, run)),
             None => {
                 let Some(n) = field_number(line, FIELD_START) else {
                     scanned.outside.push(line);
@@ -2006,6 +2009,25 @@ mod tests {
         assert_eq!(parse_fields(&body, &qs), vec![None, None, None]);
         let body = fill(&body, 2, "mine");
         assert_eq!(parse_fields(&body, &qs)[1].as_deref(), Some("mine"));
+    }
+
+    // @adr-0004-d11 @adr-0007-d5
+    #[test]
+    fn a_field_marker_in_tilde_fenced_code_is_no_field() {
+        let body = "~~~~markdown
+```
+~~~
+<!-- soqrates:answer=2 -->
+example
+<!-- soqrates:answer-end=2 -->
+~~~~
+<!-- soqrates:answer=2 -->
+real answer
+<!-- soqrates:answer-end=2 -->";
+        assert_eq!(
+            parse_fields(body, &questions()),
+            vec![None, Some("real answer".into()), None]
+        );
     }
 
     // @adr-0004-d4 @adr-0004-d5 @adr-0004-d7 @adr-0004-d11
