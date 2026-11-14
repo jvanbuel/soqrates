@@ -32,7 +32,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Verification | `Verification` | shared | Whether the forge vouches for an identity. Forge accounts are verified; a commit e-mail on its own is not. | |
 | Link | `IdentityLink` | learner | The fact that an identity belongs to a learner. Every identity has at most one link. | alias |
 | Link code | `LinkCode` | learner | A short-lived, single-use code that proves one person controls two identities. | token, OTP |
-| Learner store | `LearnerStore` | app | The store holding the profiles of linked learners, reachable from several forges. Owned by the learner or by an organisation. | |
+| Learner store | `StateStore` | app | The store (a `StateStore`) holding the profiles of linked learners, reachable from several forges. Owned by the learner or by an organisation. | |
 | Change | `Diff` | assessment | The unified diff Soqrates asks about. | |
 | Concept | `Concept` | assessment | One idea that a change exercises, e.g. Rust borrowing. The unit of learning. | topic, skill |
 | Concept scope | `ConceptScope` | assessment | `General` (a technology concept, e.g. `rust.async.cancellation`) or `Project` (specific to one organisation's code, ADR-0003). | |
