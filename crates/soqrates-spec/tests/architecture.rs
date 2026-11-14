@@ -154,7 +154,14 @@ fn core_depends_on_no_workspace_crate() {
 #[test]
 fn core_defines_the_ports() {
     let ports = read(workspace_root().join("crates/soqrates-core/src/app/ports.rs"));
-    for port in ["StateStore", "Examiner", "ScmProvider", "Clock", "Prompter"] {
+    for port in [
+        "StateStore",
+        "DocumentStore",
+        "Examiner",
+        "ScmProvider",
+        "Clock",
+        "Prompter",
+    ] {
         assert!(
             ports.contains(&format!("pub trait {port}")),
             "ADR-0001 D2: port `{port}` must be defined in soqrates-core/src/app/ports.rs"
@@ -216,7 +223,7 @@ fn store_adapters_live_in_soqrates_store() {
     let store = read(dir.join("lib.rs")) + &read(dir.join("sql.rs"));
     for adapter in ["InMemoryStore", "FileStore", "SqlStore"] {
         assert!(
-            store.contains(&format!("impl StateStore for {adapter}")),
+            store.contains(&format!("impl DocumentStore for {adapter}")),
             "ADR-0001 D5, ADR-0005 D1: soqrates-store must provide `{adapter}`"
         );
     }

@@ -135,8 +135,8 @@ named `soqrates` (crate `soqrates-cli`) with the subcommands `hook`, `ci` and
 **Enforcement:** automated
 
 `soqrates-core` holds the domain (learner profiles, question policy, scheduling,
-the CI and hook workflows) and defines the *ports* `StateStore`, `Examiner`,
-`ScmProvider`, `Clock` and `Prompter`. It depends on no other workspace crate
+the CI and hook workflows) and defines the *ports* `StateStore`,
+`DocumentStore`, `Examiner`, `ScmProvider`, `Clock` and `Prompter`. It depends on no other workspace crate
 and only on this allowlist: `rs-fsrs`, `chrono`, `serde`, `serde_json`,
 `thiserror`. Adapters live in their own crates.
 
@@ -174,12 +174,23 @@ on `octocrab`. Other providers (GitLab, Forgejo, ...) are new adapter crates.
 ### D5: Per-author state behind `StateStore`
 **Enforcement:** automated
 
-Learner profiles and pending sessions are persisted through the `StateStore`
-port, keyed by a stable `AuthorId` (a forge user ID such as `github:12345`, or
-`email:<address>` locally). Profiles of different authors never affect each
-other, and a profile survives across sessions. `soqrates-store` provides an
-in-memory store and a file store (one JSON document per author). A
-git-branch store and a hosted store can be added later behind the same port.
+Learner profiles, pending sessions and the other records are persisted
+through the `StateStore` port, keyed by a stable `AuthorId` (a forge user ID
+such as `github:12345`, or `email:<address>` locally). Profiles of different
+authors never affect each other, and a profile survives across sessions.
+
+`StateStore` is what the engine and every other caller use. It is implemented
+once, in the core, for every `DocumentStore`: the small storage port that
+backends implement. A `DocumentStore` holds JSON documents by kind and key,
+lists them (by group for the kinds looked up by another value: links by
+learner, bank questions by concept), removes them, and offers the two atomic
+steps the engine relies on: a compare-and-swap of one document (the
+conditional profile save) and the claim of a document into another kind
+(`begin_grading`). Serialisation lives in that one implementation, so a new
+record type or a new backend is not a change in every adapter. `soqrates-store`
+provides an in-memory, a file (one JSON document per record) and a SQL store
+(ADR-0005), each only a `DocumentStore`. A git-branch store and a hosted store
+can be added later behind the same port.
 
 ### D6: Spaced repetition with FSRS
 **Enforcement:** automated
