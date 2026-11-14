@@ -87,7 +87,13 @@ pub struct FakeExaminer {
     reads: Arc<Mutex<Vec<(ExaminerStep, String)>>>,
     /// The concept of every `write_question` call, in order.
     writes: Arc<Mutex<Vec<ConceptId>>>,
+    /// Every follow-up written (ADR-0010 D1): the question it follows and
+    /// the author's answer to it.
+    follow_ups: Arc<Mutex<Vec<FollowedUp>>>,
 }
+
+/// A question a follow-up was written for, and the author's answer to it.
+pub type FollowedUp = (Question, Option<Answer>);
 
 /// The file the [`FakeExaminer`] reads from every codebase it is given.
 pub const PROBE_FILE: &str = "src/lib.rs";
@@ -105,6 +111,7 @@ impl Default for FakeExaminer {
         Self {
             reads: Arc::default(),
             writes: Arc::default(),
+            follow_ups: Arc::default(),
             correct_grade: Arc::new(Mutex::new(Grade::Good)),
             scopes: Arc::new(Mutex::new(HashMap::new())),
             weights: Arc::new(Mutex::new(HashMap::new())),
@@ -117,6 +124,12 @@ impl FakeExaminer {
     /// What each step read from its codebase, in order (ADR-0008 D2).
     pub fn reads(&self) -> Vec<(ExaminerStep, String)> {
         self.reads.lock().unwrap().clone()
+    }
+
+    /// Every follow-up written so far: the question it follows and the
+    /// author's answer to it (ADR-0010 D1).
+    pub fn follow_ups(&self) -> Vec<FollowedUp> {
+        self.follow_ups.lock().unwrap().clone()
     }
 
     /// Read [`PROBE_FILE`] from `code`, if there is any code, as `step`.
@@ -305,6 +318,34 @@ impl Examiner for FakeExaminer {
             checked: true,
             banked: None,
         })
+    }
+
+    /// A question as [`Examiner::write_question`] writes it, with an id and
+    /// prompt of its own: `<previous id>+`, and a prompt naming it, so it
+    /// never repeats `previous` (ADR-0010 D1).
+    async fn write_follow_up(
+        &self,
+        concept: &Concept,
+        brief: &QuestionBrief,
+        previous: &Question,
+        answer: Option<&Answer>,
+        codebase: &impl Codebase,
+    ) -> Result<Question> {
+        self.follow_ups
+            .lock()
+            .unwrap()
+            .push((previous.clone(), answer.cloned()));
+        let mut q = self.write_question(concept, brief, codebase).await?;
+        q.id = QuestionId(format!("{}+", previous.id.0));
+        let prompt = format!(
+            "Follow-up {}: which other statement about {} is true?",
+            q.id.0, concept.title
+        );
+        match &mut q.body {
+            QuestionBody::MultipleChoice { prompt: p, .. }
+            | QuestionBody::Open { prompt: p, .. } => *p = prompt,
+        }
+        Ok(q)
     }
 
     async fn grade(
@@ -1016,6 +1057,9 @@ impl ScmProvider for FakeScm {
 #[derive(Debug, Default)]
 pub struct ScriptedPrompter {
     pub answer_correctly: bool,
+    /// Answer correctly from this many questions on, whatever
+    /// `answer_correctly` says, e.g. in a follow-up round (ADR-0010 D7).
+    pub correct_from: Option<usize>,
     pub asked: Vec<Question>,
     pub reported: Vec<SessionOutcome>,
     /// What the author types at the feedback prompt; Enter when `None`
@@ -1027,8 +1071,10 @@ pub struct ScriptedPrompter {
 
 impl Prompter for ScriptedPrompter {
     fn ask(&mut self, question: &Question) -> Result<Answer> {
+        let correct =
+            self.answer_correctly || self.correct_from.is_some_and(|n| self.asked.len() >= n);
         self.asked.push(question.clone());
-        Ok(FakeExaminer::answer(question, self.answer_correctly))
+        Ok(FakeExaminer::answer(question, correct))
     }
 
     fn report(&mut self, outcome: &SessionOutcome) {

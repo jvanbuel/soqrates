@@ -60,6 +60,7 @@ tests check that each **Code** name exists in `soqrates-core`, and that the
 | Seen questions | `SeenQuestions` | delivery | Which bank questions one learner was shown, and in which of their rounds, so none is shown twice within a few rounds (ADR-0009). Kept with the bank, never in the learner store. | |
 | Asked questions | `AskedSession` | delivery | The questions of one graded session as they were asked, with the author's answers, grades and the explanations shown, kept for feedback in the store of the author's sessions, never in the learner store. Never asked again (ADR-0011). | |
 | Question feedback | `QuestionFeedback` | delivery | What the author of a graded session said about one of its questions: a kind (disagree, unclear, wrong explanation, off-topic, good) and optional text. Never changes a grade (ADR-0011). | complaint, appeal |
+| Follow-up | `FollowUp` | delivery | A round of new questions on the same commit about the concepts a graded session got wrong (ADR-0010). Its session is keyed `…#2`, `#3`. | retry, retake |
 | Check | `CheckStatus` | delivery | The status Soqrates reports on a pull request. | |
 | Hook | `HookKind` | delivery | A local git `pre-commit` or jj `pre-push` invocation. | |
 | Mode | `Mode` | delivery | Advisory (never blocks) or Blocking. | |
@@ -176,6 +177,10 @@ The kind of each question is chosen by the examiner, steered by the level
   already-graded session fails with `NotFound` (gap G7).
 - A session passes if the fraction of correct grades is at least
   `pass_threshold`. An empty session passes.
+- *Amended by [ADR-0010](0010-follow-up-rounds.md):* a session is graded
+  once, but a commit is not final: its wrong answers get a follow-up round,
+  a new session keyed `…#2`. A follow-up passes on the first round's
+  concepts, each counted with its latest answer, and records no reviews.
 
 How "at most once" is achieved: grading is written ahead, in a grading
 journal kept with the session.

@@ -10,12 +10,13 @@ use crate::app::events::DomainEvent;
 use crate::app::ports::{Clock, Codebase, Examiner, StateStore};
 use crate::assessment::{
     Answer, AnswerBody, Concept, ConceptScope, Diff, Grade, Question, QuestionBody, QuestionBrief,
-    QuestionKind, Weight,
+    QuestionFormat, QuestionKind, Weight,
 };
 use crate::delivery::{
     AskedQuestion, AskedSession, BankedQuestion, FeedbackGiven, FeedbackId, FeedbackKind,
-    FeedbackRequest, GradedSession, GradingJournal, JournaledReview, Mode, PrRef, PrRounds,
-    QuestionFeedback, QuestionResult, SeenQuestions, Session, StoreId, pick,
+    FeedbackRequest, FollowUp, GradedSession, GradingJournal, JournaledReview, Mode, PrRef,
+    PrRounds, QuestionFeedback, QuestionResult, SeenQuestions, Session, SessionEvent, StoreId,
+    pick,
 };
 use crate::ids::{AuthorId, BankId, ConceptId, Identity, LearnerId, QuestionId, SessionKey};
 use crate::learner::{
@@ -73,6 +74,11 @@ impl Recorded {
 }
 
 impl SessionOutcome {
+    /// The answers graded correct, in this round.
+    pub fn correct(&self) -> usize {
+        self.grades.iter().filter(|(_, g)| g.is_correct()).count()
+    }
+
     /// Replace what was worked out at grading time by what `recorded`
     /// says happened: the level of the profile in `primary`, the review
     /// events and the next review dates. The grades and the session's own
@@ -113,6 +119,10 @@ pub struct Config {
     /// gets multiple choice.
     #[serde(default)]
     pub open_questions: bool,
+    /// Follow-up rounds per session at most: new questions about the
+    /// concepts answered wrongly (ADR-0010 D2). 0 turns them off.
+    #[serde(default = "default_max_follow_ups")]
+    pub max_follow_ups: u32,
     /// Forge host -> the organisation that administers it (ADR-0003 D2, D5).
     pub forges: BTreeMap<String, String>,
     /// Whether rounds reuse questions from the question bank (ADR-0009).
@@ -139,11 +149,16 @@ impl Default for Config {
             pass_threshold: 0.6,
             mode: Mode::Advisory,
             open_questions: false,
+            max_follow_ups: default_max_follow_ups(),
             forges: BTreeMap::new(),
             question_bank: true,
             reask_after_rounds: default_reask_after_rounds(),
         }
     }
+}
+
+fn default_max_follow_ups() -> u32 {
+    2
 }
 
 pub struct Soqrates<S, E, C> {
@@ -683,6 +698,123 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         Ok(session)
     }
 
+    /// Open and persist the follow-up round after `session`, graded with
+    /// `outcome` (ADR-0010): one new multiple-choice question about each
+    /// concept answered wrongly, written from another angle than the
+    /// question it follows. `None` when every answer was right, or the
+    /// session was the last round `config.max_follow_ups` allows. The
+    /// examiner may read `code`, the codebase the session was asked about.
+    pub async fn follow_up(
+        &self,
+        session: &Session,
+        outcome: &SessionOutcome,
+        code: &impl Codebase,
+    ) -> Result<Option<Session>> {
+        let (first, round) = session.key().round();
+        if round > self.config.max_follow_ups {
+            return Ok(None);
+        }
+        let missed: Vec<(&Question, Option<Answer>)> = session
+            .questions()
+            .iter()
+            .filter_map(|q| {
+                let result = outcome.results.iter().find(|r| r.question == q.id)?;
+                (!result.is_correct()).then(|| {
+                    let answer = result.answer.clone().map(|body| Answer {
+                        question: q.id.clone(),
+                        body,
+                    });
+                    (q, answer)
+                })
+            })
+            .collect();
+        if missed.is_empty() {
+            return Ok(None);
+        }
+        self.recover().await?;
+        let place = self.place(session.author()).await?;
+        let level = Self::load_or_new(place.primary, &place.learner)
+            .await?
+            .level();
+        let mut questions: Vec<Question> = Vec::new();
+        for (previous, answer) in missed {
+            let concept = Concept {
+                id: previous.concept.clone(),
+                title: previous.concept.0.clone(),
+                summary: String::new(),
+                scope: previous.scope,
+                weight: Weight::Core,
+                locations: Vec::new(),
+            };
+            // Always multiple choice, from another angle: the earlier kind
+            // goes to the back (ADR-0010 D3).
+            let format = QuestionFormat::MultipleChoice;
+            let asked: Vec<QuestionKind> = std::iter::once(previous.kind)
+                .chain(questions.iter().map(|q| q.kind))
+                .collect();
+            let brief =
+                QuestionBrief::new(format, &policy::kinds_for(level, format, &asked), vec![]);
+            let mut q = self
+                .examiner
+                .write_follow_up(&concept, &brief, previous, answer.as_ref(), code)
+                .await?;
+            brief
+                .check(&q)
+                .map_err(|why| Error::Port(format!("examiner: {why}")))?;
+            if q.concept != previous.concept {
+                return Err(Error::Port(format!(
+                    "examiner: a follow-up about {:?} asks about {:?}",
+                    previous.concept.0, q.concept.0
+                )));
+            }
+            if same_text(q.body.prompt(), previous.body.prompt()) {
+                return Err(Error::Port(format!(
+                    "examiner: the follow-up about {:?} repeats the question",
+                    previous.concept.0
+                )));
+            }
+            q.scope = previous.scope;
+            questions.push(q);
+        }
+        let (settled, total) = match session.follow_up() {
+            Some(f) => (f.settled + outcome.correct(), f.total),
+            None => (outcome.correct(), session.questions().len()),
+        };
+        let follow_up = Session::open_follow_up(
+            first.follow_up(round + 1),
+            session.author().clone(),
+            questions,
+            FollowUp {
+                round: round + 1,
+                settled,
+                total,
+            },
+            self.clock.now(),
+        )?;
+        self.session_store_for(session.author())?
+            .save_session(&follow_up)
+            .await?;
+        Ok(Some(follow_up))
+    }
+
+    /// The latest round of the session `key`: its latest follow-up that is
+    /// pending, being graded or graded, or `key` itself (ADR-0010 D2).
+    pub async fn latest_follow_up(&self, key: &SessionKey) -> Result<SessionKey> {
+        let (first, mut round) = key.round();
+        let mut latest = key.clone();
+        loop {
+            let next = first.follow_up(round + 1);
+            let exists = self.pending_session(&next).await?.is_some()
+                || self.being_graded(&next).await?
+                || self.graded(&next).await?.is_some();
+            if !exists {
+                return Ok(latest);
+            }
+            latest = next;
+            round += 1;
+        }
+    }
+
     /// The rounds asked so far on `pr`, authored by `author` (ADR-0002 D9).
     /// Kept with the author's sessions, never in the shared learner store
     /// when an organisation store exists (ADR-0003 D5).
@@ -835,6 +967,9 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             }
         }
         let claimed = session.clone();
+        // Only a first round records reviews; a follow-up only settles the
+        // session (ADR-0010 D5).
+        let records = session.follow_up().is_none();
         let key = session.key().clone();
         let author = session.author().clone();
         let questions = session.questions().to_vec();
@@ -847,9 +982,11 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             Some(store) => Some(Self::load_or_new(store, &place.learner).await?),
             None => None,
         };
+        // A follow-up records no reviews (ADR-0010 D5).
         let reviews: Vec<JournaledReview> = questions
             .iter()
             .zip(&result.grades)
+            .filter(|_| records)
             .map(|(q, (_, grade))| {
                 let store = match (&place.project_id, q.scope) {
                     (Some(id), ConceptScope::Project) => id.clone(),
@@ -868,11 +1005,27 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 }
             })
             .collect();
+        // Where nothing is rescheduled, the next review is the one the first
+        // round set.
+        let kept_reviews: Vec<Option<DateTime<Utc>>> = questions
+            .iter()
+            .map(|q| {
+                let profile = match (&project, q.scope) {
+                    (Some(p), ConceptScope::Project) => p,
+                    _ => &primary,
+                };
+                profile.card(&q.concept).map(|c| c.due())
+            })
+            .collect();
+        // For a follow-up, about every concept of its first round
+        // (ADR-0010 D4).
+        let SessionEvent::SessionGraded { correct, total, .. } = &result.event;
+        let (correct, total) = (*correct, *total);
         let graded = GradedSession {
             key: key.clone(),
             author,
-            correct: result.grades.iter().filter(|(_, g)| g.is_correct()).count(),
-            total: result.grades.len(),
+            correct,
+            total,
             passed: result.passed,
             at: now,
         };
@@ -907,7 +1060,12 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         }
         let mut events = recorded.events_in_order(journal.reviews.len());
         events.push(result.event.into());
-        let results = question_results(&questions, answers, &result.grades, &feedback, &events);
+        let mut results = question_results(&questions, answers, &result.grades, &feedback, &events);
+        if !records {
+            for (r, kept) in results.iter_mut().zip(kept_reviews) {
+                r.next_review = kept;
+            }
+        }
         let level_after = recorded.level_of(&place.primary_id).unwrap_or_default();
         // Kept for feedback where the session's store may hold question
         // text (ADR-0011 D1).
@@ -1404,6 +1562,16 @@ fn question_results(
             }
         })
         .collect()
+}
+
+/// Whether `a` and `b` are the same text, ignoring case and whitespace.
+fn same_text(a: &str, b: &str) -> bool {
+    let words = |s: &str| {
+        s.split_whitespace()
+            .map(str::to_lowercase)
+            .collect::<Vec<_>>()
+    };
+    words(a) == words(b)
 }
 
 /// The mark a profile keeps of a graded session (ADR-0002 D6): opaque, so

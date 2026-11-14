@@ -61,6 +61,10 @@ struct Cli {
     /// Give experts open questions (off by default: multiple choice only).
     #[arg(long, global = true, env = "SOQRATES_OPEN_QUESTIONS")]
     open_questions: Option<bool>,
+    /// Follow-up rounds per session at most, asking again about wrong
+    /// answers (default 2; 0 turns them off).
+    #[arg(long, global = true, env = "SOQRATES_MAX_FOLLOW_UPS")]
+    max_follow_ups: Option<u32>,
     #[command(subcommand)]
     command: Command,
 }
@@ -178,6 +182,7 @@ fn settings(cli: &Cli, project_root: Option<&std::path::Path>) -> Result<config:
         model: cli.model.clone(),
         mode: cli.mode,
         open_questions: cli.open_questions,
+        max_follow_ups: cli.max_follow_ups,
         state_dir: cli.state_dir.clone(),
         ..config::File::default()
     }))
@@ -192,6 +197,7 @@ async fn build_app(cli: &Cli, settings: &config::File) -> Result<App, String> {
         max_questions: settings.max_questions.unwrap_or(defaults.max_questions),
         pass_threshold: settings.pass_threshold.unwrap_or(defaults.pass_threshold),
         open_questions: settings.open_questions.unwrap_or(defaults.open_questions),
+        max_follow_ups: settings.max_follow_ups.unwrap_or(defaults.max_follow_ups),
         mode: settings.mode.map(Into::into).unwrap_or(defaults.mode),
         ..defaults
     };
