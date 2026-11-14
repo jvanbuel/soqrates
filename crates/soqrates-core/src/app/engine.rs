@@ -34,6 +34,19 @@ pub struct SessionOutcome {
     pub results: Vec<QuestionResult>,
 }
 
+/// Where a session is in its life (ADR-0002 D6).
+#[derive(Debug, Clone)]
+pub enum SessionState {
+    /// No such session, or one that was discarded.
+    Absent,
+    /// Asked, not graded yet.
+    Pending(Session),
+    /// Its answers were graded but not all results are recorded yet.
+    Grading,
+    /// Graded.
+    Graded(GradedSession),
+}
+
 /// Where a learner's profile was read from and written to (ADR-0003 D4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProfileLocation {
@@ -631,11 +644,36 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         Ok(())
     }
 
+    /// Where the session `key` is in its life (ADR-0002 D6). The one query
+    /// for it: the lookups run in the order a grading moves through, pending,
+    /// then being graded, then graded, so a grading by another run is never
+    /// missed and no new session is opened for its key.
+    pub async fn session_state(&self, key: &SessionKey) -> Result<SessionState> {
+        let _ = self.recover().await;
+        if let Some((session, _)) = self.find_session(key).await? {
+            return Ok(SessionState::Pending(session));
+        }
+        // The journal is looked up before the graded record, never after:
+        // a grading that finishes in between is then found as graded. A
+        // journal left behind next to a graded record only needs removing,
+        // so the record wins.
+        let grading = self.grading_recorded(key).await?;
+        Ok(match self.graded_record(key).await? {
+            Some(graded) => SessionState::Graded(graded),
+            None if grading => SessionState::Grading,
+            None => SessionState::Absent,
+        })
+    }
+
     /// The record of the graded session `key`, if it was graded.
     pub async fn graded(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         // Best effort: a grading that can't be finished yet is reported as
         // being graded (ADR-0002 D6).
         let _ = self.recover().await;
+        self.graded_record(key).await
+    }
+
+    async fn graded_record(&self, key: &SessionKey) -> Result<Option<GradedSession>> {
         match self.store.load_graded(key).await {
             Ok(Some(g)) => return Ok(Some(g)),
             Ok(None) => {}
@@ -652,14 +690,20 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
 
     /// The pending (not yet graded) session `key`, if any.
     pub async fn pending_session(&self, key: &SessionKey) -> Result<Option<Session>> {
-        let _ = self.recover().await;
-        Ok(self.find_session(key).await?.map(|(s, _)| s))
+        Ok(match self.session_state(key).await? {
+            SessionState::Pending(session) => Some(session),
+            _ => None,
+        })
     }
 
     /// Whether the session `key` is being graded: its answers were graded,
     /// but not all of the results are recorded yet (ADR-0002 D6).
     pub async fn being_graded(&self, key: &SessionKey) -> Result<bool> {
         let _ = self.recover().await;
+        self.grading_recorded(key).await
+    }
+
+    async fn grading_recorded(&self, key: &SessionKey) -> Result<bool> {
         match self.store.load_grading(key).await {
             Ok(Some(_)) => return Ok(true),
             Ok(None) => {}

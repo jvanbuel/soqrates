@@ -197,12 +197,11 @@ impl<S: StateStore, E: Examiner, C: Clock> SoqratesMcp<S, E, C> {
                 ));
             }
             Some(k) => SessionKey(k),
-            None => SessionKey(format!(
-                "mcp:{}:{}:{}",
-                author.0,
-                self.app.clock.now().to_rfc3339(),
-                self.sessions.fetch_add(1, Ordering::Relaxed) + 1
-            )),
+            None => SessionKey::mcp(
+                &author,
+                &self.app.clock.now().to_rfc3339(),
+                self.sessions.fetch_add(1, Ordering::Relaxed) + 1,
+            ),
         };
         let session = self
             .app
