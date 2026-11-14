@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/jvanbuel/soqrates/compare/v0.1.2...v0.1.3) - 2026-11-14
+
+### Fixed
+
+- Preserve feedback across concurrent writes and recovery, verify GitHub comment provenance, and allow question commands without a model provider
+
+### Other
+
+- Merge main into the question feedback
+- Let authors give feedback on graded questions (#22, ADR-0011)
+- Merge the question bank into the follow-up rounds
+- Ask a follow-up question for every wrong answer (ADR-0010)
+- Reuse questions from a question bank before writing new ones
+- Keep feedback through identity links, and replay it only where it is read
+- Merge remote engine and document-store refactor, preserving feedback safety fixes
+- Merge main into the question feedback
+- Merge main into the engine split
+- Merge main into the question feedback
+- Merge main into the follow-up rounds
+- Merge pull request #48 from jvanbuel/claude/issue-44-journal-reviews
+- Merge pull request #47 from jvanbuel/claude/issue-45-scm-port
+- Merge pull request #38 from jvanbuel/claude/snippet-soft-limit
+- Split the engine by use case
+- Route every store access through a router that recovers first
+- Merge branch 'claude/issue-46-session-lifecycle' into claude/issue-42-engine-split
+- Narrow the StateStore port to a document port
+- Give the CI check a session state query and a structured SessionKey
+- Journal the graded reviews instead of whole-profile snapshots
+- Make the ScmProvider port stateless and intent-level
+- Accept snippets a few lines over the asked length (ADR-0007 D3)
+- Merge main into the question feedback
+- Merge pull request #36 from jvanbuel/claude/issue-11-follow-ups
+- Ignore answer field markers inside tilde-fenced code blocks
+- Answer open questions inside the question comment (ADR-0004 D11)
+
 ## [0.1.2](https://github.com/jvanbuel/soqrates/compare/v0.1.1...v0.1.2) - 2026-11-09
 
 ### Other
