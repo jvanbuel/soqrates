@@ -99,10 +99,20 @@ impl DocumentStore for InMemoryStore {
 /// `graded`, `rounds` and `seen`; bank questions are in a directory per
 /// concept, `bank/<hex concept>/<hex id>.json`. File names are the
 /// hex-encoded keys.
+///
+/// Every write of a kind holds an advisory lock on that kind's directory
+/// (`<kind>/.lock`), so saves, removals, swaps and claims of one kind are
+/// atomic with respect to each other, also between processes. Each write
+/// goes to a temp file of its own and is renamed into place. Removing a
+/// group is the one step that is not all or nothing: a failure part-way
+/// leaves the rest.
 #[derive(Debug, Clone)]
 pub struct FileStore {
     pub root: PathBuf,
 }
+
+/// Numbers the temp files of this process, so that no two writes share one.
+static TEMP_FILES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The directory of `kind` under the root of a [`FileStore`].
 fn dir_name(kind: Kind) -> &'static str {
@@ -178,12 +188,30 @@ impl FileStore {
     }
 
     fn write_doc(path: &Path, doc: &Doc) -> Result<()> {
-        std::fs::create_dir_all(path.parent().expect("has parent")).map_err(io)?;
+        use std::io::Write;
+        let dir = path.parent().expect("has parent");
+        std::fs::create_dir_all(dir).map_err(io)?;
         let json = serde_json::to_vec_pretty(doc).map_err(|e| Error::Port(e.to_string()))?;
         // Write then rename, so a crash never leaves a half-written file.
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(io)?;
-        std::fs::rename(&tmp, path).map_err(io)
+        // Every write has a temp file of its own: two writers of one key
+        // must not write into the same file, or the renamed file could hold
+        // a mix of both. The temp file's name is short and independent of
+        // the key, so that it fits wherever the document's name fits, and
+        // doesn't end in `.json`, so listing never reads it.
+        let tmp = dir.join(format!(
+            ".tmp-{}-{}",
+            std::process::id(),
+            TEMP_FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let written = std::fs::File::create(&tmp).and_then(|mut file| {
+            file.write_all(&json)?;
+            file.sync_all()
+        });
+        if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, path)) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(io(e));
+        }
+        Ok(())
     }
 
     fn remove_file(path: &Path) -> Result<()> {
@@ -221,7 +249,10 @@ impl FileStore {
 
     /// Hold the advisory lock of `kind`'s directory until the returned file
     /// is dropped. Between processes it makes checking and writing one
-    /// step; the OS releases it if the process stops.
+    /// step; the OS releases it if the process stops. Every write of a
+    /// document takes it, not only swaps and claims: a plain save between a
+    /// swap's check and its write would otherwise be lost while the swap
+    /// reports success.
     fn lock(&self, kind: Kind) -> Result<std::fs::File> {
         let dir = self.root.join(dir_name(kind));
         std::fs::create_dir_all(&dir).map_err(io)?;
@@ -277,6 +308,7 @@ impl DocumentStore for FileStore {
         }
     }
     async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+        let _lock = self.lock(kind)?;
         self.put(kind, key, doc)
     }
     async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
@@ -290,11 +322,13 @@ impl DocumentStore for FileStore {
         for removal in removals {
             match *removal {
                 Removal::Key(kind, key) => {
+                    let _lock = self.lock(kind)?;
                     if let Some(path) = self.find(kind, key)? {
                         Self::remove_file(&path)?;
                     }
                 }
                 Removal::Group(kind, group) => {
+                    let _lock = self.lock(kind)?;
                     for (path, _) in self.entries(kind, Some(group))? {
                         Self::remove_file(&path)?;
                     }
@@ -316,7 +350,16 @@ impl DocumentStore for FileStore {
         Ok(true)
     }
     async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
-        let _lock = self.lock(to)?;
+        // Both kinds, always in the same order, so that two claims can't
+        // each hold one lock and wait for the other. Holding `from` keeps a
+        // removal of the pending document from slipping in between the
+        // check and the claim.
+        let (first, second) = if from <= to { (from, to) } else { (to, from) };
+        let _first = self.lock(first)?;
+        let _second = match second == first {
+            true => None,
+            false => Some(self.lock(second)?),
+        };
         let Some(pending) = self.find(from, key)? else {
             return Ok(false);
         };
@@ -912,8 +955,10 @@ mod tests {
         );
         store.save_asked(&asked).await.unwrap();
         let app = Soqrates::new(store, StoreExaminer, TestClock, Default::default());
-        // Prevent the bank CAS lock from opening after the session is saved.
+        // Prevent the bank lock from opening after the session is saved.
+        // Saving the bank question above created the lock file.
         let lock = root.join("bank").join(".lock");
+        std::fs::remove_file(&lock).unwrap();
         std::fs::create_dir(&lock).unwrap();
         let request = FeedbackRequest {
             question: QuestionRef::Number(1),
@@ -1460,7 +1505,8 @@ mod tests {
         let dir = temp_dir("layout");
         let store = FileStore::new(&dir);
         populate(&store).await;
-        // Take the lock files of swaps and claims out of the picture.
+        // Every directory written to has a lock file (`.lock`): those are
+        // not documents, and are left out of the picture.
         let mut files = Vec::new();
         let mut pending = vec![dir.clone()];
         while let Some(d) = pending.pop() {
@@ -1468,6 +1514,8 @@ mod tests {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     pending.push(path);
+                } else if path.file_name().is_some_and(|n| n == ".lock") {
+                    continue;
                 } else {
                     files.push(
                         path.strip_prefix(&dir)
@@ -1490,11 +1538,155 @@ mod tests {
             "rounds/6f2f722331.json".into(),
             format!("bank/727573742e747261697473/{id}.json"),
             "seen/6379.json".into(),
-            // Sessions are claimed under this lock, which is kept.
-            "gradings/.lock".into(),
         ];
         expected.sort();
+        // Also: no temp file is left behind.
         assert_eq!(files, expected);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The documents a writer of [`concurrent_saves_of_one_key_are_never_mixed`]
+    /// saves: large, so that writes take long enough to overlap, and each
+    /// made of one repeated letter, so that a mix of two shows.
+    fn letter_doc(writer: u8, round: usize) -> Doc {
+        let letter = char::from(b'a' + writer);
+        serde_json::json!({
+            "writer": writer,
+            "round": round,
+            "pad": letter.to_string().repeat(64 * 1024),
+        })
+    }
+
+    // @adr-0001-d5
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn concurrent_saves_of_one_key_are_never_mixed() {
+        let dir = temp_dir("same-key");
+        let store = Arc::new(FileStore::new(&dir));
+        let mut tasks = Vec::new();
+        for writer in 0..6u8 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                for round in 0..30 {
+                    store
+                        .save(Kind::Rounds, "pr", &letter_doc(writer, round))
+                        .await?;
+                }
+                Ok::<_, Error>(())
+            }));
+        }
+        for _ in 0..2 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                for _ in 0..200 {
+                    if let Some(doc) = store.load(Kind::Rounds, "pr").await? {
+                        let writer = doc["writer"].as_u64().expect("writer") as u8;
+                        let round = doc["round"].as_u64().expect("round") as usize;
+                        assert_eq!(doc, letter_doc(writer, round), "a mixed document");
+                    }
+                }
+                Ok(())
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap().expect("every save and load succeeds");
+        }
+        let left: Vec<_> = std::fs::read_dir(dir.join("rounds"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".tmp-"))
+            .collect();
+        assert!(left.is_empty(), "temp files left behind: {left:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // @adr-0001-d5
+    #[tokio::test]
+    async fn a_key_whose_file_name_just_fits_can_be_saved() {
+        let dir = temp_dir("long-key");
+        let store = FileStore::new(&dir);
+        // 123 bytes hex-encode to 246, plus `.json`: 251 of the 255 bytes
+        // most file systems allow in a name.
+        let key = "k".repeat(123);
+        let doc = serde_json::json!({"key": key});
+        store.save(Kind::Rounds, &key, &doc).await.unwrap();
+        assert_eq!(store.load(Kind::Rounds, &key).await.unwrap(), Some(doc));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Whether `step` waits while another holder has the lock of `kind`,
+    /// and finishes once it is released.
+    async fn waits_for_lock<F>(store: &Arc<FileStore>, kind: Kind, step: F)
+    where
+        F: Future<Output = Result<()>> + Send + 'static,
+    {
+        let held = store.lock(kind).unwrap();
+        let task = tokio::spawn(step);
+        tokio::task::spawn_blocking(|| std::thread::sleep(std::time::Duration::from_millis(200)))
+            .await
+            .unwrap();
+        assert!(
+            !task.is_finished(),
+            "the step went ahead while {kind:?} was locked"
+        );
+        drop(held);
+        task.await
+            .unwrap()
+            .expect("the step succeeds once unlocked");
+    }
+
+    // @adr-0001-d5
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_save_waits_for_the_lock_a_swap_holds() {
+        let dir = temp_dir("save-lock");
+        let store = Arc::new(FileStore::new(&dir));
+        let s = store.clone();
+        waits_for_lock(&store, Kind::Seen, async move {
+            s.save(Kind::Seen, "ada", &serde_json::json!({"learner": "ada"}))
+                .await
+        })
+        .await;
+        assert!(store.load(Kind::Seen, "ada").await.unwrap().is_some());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // @adr-0001-d5
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_removal_waits_for_the_lock_a_swap_holds() {
+        let dir = temp_dir("remove-lock");
+        let store = Arc::new(FileStore::new(&dir));
+        let doc = serde_json::json!({"learner": "ada"});
+        store.save(Kind::Seen, "ada", &doc).await.unwrap();
+        let s = store.clone();
+        waits_for_lock(&store, Kind::Seen, async move {
+            s.remove(&[Removal::Key(Kind::Seen, "ada")]).await
+        })
+        .await;
+        let s = store.clone();
+        store.save(Kind::Link, "id", &doc).await.unwrap();
+        waits_for_lock(&store, Kind::Link, async move {
+            s.remove(&[Removal::Group(Kind::Link, "ada")]).await
+        })
+        .await;
+        assert!(store.load(Kind::Seen, "ada").await.unwrap().is_none());
+        assert!(store.load(Kind::Link, "id").await.unwrap().is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // @adr-0002-d6
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_claim_waits_for_the_lock_of_what_it_claims_from() {
+        let dir = temp_dir("claim-lock");
+        let store = Arc::new(FileStore::new(&dir));
+        let s = session();
+        store.save_session(&s).await.unwrap();
+        let doc = serde_json::to_value(journal(&s, "ada")).unwrap();
+        let st = store.clone();
+        let key = s.key().0.clone();
+        waits_for_lock(&store, Kind::Session, async move {
+            assert!(st.claim(Kind::Session, Kind::Grading, &key, &doc).await?);
+            Ok(())
+        })
+        .await;
         let _ = std::fs::remove_dir_all(dir);
     }
 
