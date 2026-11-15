@@ -44,6 +44,16 @@ pub struct Config {
     /// rounds (ADR-0009 D5).
     #[serde(default = "default_reask_after_rounds")]
     pub reask_after_rounds: u64,
+    /// For how many hours a pending session holds its due reviews: while
+    /// it does, other sessions of the same learner don't ask them
+    /// (ADR-0002 D10). A session left unanswered longer, e.g. on a pull
+    /// request closed without answering, lets them go.
+    #[serde(default = "default_hold_reviews_hours")]
+    pub hold_reviews_hours: u32,
+}
+
+fn default_hold_reviews_hours() -> u32 {
+    72
 }
 
 fn default_true() -> bool {
@@ -65,6 +75,7 @@ impl Default for Config {
             forges: BTreeMap::new(),
             question_bank: true,
             reask_after_rounds: default_reask_after_rounds(),
+            hold_reviews_hours: default_hold_reviews_hours(),
         }
     }
 }

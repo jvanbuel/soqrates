@@ -119,3 +119,29 @@ async fn answers_many_sessions(w: &mut SpecWorld, id: String, n: usize, per: usi
         w.submit_all(&session, correctness(&how)).await;
     }
 }
+
+/// The key of the `n`th session started in this scenario, by `id`.
+fn nth_key(id: &str, n: usize) -> soqrates_core::SessionKey {
+    soqrates_core::SessionKey(format!("local:{}:{n}", author(id).0))
+}
+
+#[when(regex = r#"^session (\d+) of "([^"]+)" is discarded$"#)]
+async fn session_discarded(w: &mut SpecWorld, n: usize, id: String) {
+    let key = nth_key(&id, n);
+    assert!(
+        w.app.pending_session(&key).await.expect("lookup").is_some(),
+        "session {n} is not pending"
+    );
+    w.app.discard_session(&key).await.expect("discard");
+}
+
+#[when(regex = r#"^"([^"]+)" answers session (\d+) (correctly|wrongly)$"#)]
+async fn answers_session(w: &mut SpecWorld, id: String, n: usize, how: String) {
+    let session = w
+        .app
+        .pending_session(&nth_key(&id, n))
+        .await
+        .expect("lookup")
+        .unwrap_or_else(|| panic!("session {n} is not pending"));
+    w.submit_all(&session, correctness(&how)).await;
+}

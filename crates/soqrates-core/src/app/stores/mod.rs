@@ -23,16 +23,17 @@
 
 mod journal;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::app::ports::{Clock, StateStore};
 use crate::delivery::{
     AskedQuestion, AskedSession, BankedQuestion, GradedSession, Session, StoreId,
 };
-use crate::ids::{AuthorId, Identity, LearnerId, SessionKey};
+use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile};
 use crate::{Error, Result};
 
@@ -377,6 +378,50 @@ impl<'a, S: StateStore, C: Clock> Access<'a, S, C> {
             .first_in(|store| store.load_grading(key))
             .await?
             .is_some())
+    }
+
+    /// The concepts that `place`'s learner is being asked about elsewhere:
+    /// those of their sessions that are pending or being graded and were
+    /// opened at or after `since`, under any of their linked identities
+    /// (ADR-0002 D10). Only the stores this engine has are looked in; an
+    /// unreachable learner store is skipped where there are organisation
+    /// stores (ADR-0003 D4).
+    pub async fn held_concepts(
+        &self,
+        place: &Placement<'a, S>,
+        since: DateTime<Utc>,
+    ) -> Result<BTreeSet<ConceptId>> {
+        let identities: BTreeSet<String> = place
+            .primary
+            .links_of(&place.learner)
+            .await?
+            .into_iter()
+            .map(|link| link.identity.to_string())
+            .collect();
+        let theirs = |session: &Session| {
+            session.created_at() >= since
+                && session
+                    .author()
+                    .identity()
+                    .is_ok_and(|id| identities.contains(&id.to_string()))
+        };
+        let mut held = BTreeSet::new();
+        for (i, store) in self.all().enumerate() {
+            let read = async {
+                let mut sessions = store.sessions().await?;
+                sessions.extend(store.gradings().await?.into_iter().map(|j| j.session));
+                Ok(sessions)
+            }
+            .await;
+            let sessions = match i {
+                0 => self.tolerate(read)?.unwrap_or_default(),
+                _ => read?,
+            };
+            for session in sessions.iter().filter(|s| theirs(s)) {
+                held.extend(session.questions().iter().map(|q| q.concept.clone()));
+            }
+        }
+        Ok(held)
     }
 
     /// Note on the bank what the feedback kept in `asked` says about its

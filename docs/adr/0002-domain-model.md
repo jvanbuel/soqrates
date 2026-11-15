@@ -346,7 +346,8 @@ is built from four sources, in this order:
 1. **Carried questions** (D9, CI only): the unanswered questions of the
    latest round, as written. They are never dropped. They count towards the
    cap; if the cap was lowered since, they all stay anyway.
-2. **Due reviews**, ordered by D8.
+2. **Due reviews**, ordered by D8, except those another pending session
+   of the learner holds (below).
 3. **New concepts** the examiner extracts from the diff, each with a
    weight: `core` (the change is about it), `supporting` (the change relies
    on it) or `incidental` (the change merely touches it). Incidental
@@ -374,6 +375,28 @@ A review that is not asked stays due and comes up in a later session. The
 cost is that due cards wait longer for an author who opens few or small
 changes; a backlog is better worked through outside a pull request, e.g.
 with the MCP `due_reviews` tool, than on whichever change comes next.
+
+A due review is asked in one pending session at a time. A review card
+only stops being due when a session that asks it is graded, so without
+this every session opened in the meantime, on every open pull request,
+would ask it again, sometimes minutes apart, and FSRS and the level streak
+(D4) would count each answer as a separate review. So a due review that
+another session of the same learner asks is left out, also when the
+change touches it; its slot goes to the next due review that no session
+holds, then to new concepts, by the rule above. The holding session is one
+that is pending or being graded, under any of the learner's linked
+identities (ADR-0003 D1), in a store this run can reach (ADR-0003 D5). The
+round's own carried questions are not held from it, and earlier rounds of
+the same pull request hold nothing of their own: their questions were
+carried (D9). Once the holding session is graded the usual schedule
+applies; if it is discarded or superseded without being graded, the review
+is free again. A session also holds its reviews for at most
+`hold_reviews_hours` (72 by default) after it was opened, so a session
+nobody will answer, such as one on a pull request closed without answers
+or an interrupted hook, doesn't hold them for good. Sessions are listed,
+not indexed by learner: no extra state needs clearing when one is
+discarded. New concepts that another pending session also asks are still
+asked.
 
 Zero questions is a valid outcome: a change whose concepts are all
 incidental, or known and not due, asks nothing (ADR-0004 D7). An empty
