@@ -1,0 +1,163 @@
+{
+  "author": "github.com:16427728",
+  "created_at": "2026-11-15T09:55:37.074592336Z",
+  "key": "jvanbuel/soqrates#69@960a2d3ac5fb968d9188d2debbff3bcde2cf8fb0",
+  "questions": [
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "use std::future::Future;\n\npub trait Store: Send + Sync {\n    fn load(&self, id: u32) -> impl Future<Output = Option<String>>;\n}\n\nasync fn warm<S: Store + 'static>(store: S) {\n    let handle = tokio::spawn(async move {\n        store.load(1).await\n    });\n    let _ = handle.await;\n}"
+          },
+          "correct": 3,
+          "options": [
+            "The `Store: Send + Sync` supertraits are too weak. They should require `'static` so that the future can outlive the call.",
+            "A trait method can't return `impl Future`. It must be written as `async fn`, or the code won't compile in any context.",
+            "Calling `store.load(1)` through a generic parameter uses static dispatch, which can't be awaited inside a spawned task. The trait needs `Box<dyn Store>` instead.",
+            "The returned future in the trait method is not declared `+ Send`. Generic code that only knows `S: Store` can't prove the future is Send, so `tokio::spawn` is rejected at compile time."
+          ],
+          "prompt": "This trait is an async port, and callers are generic over it rather than using trait objects. `warm` fails to compile when it is instantiated with any implementation of `Store`. Which line is flawed, and why?",
+          "reasons": [
+            "`'static` on the generic parameter is already given in `warm`, and supertraits describe the store, not the futures its methods return. The problem is the missing Send bound on the returned future.",
+            "Returning `impl Future` from a trait method is allowed. It is the explicit form of `async fn`, and it lets the signature add bounds such as `+ Send`. The trait compiles on its own; the error shows up only where the future must be Send.",
+            "Static dispatch has no such limit, and generic ports are used with `.await` all the time. A trait with `impl Future` returns isn't dyn-compatible anyway, so `Box<dyn Store>` wouldn't work.",
+            "Generic callers see only the trait's signature, not the concrete implementation's future. Without `+ Send` on the `impl Future` return type, the future is not known to be Send, so it can't be moved to another thread by `tokio::spawn`. Adding `+ Send` to the return type fixes it."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "rust.traits.async-ports-generic-dispatch",
+      "explanation": "Generic callers see only the trait's signature, not the concrete implementation's future. Without `+ Send` on the `impl Future` return type, the future is not known to be Send, so it can't be moved to another thread by `tokio::spawn`. Adding `+ Send` to the return type fixes it.",
+      "id": "rust.traits.async-ports-generic-dispatch/mc",
+      "kind": "SpotTheBug",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "correct": 4,
+          "options": [
+            "Follow-ups are off (0), the model is the user's, and identities keeps github.com mapped to the user's 1001 while adding the gitlab host, because earlier entries win on a key clash.",
+            "Follow-ups stay at 2, because 0 means \"unset\" and falls back to the user's value. The identities map is merged key by key.",
+            "Follow-ups are off (0), the model is still the user's model, and identities contains only the project's two entries, because a project file that defines identities replaces the user's whole map.",
+            "Follow-ups are off (0), but the model is unset, because a project file that does not mention the model clears it.",
+            "Follow-ups are off (0), the model is still the user's model, and identities has github.com mapped to the project's 2002 plus the gitlab host mapped to 678."
+          ],
+          "prompt": "Soqrates layers settings: the per-user config file is read first, then the repository's `.soqrates.toml` is overlaid on it. The user file sets `model` to some model name, sets `max_follow_ups = 2`, and maps the host `github.com` to identity `github.com:1001`. The project file sets only `max_follow_ups = 0`, maps `github.com` to `github.com:2002`, and maps `gitlab.client.example` to `gitlab.client.example:678`. It says nothing about `model`. What is the effective configuration after the overlay?",
+          "reasons": [
+            "`extend` inserts the project's entries last, so on a clash the project's value replaces the user's. The user's 1001 for github.com is overwritten by 2002.",
+            "Unset is represented by a missing key (`None`), not by a zero value. A project that writes `max_follow_ups = 0` is `Some(0)`, which wins and turns follow-ups off.",
+            "Scalars do replace one by one, but identities are combined with `extend`. User entries for hosts the project does not mention survive, and only same-host entries are overwritten.",
+            "Fields missing from the project file are `None` and fall back to the user's value, so the user's model remains. Layering never clears a value a higher layer says nothing about.",
+            "The overlay replaces each scalar field only when the project file sets it, and `Some(0)` counts as set. The identities map is merged key by key, so a project entry replaces the user's entry for the same host and the other hosts are kept."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "project.config.layered-settings",
+      "explanation": "The overlay replaces each scalar field only when the project file sets it, and `Some(0)` counts as set. The identities map is merged key by key, so a project entry replaces the user's entry for the same host and the other hosts are kept.",
+      "id": "project.config.layered-settings/mc",
+      "kind": "Scenario",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "        let mut bank = None;\n        let mut round = 0;\n        if let Some(store) = bank_store {\n            let (number, seen) = store\n                .update_seen(learner, |current| {\n                    let mut seen = current.unwrap_or_else(fresh);\n                    let number = seen.next_round();\n                    seen.end_round(number);\n                    Ok(Decision::Put(seen.clone(), (number, seen)))\n                })\n                .await?;\n            round = number;\n            bank = Some((store, seen));\n        }"
+          },
+          "correct": 0,
+          "options": [
+            "The closure may be called again on a newer record if another run saved in between. Taking the number from `current` each time means a retry builds on the other run's update, so two runs neither reuse a round number nor overwrite each other's seen questions.",
+            "The store locks the learner's record while the closure runs, so no other run can save in the meantime. The closure is therefore called exactly once and always sees the latest state.",
+            "The closure is needed only so that `Decision::Put` can return the pair `(number, seen)` to the caller. Without it the round number could not be read back.",
+            "Putting the logic in a closure lets the runtime run it on several threads in parallel, which makes picking the round number faster.",
+            "If another run saved first, the save fails and the whole call returns an error. The closure only decides what to write, and the caller has to start over."
+          ],
+          "prompt": "In this change, the round number and the seen-question record are computed inside the closure passed to `update_seen`, from `current`. Before, the record was loaded, changed and saved blindly. Why is computing them inside the closure needed when several runs for the same learner can happen at once?",
+          "reasons": [
+            "Optimistic read-modify-write only saves if the stored record is unchanged. Otherwise it reruns the closure on the fresh record. Deriving everything from `current` inside the closure is what makes the retry correct.",
+            "This describes pessimistic locking. The design here takes no lock and detects a conflicting save at write time, so the closure can run several times.",
+            "Returning a value is a side benefit. The reason for the closure is conflict detection and recomputation. A blind load-then-save would still lose concurrent updates even if it returned the same values.",
+            "The closure is not there for parallelism. It exists so the store can re-run the change against a newer record after a conflict.",
+            "The retry happens inside the update call, which re-invokes the closure on the newer record. The caller does not restart, and a conflict is not surfaced as a failure."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "concurrency.optimistic.compare-and-swap-update",
+      "explanation": "Optimistic read-modify-write only saves if the stored record is unchanged. Otherwise it reruns the closure on the fresh record. Deriving everything from `current` inside the closure is what makes the retry correct.",
+      "id": "concurrency.optimistic.compare-and-swap-update/mc",
+      "kind": "ExplainYourChange",
+      "scope": "General"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "python",
+            "origin": "General",
+            "text": "class Store:\n    def __init__(self):\n        self.pending = {}\n        self.graded = {}\n\n    def create_if_absent(self, s):\n        if s.key in self.pending:\n            return False\n        self.pending[s.key] = s\n        return True\n\n    def grade(self, key):\n        self.graded[key] = self.pending.pop(key)\n\ndef open_session(store, s):\n    if not store.create_if_absent(s):\n        return None\n    return s"
+          },
+          "correct": 0,
+          "options": [
+            "Run B's call returns its own session as if it had won, because grading removed the key from the pending map, so the create finds nothing there. A duplicate session for the same key now exists next to the graded one.",
+            "Run B's call returns None, because the graded map shares the key and the store rejects duplicate keys across both maps.",
+            "Run B's call returns None, because the create is atomic and so can never succeed for a key that run A has already used.",
+            "Run B's call raises a KeyError, because the key is in the graded map but missing from the pending map."
+          ],
+          "prompt": "Two CI runs for the same push compute the same session key. Run A calls `open_session`, and its session is then graded: `grade` moves it out of the pending map into the graded map. Only after that does run B, which was slow composing its questions, call `open_session` with the same key. What happens in run B's call, and why does it matter?",
+          "reasons": [
+            "The create-if-absent only looks at the pending map, and grading moves the key out of it. Run B therefore sees the key as absent and succeeds, so a second question would be posted. The fix is to also check the graded and journal records after creating, and to delete its own copy if one exists.",
+            "The two maps are independent dictionaries, and `create_if_absent` consults only the pending one. Nothing enforces uniqueness across both.",
+            "Atomicity only guarantees that two creates can't both succeed while the key is in the pending map. It says nothing about keys that have since left that map.",
+            "Nothing in `create_if_absent` or `open_session` reads the pending map by key without checking first, so no KeyError is raised. The create simply treats the key as absent."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "concurrency.idempotency.create-if-absent",
+      "explanation": "The create-if-absent only looks at the pending map, and grading moves the key out of it. Run B therefore sees the key as absent and succeeds, so a second question would be posted. The fix is to also check the graded and journal records after creating, and to delete its own copy if one exists.",
+      "id": "concurrency.idempotency.create-if-absent/mc",
+      "kind": "PredictOutcome",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "    /// Record that `id` was shown in round `round`. Only ever moves\n    /// forward: a round recorded late, after a later round showed `id`\n    /// too, leaves the later one, so that records of concurrent rounds can\n    /// be merged in any order.\n    pub fn show(&mut self, id: &BankId, round: u64) {\n        let last = self.last_seen.entry(id.clone()).or_insert(round);\n        *last = (*last).max(round);\n        self.rounds = self.rounds.max(round);\n    }"
+          },
+          "correct": 1,
+          "options": [
+            "Simply assigning `round` would be equivalent here, because each new round always has a higher number than every earlier one.",
+            "Taking the max makes the update order-independent. If a later round's record is applied first and an earlier round's record arrives afterwards, the later round is kept, so merging concurrent records gives the same result in any order.",
+            "Without the max, `entry(...).or_insert(round)` would panic when the question has already been recorded, so the max is what handles the existing-entry case.",
+            "It makes the update atomic across processes, so two concurrent rounds cannot write the same record at the same time.",
+            "It stops the stored round number from overflowing, because the max caps the value at the largest round seen so far."
+          ],
+          "prompt": "In `show`, the author writes `*last = (*last).max(round)` instead of just assigning `round`, and the doc comment says this lets records of concurrent rounds be merged in any order. What does the max protect against?",
+          "reasons": [
+            "That is false under concurrency. Two rounds composed at the same time can be recorded in either order, so a lower round can arrive after a higher one. Overwriting would move the last-seen round backwards, and the question could be shown again too soon.",
+            "The max is commutative, associative and idempotent. Whichever order two concurrent records are applied in, each question ends up with its latest round, and the round count with its largest value. A plain overwrite would make the result depend on which record was applied last.",
+            "`or_insert` never panics. It returns a reference to the existing value when there is one. The max is there for the ordering of the result, not to avoid an error.",
+            "The max provides no locking or atomicity. The store's update step handles concurrent writes separately. The max only guarantees that, once the records are combined, the result is the same whichever order they were applied in.",
+            "The max does not guard against overflow. It only picks the larger of two values and never bounds growth. Its purpose is that the result does not depend on the order in which records are applied."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "distributed.merge.monotonic-max",
+      "explanation": "The max is commutative, associative and idempotent. Whichever order two concurrent records are applied in, each question ends up with its latest round, and the round count with its largest value. A plain overwrite would make the result depend on which record was applied last.",
+      "id": "distributed.merge.monotonic-max/mc",
+      "kind": "ExplainYourChange",
+      "scope": "General"
+    }
+  ]
+}

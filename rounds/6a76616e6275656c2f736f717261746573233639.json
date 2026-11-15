@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "number": 69,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-15T09:55:37.074592336Z",
+      "carried": false,
+      "concepts": [
+        "rust.traits.async-ports-generic-dispatch",
+        "project.config.layered-settings",
+        "concurrency.optimistic.compare-and-swap-update",
+        "concurrency.idempotency.create-if-absent",
+        "distributed.merge.monotonic-max"
+      ],
+      "head": "960a2d3ac5fb968d9188d2debbff3bcde2cf8fb0",
+      "session": "jvanbuel/soqrates#69@960a2d3ac5fb968d9188d2debbff3bcde2cf8fb0"
+    }
+  ]
+}
