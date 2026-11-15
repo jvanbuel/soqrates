@@ -436,7 +436,7 @@ mod tests {
     use std::sync::Arc;
 
     use serde::Serialize;
-    use soqrates_core::ports::StateStore;
+    use soqrates_core::ports::{Decision, StateStore};
     use soqrates_core::{
         AskedSession, AuthorId, BankedQuestion, ConceptId, GradedSession, GradingJournal, Identity,
         IdentityLink, LearnerId, LearnerProfile, LinkCode, PrRef, PrRounds, SeenQuestions, Session,
@@ -511,50 +511,70 @@ mod tests {
         }
     }
 
-    /// Record the review of session `i` the way the engine does: load the
-    /// profile, record, save if nobody saved since, else load again.
+    /// Record the review of session `i` the way the engine does, with an
+    /// update. Returns how often it lost to another writer.
     async fn record_session<S: StateStore>(store: &S, learner: &LearnerId, i: usize) -> usize {
-        let mut conflicts = 0;
-        loop {
-            let profile = store
-                .load_profile(learner)
-                .await
-                .unwrap()
-                .unwrap_or_else(|| LearnerProfile::new(learner.clone()));
-            let (next, _) = profile
-                .with_session_reviews(&format!("session-{i}"), &[review(i)])
-                .expect("each session is recorded once");
-            if store.save_profile_if_current(&next).await.unwrap() {
-                return conflicts;
-            }
-            conflicts += 1;
-        }
+        let mut calls = 0;
+        store
+            .update_profile(learner, |current| {
+                calls += 1;
+                let profile = current.unwrap_or_else(|| LearnerProfile::new(learner.clone()));
+                let (next, _) = profile
+                    .with_session_reviews(&format!("session-{i}"), &[review(i)])
+                    .expect("each session is recorded once");
+                Ok(Decision::Put(next, ()))
+            })
+            .await
+            .unwrap();
+        calls - 1
     }
 
-    /// A conditional save is refused once the profile was saved since it was
-    /// loaded, and of many writers of one profile, each one's review ends up
-    /// on it: none overwrites another (ADR-0002 D6).
+    /// An update saves what it puts one version later, keeps what it
+    /// keeps, refuses a profile of another learner, and of many writers of
+    /// one profile, each one's review ends up on it: none overwrites
+    /// another (ADR-0002 D6).
     async fn concurrent_writers_keep_every_review<S: StateStore + 'static>(store: Arc<S>) {
         let ada = LearnerId("ada".into());
 
-        // A profile is new at version 0; saving it makes the next one.
-        let fresh = LearnerProfile::new(ada.clone());
-        assert!(store.save_profile_if_current(&fresh).await.unwrap());
+        // A learner without a profile is at version 0; putting one makes 1.
+        store
+            .update_profile(&ada, |current| {
+                assert!(current.is_none());
+                Ok(Decision::Put(LearnerProfile::new(ada.clone()), ()))
+            })
+            .await
+            .unwrap();
         let stored = store.load_profile(&ada).await.unwrap().unwrap();
         assert_eq!(stored.version(), 1);
-        // The same version again: someone saved in between.
-        assert!(!store.save_profile_if_current(&fresh).await.unwrap());
+        // Keeping changes nothing, and returns what was decided.
+        let kept = store
+            .update_profile(&ada, |current| Ok(Decision::Keep(current)))
+            .await
+            .unwrap();
+        assert_eq!(kept.as_ref(), Some(&stored));
         assert_eq!(store.load_profile(&ada).await.unwrap().unwrap(), stored);
-        // A learner who has no profile yet cannot be saved at version 1.
-        let other = LearnerProfile::new(LearnerId("bob".into())).with_version(1);
-        assert!(!store.save_profile_if_current(&other).await.unwrap());
+        // The profile of someone else can't be put in its place.
+        let bob = LearnerId("bob".into());
         assert!(
             store
-                .load_profile(&LearnerId("bob".into()))
+                .update_profile(&ada, |_| Ok(Decision::Put(
+                    LearnerProfile::new(bob.clone()),
+                    ()
+                )))
                 .await
-                .unwrap()
-                .is_none()
+                .is_err()
         );
+        assert!(store.load_profile(&bob).await.unwrap().is_none());
+        // An error from the change is returned, and nothing is saved.
+        assert!(
+            store
+                .update_profile(&ada, |_| -> soqrates_core::Result<Decision<_, ()>> {
+                    Err(Error::Invalid("no".into()))
+                })
+                .await
+                .is_err()
+        );
+        assert_eq!(store.load_profile(&ada).await.unwrap().unwrap(), stored);
 
         const SESSIONS: usize = 16;
         let handles: Vec<_> = (0..SESSIONS)
@@ -574,6 +594,36 @@ mod tests {
         for i in 0..SESSIONS {
             assert!(profile.has_applied(&format!("session-{i}")));
         }
+
+        // The same for a bank question that many rounds take at once:
+        // every take is counted.
+        let question = banked("rust.traits", "Taken?", chrono::Utc::now());
+        store.save_bank_question(&question).await.unwrap();
+        let handles: Vec<_> = (0..SESSIONS)
+            .map(|_| {
+                let store = store.clone();
+                let id = question.id().clone();
+                tokio::spawn(async move {
+                    store
+                        .update_bank_question(&id, |current| {
+                            let mut entry = current.expect("banked");
+                            entry.take();
+                            Ok(Decision::Put(entry, ()))
+                        })
+                        .await
+                        .unwrap()
+                })
+            })
+            .collect();
+        for h in handles {
+            h.await.unwrap();
+        }
+        let taken = &store.bank_questions(question.concept()).await.unwrap()[0];
+        assert_eq!(
+            taken.asked(),
+            question.asked() + SESSIONS as u32,
+            "no take was lost"
+        );
     }
 
     fn json<T: Serialize>(v: &T) -> serde_json::Value {
@@ -766,33 +816,56 @@ mod tests {
             "saving again replaces"
         );
 
-        // A stale selection or feedback write cannot replace a newer dispute.
-        let old = second.clone();
-        let mut disputed = old.clone();
+        // An update of a bank question works on what is stored: a change
+        // decided on a stale copy is decided again on the newer one, so a
+        // dispute isn't lost to a selection made at the same time.
         let id = soqrates_core::FeedbackId("first-dispute".into());
-        disputed.dispute(&id);
+        store
+            .update_bank_question(second.id(), |current| {
+                let mut entry = current.expect("banked");
+                entry.dispute(&id);
+                Ok(Decision::Put(entry, ()))
+            })
+            .await
+            .unwrap();
+        store
+            .update_bank_question(second.id(), |current| {
+                let mut entry = current.expect("banked");
+                assert!(entry.is_disputed(), "the dispute is there to build on");
+                entry.take();
+                Ok(Decision::Put(entry, ()))
+            })
+            .await
+            .unwrap();
+        let mut latest = store
+            .update_bank_question(second.id(), |current| {
+                let mut entry = current.expect("banked");
+                entry.dispute(&soqrates_core::FeedbackId("second-dispute".into()));
+                Ok(Decision::Put(entry.clone(), entry))
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            store.bank_questions(&traits).await.unwrap()[1],
+            latest,
+            "every change was kept"
+        );
+        // An update must keep the question's id.
         assert!(
             store
-                .save_bank_question_if_current(&disputed, Some(&old))
+                .update_bank_question(second.id(), |_| Ok(Decision::Put(first.clone(), ())))
                 .await
-                .unwrap()
+                .is_err()
         );
-        let mut stale = old.clone();
-        stale.take();
-        assert!(
-            !store
-                .save_bank_question_if_current(&stale, Some(&old))
-                .await
-                .unwrap()
-        );
-        let mut latest = disputed.clone();
-        latest.dispute(&soqrates_core::FeedbackId("second-dispute".into()));
-        assert!(
-            store
-                .save_bank_question_if_current(&latest, Some(&disputed))
-                .await
-                .unwrap()
-        );
+        // Of a question that isn't banked, the change is given `None`.
+        let unbanked = banked("rust.traits", "Unbanked?", now);
+        let seen_none = store
+            .update_bank_question(unbanked.id(), |current| {
+                Ok(Decision::Keep(current.is_none()))
+            })
+            .await
+            .unwrap();
+        assert!(seen_none);
         latest.settle(&id);
         assert!(latest.is_disputed(), "the second dispute survives");
         latest.settle(&soqrates_core::FeedbackId("second-dispute".into()));
@@ -852,22 +925,31 @@ mod tests {
                 now,
             )
             .unwrap();
+        store
+            .update_asked(mine.key(), |current| {
+                assert_eq!(current.as_ref(), Some(&mine));
+                Ok(Decision::Put(changed.clone(), ()))
+            })
+            .await
+            .unwrap();
+        // Saved only where there is none, as a grading replay does: it
+        // keeps the feedback given since.
+        let replayed = store
+            .update_asked(mine.key(), |current| {
+                Ok(match current {
+                    None => Decision::Put(mine.clone(), true),
+                    Some(_) => Decision::Keep(false),
+                })
+            })
+            .await
+            .unwrap();
+        assert!(!replayed, "grading replay preserves feedback");
+        // An update must keep the session's key.
         assert!(
             store
-                .save_asked_if_current(&changed, Some(&mine))
+                .update_asked(mine.key(), |_| Ok(Decision::Put(theirs.clone(), ())))
                 .await
-                .unwrap()
-        );
-        assert!(
-            !store.save_asked_if_current(&mine, None).await.unwrap(),
-            "grading replay preserves feedback"
-        );
-        assert!(
-            !store
-                .save_asked_if_current(&mine, Some(&mine))
-                .await
-                .unwrap(),
-            "stale sessions cannot overwrite feedback"
+                .is_err()
         );
         assert_eq!(store.load_asked(mine.key()).await.unwrap(), Some(changed));
         store.delete_learner(&cy).await.unwrap();
@@ -984,12 +1066,13 @@ mod tests {
         let accepted = app.store.load_asked(asked.key()).await.unwrap().unwrap();
         let mut rejected = accepted.clone();
         rejected.resolve(&id, false).unwrap();
-        assert!(
-            app.store
-                .save_asked_if_current(&rejected, Some(&accepted))
-                .await
-                .unwrap()
-        );
+        app.store
+            .update_asked(asked.key(), |current| {
+                assert_eq!(current.as_ref(), Some(&accepted));
+                Ok(Decision::Put(rejected.clone(), ()))
+            })
+            .await
+            .unwrap();
         std::fs::remove_dir(&lock).unwrap();
         app.export_questions(true).await.unwrap();
         let recovered = &app.store.bank_questions(bank.concept()).await.unwrap()[0];
@@ -1067,7 +1150,13 @@ mod tests {
 
         let old = store.load_profile(&ada).await.unwrap().unwrap();
         assert_eq!(old.version(), 0);
-        assert!(store.save_profile_if_current(&old).await.unwrap());
+        store
+            .update_profile(&ada, |current| {
+                assert_eq!(current.as_ref(), Some(&old));
+                Ok(Decision::Put(old.clone(), ()))
+            })
+            .await
+            .unwrap();
         assert_eq!(
             store.load_profile(&ada).await.unwrap().unwrap().version(),
             1

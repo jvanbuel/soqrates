@@ -8,7 +8,7 @@ use chrono::Duration;
 
 use crate::app::engine::Soqrates;
 use crate::app::grading::SessionOutcome;
-use crate::app::ports::{Clock, Codebase, Examiner, StateStore};
+use crate::app::ports::{Clock, Codebase, Decision, Examiner, StateStore};
 use crate::app::stores::{Placement, load_or_new};
 use crate::assessment::{
     Answer, Concept, Diff, Question, QuestionBrief, QuestionFormat, QuestionKind, Weight,
@@ -207,56 +207,66 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         code: &impl Codebase,
     ) -> Result<Question> {
         let gap = self.config.reask_after_rounds;
-        for _ in 0..100 {
+        // Bank questions that stopped suiting while being picked, e.g.
+        // because feedback retired them: picked from what is left. Each
+        // round of this loop adds one, so it ends.
+        let mut gone: Vec<BankId> = Vec::new();
+        loop {
             let bank = store.bank_questions(&concept.id).await?;
-            let Some(i) = pick(&bank, brief, seen, round, gap, in_round) else {
+            let except: Vec<BankId> = in_round.iter().chain(&gone).cloned().collect();
+            let Some(i) = pick(&bank, brief, seen, round, gap, &except) else {
                 break;
             };
-            let mut entry = bank[i].clone();
-            let mut q = entry.take();
-            q.scope = concept.scope;
-            if store
-                .save_bank_question_if_current(&entry, Some(&bank[i]))
-                .await?
-            {
-                seen.show(entry.id(), round);
-                return Ok(q);
+            let id = bank[i].id().clone();
+            let taken = store
+                .update_bank_question(&id, |current| {
+                    Ok(match current {
+                        Some(mut entry) if entry.suits(brief) => {
+                            let question = entry.take();
+                            Decision::Put(entry, Some(question))
+                        }
+                        _ => Decision::Keep(None),
+                    })
+                })
+                .await?;
+            match taken {
+                Some(mut q) => {
+                    q.scope = concept.scope;
+                    seen.show(&id, round);
+                    return Ok(q);
+                }
+                None => gone.push(id),
             }
         }
         // A question that was retired, or is disputed, is not asked again
         // by being written again word for word (ADR-0011 D6, D7): another
         // one is written instead.
         const WRITES: usize = 3;
-        'write: for _ in 0..WRITES {
+        for _ in 0..WRITES {
             let mut q = self.written(concept, brief, code).await?;
             let Some(new) = BankedQuestion::new(&q, level, self.clock.now()) else {
                 return Ok(q);
             };
-            for _ in 0..100 {
-                let bank = store.bank_questions(&concept.id).await?;
-                // The same question written again is banked once.
-                let previous = bank.iter().find(|e| e.id() == new.id());
-                let entry = match previous {
-                    Some(existing) if existing.is_retired() || existing.is_disputed() => {
-                        continue 'write;
-                    }
-                    Some(existing) => {
-                        let mut entry = existing.clone();
-                        entry.take();
-                        entry
-                    }
-                    None => new.clone(),
-                };
-                if store
-                    .save_bank_question_if_current(&entry, previous)
-                    .await?
-                {
-                    seen.show(entry.id(), round);
-                    q.banked = Some(entry.reference());
-                    return Ok(q);
-                }
+            // The same question written again is banked once.
+            let banked = store
+                .update_bank_question(new.id(), |current| {
+                    Ok(match current {
+                        Some(existing) if existing.is_retired() || existing.is_disputed() => {
+                            Decision::Keep(None)
+                        }
+                        Some(mut existing) => {
+                            existing.take();
+                            Decision::Put(existing.clone(), Some(existing))
+                        }
+                        None => Decision::Put(new.clone(), Some(new.clone())),
+                    })
+                })
+                .await?;
+            if let Some(entry) = banked {
+                seen.show(entry.id(), round);
+                q.banked = Some(entry.reference());
+                return Ok(q);
             }
-            return Err(Error::Port("bank question kept changing".into()));
         }
         Err(Error::Port(format!(
             "examiner: wrote a retired or disputed question about {:?} again",

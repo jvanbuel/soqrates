@@ -13,7 +13,7 @@ use crate::delivery::{
     AskedSession, BankedQuestion, CheckStatus, FeedbackCommand, FeedbackRequest, GradedSession,
     GradingJournal, PrRef, PrRounds, PullRequest, SeenQuestions, Session,
 };
-use crate::ids::{AuthorId, ConceptId, Identity, LearnerId, SessionKey};
+use crate::ids::{AuthorId, BankId, ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 use crate::{Error, Result};
 
@@ -173,6 +173,24 @@ pub trait DocumentStore: Send + Sync {
     ) -> impl Future<Output = Result<bool>> + Send;
 }
 
+/// What the `change` of an update (e.g. [`StateStore::update_profile`])
+/// decides about the record it was given, and what the update returns.
+///
+/// An update loads the record, calls `change` with it and, for `Put`, saves
+/// the new record only if the stored one is still what was loaded, as one
+/// step. Otherwise someone saved in between, and `change` is called again
+/// with what they saved. So `change` may run more than once and must not
+/// have effects of its own beyond computing its decision; whatever it
+/// wants done afterwards goes in `R`. An update that keeps losing to other
+/// writers gives up with [`Error::Port`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Decision<T, R> {
+    /// Save this record, then return `R`.
+    Put(T, R),
+    /// Leave the record as it is and return `R`.
+    Keep(R),
+}
+
 /// Persists the records of Soqrates: learner profiles, identity links, link
 /// codes, sessions, grading journals, graded records, PR rounds and the
 /// question bank (ADR-0001 D5, ADR-0003). The engine and every other caller
@@ -183,16 +201,17 @@ pub trait StateStore: Send + Sync {
         learner: &LearnerId,
     ) -> impl Future<Output = Result<Option<LearnerProfile>>> + Send;
     fn save_profile(&self, profile: &LearnerProfile) -> impl Future<Output = Result<()>> + Send;
-    /// Save `profile` only if the stored profile of its learner is still the
-    /// version `profile` was loaded at (`profile.version()`; a learner
-    /// without a profile counts as version 0). The stored profile is then
-    /// `profile` one version later. Returns `false`, saving nothing, when
-    /// someone saved in between: the caller loads again and retries
-    /// (ADR-0002 D6). Check and save are one step.
-    fn save_profile_if_current(
+    /// Change the profile of `learner` with `change` (see [`Decision`]): it
+    /// is given the stored profile (`None` if there is none) and decides.
+    /// A profile it puts is saved one version later than the one it was
+    /// given (a learner without a profile counts as version 0). When
+    /// someone saved in between, `change` is called again on the newer
+    /// profile, so no concurrent change is lost (ADR-0002 D6).
+    fn update_profile<R: Send>(
         &self,
-        profile: &LearnerProfile,
-    ) -> impl Future<Output = Result<bool>> + Send;
+        learner: &LearnerId,
+        change: impl FnMut(Option<LearnerProfile>) -> Result<Decision<LearnerProfile, R>> + Send,
+    ) -> impl Future<Output = Result<R>> + Send;
     /// Remove the profile, every link, what they were shown and every asked
     /// session of `learner` (ADR-0003 D6, ADR-0009 D5, ADR-0011 D8).
     fn delete_learner(&self, learner: &LearnerId) -> impl Future<Output = Result<()>> + Send;
@@ -278,18 +297,21 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<AskedSession>>> + Send;
     /// Create or replace the asked session `asked.key()`.
     fn save_asked(&self, asked: &AskedSession) -> impl Future<Output = Result<()>> + Send;
-    /// Atomically replace the record only if it equals expected; None means absent.
-    fn save_bank_question_if_current(
+    /// Change the asked session `key` with `change` (see [`Decision`]),
+    /// calling it again on the newer one when someone saved in between.
+    fn update_asked<R: Send>(
         &self,
-        value: &BankedQuestion,
-        expected: Option<&BankedQuestion>,
-    ) -> impl Future<Output = Result<bool>> + Send;
-    /// Atomically replace the record only if it equals expected; None means absent.
-    fn save_asked_if_current(
+        key: &SessionKey,
+        change: impl FnMut(Option<AskedSession>) -> Result<Decision<AskedSession, R>> + Send,
+    ) -> impl Future<Output = Result<R>> + Send;
+    /// Change the bank question `id` with `change` (see [`Decision`]),
+    /// calling it again on the newer one when someone saved in between.
+    /// A question it puts must have the id `id`.
+    fn update_bank_question<R: Send>(
         &self,
-        value: &AskedSession,
-        expected: Option<&AskedSession>,
-    ) -> impl Future<Output = Result<bool>> + Send;
+        id: &BankId,
+        change: impl FnMut(Option<BankedQuestion>) -> Result<Decision<BankedQuestion, R>> + Send,
+    ) -> impl Future<Output = Result<R>> + Send;
     /// Every asked session in this store, in any order (ADR-0011 D9).
     fn asked_sessions(&self) -> impl Future<Output = Result<Vec<AskedSession>>> + Send;
 }
