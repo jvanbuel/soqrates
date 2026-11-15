@@ -219,6 +219,11 @@ pub trait StateStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<Session>>> + Send;
     fn save_session(&self, session: &Session) -> impl Future<Output = Result<()>> + Send;
     fn delete_session(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
+    /// Every pending session in this store, in any order. Sessions being
+    /// graded are not pending: their journals hold them ([`gradings`]).
+    ///
+    /// [`gradings`]: StateStore::gradings
+    fn sessions(&self) -> impl Future<Output = Result<Vec<Session>>> + Send;
     /// Atomically claim the pending session `journal.key()` and store
     /// `journal` as its grading journal: the session is no longer pending
     /// but being graded. Of several concurrent callers, at most one gets

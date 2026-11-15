@@ -4,6 +4,8 @@
 
 use std::collections::BTreeSet;
 
+use chrono::Duration;
+
 use crate::app::engine::Soqrates;
 use crate::app::grading::SessionOutcome;
 use crate::app::ports::{Clock, Codebase, Examiner, StateStore};
@@ -40,8 +42,10 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// (D9), as written; then due reviews and new concepts, sharing the
     /// remaining slots. New concepts in `skip`, or that the author knows and
     /// isn't due to review, are left out, as are incidental ones; concepts
-    /// in `skip` whose review is due are still asked. The examiner may read
-    /// `code`, the codebase of the change (ADR-0008 D2).
+    /// in `skip` whose review is due are still asked. A due review that
+    /// another pending session of the learner asks is left out, for at most
+    /// `config.hold_reviews_hours` after that session was opened. The
+    /// examiner may read `code`, the codebase of the change (ADR-0008 D2).
     ///
     /// Each question comes from the question bank if it has one that suits
     /// and that the author may be shown; only otherwise is one written, and
@@ -67,11 +71,22 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let place = stores.place(author).await?;
         let level = load_or_new(place.primary, &place.learner).await?.level();
         let taken = |id: &ConceptId| carried.iter().any(|q| q.concept == *id);
-        let mut reviews: Vec<Concept> = self
-            .due_with_scope(&place)
-            .await?
+        // A due review is asked in one pending session at a time: one that
+        // another session of the learner already asks is left out, also
+        // when the change touches it (ADR-0002 D10). Carried questions are
+        // this round's own.
+        let since = self.clock.now() - Duration::hours(self.config.hold_reviews_hours.into());
+        let held = stores.held_concepts(&place, since).await?;
+        let due = self.due_with_scope(&place).await?;
+        let held_due: BTreeSet<ConceptId> = due
+            .iter()
+            .map(|(id, _)| id)
+            .filter(|id| held.contains(*id) && !taken(id))
+            .cloned()
+            .collect();
+        let mut reviews: Vec<Concept> = due
             .into_iter()
-            .filter(|(id, _)| !taken(id))
+            .filter(|(id, _)| !taken(id) && !held_due.contains(id))
             .map(|(id, scope)| Concept {
                 title: id.0.clone(),
                 summary: String::new(),
@@ -89,6 +104,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 related.insert(c.id.clone());
             }
             let asked = taken(&c.id)
+                || held_due.contains(&c.id)
                 || reviews.iter().any(|k| k.id == c.id)
                 || new.iter().any(|k| k.id == c.id);
             if c.weight != Weight::Incidental

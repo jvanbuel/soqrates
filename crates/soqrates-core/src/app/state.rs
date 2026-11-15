@@ -153,6 +153,9 @@ impl<D: DocumentStore> StateStore for D {
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         self.remove(&[Removal::Key(Kind::Session, &key.0)]).await
     }
+    async fn sessions(&self) -> Result<Vec<Session>> {
+        all(self, Kind::Session, None).await
+    }
     async fn begin_grading(&self, journal: &GradingJournal) -> Result<bool> {
         let doc = encode(Kind::Grading, journal)?;
         self.claim(Kind::Session, Kind::Grading, &journal.key().0, &doc)
