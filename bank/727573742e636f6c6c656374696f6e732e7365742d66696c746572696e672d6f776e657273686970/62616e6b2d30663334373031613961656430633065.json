@@ -1,0 +1,39 @@
+{
+  "added_at": "2026-11-15T07:37:43.589478517Z",
+  "asked": 1,
+  "id": "bank-0f34701a9aed0c0e",
+  "level": "Intermediate",
+  "question": {
+    "body": {
+      "MultipleChoice": {
+        "code": {
+          "language": "rust",
+          "origin": "General",
+          "text": "use std::collections::BTreeSet;\n\nlet due: Vec<(String, u32)> = load_due();\nlet held: BTreeSet<String> = load_held();\nlet held_due: BTreeSet<&String> = due\n    .iter()\n    .map(|(id, _)| id)\n    .filter(|id| held.contains(*id))\n    .collect();\nlet rest: Vec<(String, u32)> = due\n    .into_iter()\n    .filter(|(id, _)| !held_due.contains(id))\n    .collect();"
+        },
+        "correct": 1,
+        "options": [
+          "A `BTreeSet` of references cannot be queried with `contains`, because `&String` does not implement `Borrow<String>`.",
+          "The map step yields references into `due`, so the set borrows `due`. Consuming `due` with `into_iter` while that set is still used later is a borrow error. The ids need to be cloned into an owned set.",
+          "The set is built from `due.iter()`, so it is empty at runtime: `iter` only peeks at the elements and does not hand them to `collect`.",
+          "The filter closure receives a double reference, so `held.contains(*id)` cannot compile because it needs `**id`."
+        ],
+        "prompt": "This code builds a set of the due ids that are already held elsewhere, then uses that set to filter the due list. It fails to compile. Which line is flawed, and why?",
+        "reasons": [
+          "The standard library implements `Borrow<T>` for `&T`, so querying a set of `&String` with a `&String` compiles. The failure is that the set keeps `due` borrowed.",
+          "The set holds `&String` values that point into `due`. `due.into_iter()` moves `due` while `held_due` is still live in the filter, so the borrow checker rejects it. Cloning the ids, for example with `.cloned()` before `collect`, gives an owned `BTreeSet<String>` that does not borrow `due`.",
+          "`iter()` yields references that `collect` gathers into the set just as well. The code is rejected at compile time because of the borrow, so it never runs.",
+          "Here `id` in the filter is `&&String`, so `*id` is `&String`. That is exactly what `contains` expects, so this line is fine. The real problem is the lifetime of the borrowed elements."
+        ]
+      }
+    },
+    "checked": true,
+    "concept": "rust.collections.set-filtering-ownership",
+    "explanation": "The set holds `&String` values that point into `due`. `due.into_iter()` moves `due` while `held_due` is still live in the filter, so the borrow checker rejects it. Cloning the ids, for example with `.cloned()` before `collect`, gives an owned `BTreeSet<String>` that does not borrow `due`.",
+    "id": "rust.collections.set-filtering-ownership/mc",
+    "kind": "SpotTheBug",
+    "scope": "General"
+  },
+  "retired": false,
+  "version": 1
+}

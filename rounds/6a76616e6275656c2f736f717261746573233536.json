@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "number": 56,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-15T07:37:43.590153582Z",
+      "carried": false,
+      "concepts": [
+        "rust.traits.default-methods-async",
+        "soqrates.ci.answer-validity",
+        "spaced-repetition.review-scheduling.pending-hold",
+        "project.state.held-concepts-aggregation",
+        "rust.collections.set-filtering-ownership"
+      ],
+      "head": "085d2f6270e64477d61cadc55a632e0a54b7c5a7",
+      "session": "jvanbuel/soqrates#56@085d2f6270e64477d61cadc55a632e0a54b7c5a7"
+    }
+  ]
+}
