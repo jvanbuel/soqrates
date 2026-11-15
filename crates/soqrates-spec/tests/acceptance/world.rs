@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cucumber::World;
-use soqrates_core::ports::{NoCodebase, StateStore};
+use soqrates_core::ports::{Decision, NoCodebase, StateStore};
 use soqrates_core::{
     AuthorId, CheckStatus, Config, Diff, HookDecision, HookKind, LearnerEvent, LearnerProfile,
     Level, PrRef, Question, Session, SessionKey, SessionOutcome, SessionResult, Soqrates,
@@ -267,12 +267,12 @@ impl SpecWorld {
         // ADR-0002 D4: a declared starting level is a domain operation.
         // ADR-0003 D1: profiles belong to the learner behind the identity.
         let learner = self.app.learner_of(author).await.expect("learner_of");
-        let profile = LearnerProfile::starting_at(learner, level);
+        let profile = LearnerProfile::starting_at(learner.clone(), level);
         self.app
             .store
-            .save_profile(&profile)
+            .update_profile(&learner, |_| Ok(Decision::Put(profile.clone(), ())))
             .await
-            .expect("save_profile");
+            .expect("update_profile");
     }
 
     /// Call the MCP tool `name` in-process against this world's engine

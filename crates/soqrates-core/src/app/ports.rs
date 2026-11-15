@@ -191,6 +191,11 @@ pub enum Decision<T, R> {
     Keep(R),
 }
 
+/// Profiles, identity links, link codes, asked sessions and bank questions
+/// may be written by several runs at once, so they are only ever changed
+/// with an update (see [`Decision`]), never saved blindly over whatever is
+/// stored.
+///
 /// Persists the records of Soqrates: learner profiles, identity links, link
 /// codes, sessions, grading journals, graded records, PR rounds and the
 /// question bank (ADR-0001 D5, ADR-0003). The engine and every other caller
@@ -200,7 +205,6 @@ pub trait StateStore: Send + Sync {
         &self,
         learner: &LearnerId,
     ) -> impl Future<Output = Result<Option<LearnerProfile>>> + Send;
-    fn save_profile(&self, profile: &LearnerProfile) -> impl Future<Output = Result<()>> + Send;
     /// Change the profile of `learner` with `change` (see [`Decision`]): it
     /// is given the stored profile (`None` if there is none) and decides.
     /// A profile it puts is saved one version later than the one it was
@@ -221,15 +225,28 @@ pub trait StateStore: Send + Sync {
         &self,
         identity: &Identity,
     ) -> impl Future<Output = Result<Option<LearnerId>>> + Send;
-    /// Create or replace the link of `link.identity` (at most one per identity).
-    fn save_link(&self, link: &IdentityLink) -> impl Future<Output = Result<()>> + Send;
+    /// Change the link of `identity` (at most one per identity) with
+    /// `change` (see [`Decision`]), calling it again on the newer one when
+    /// someone saved in between.
+    fn update_link<R: Send>(
+        &self,
+        identity: &Identity,
+        change: impl FnMut(Option<IdentityLink>) -> Result<Decision<IdentityLink, R>> + Send,
+    ) -> impl Future<Output = Result<R>> + Send;
     fn delete_link(&self, identity: &Identity) -> impl Future<Output = Result<()>> + Send;
     fn links_of(
         &self,
         learner: &LearnerId,
     ) -> impl Future<Output = Result<Vec<IdentityLink>>> + Send;
 
-    fn save_link_code(&self, code: &LinkCode) -> impl Future<Output = Result<()>> + Send;
+    /// Change the link code `code` with `change` (see [`Decision`]),
+    /// calling it again on the newer one when someone saved in between: of
+    /// two presenters of one code, the second sees it redeemed.
+    fn update_link_code<R: Send>(
+        &self,
+        code: &str,
+        change: impl FnMut(Option<LinkCode>) -> Result<Decision<LinkCode, R>> + Send,
+    ) -> impl Future<Output = Result<R>> + Send;
     fn load_link_code(&self, code: &str) -> impl Future<Output = Result<Option<LinkCode>>> + Send;
 
     fn load_session(
@@ -295,8 +312,6 @@ pub trait StateStore: Send + Sync {
         &self,
         key: &SessionKey,
     ) -> impl Future<Output = Result<Option<AskedSession>>> + Send;
-    /// Create or replace the asked session `asked.key()`.
-    fn save_asked(&self, asked: &AskedSession) -> impl Future<Output = Result<()>> + Send;
     /// Change the asked session `key` with `change` (see [`Decision`]),
     /// calling it again on the newer one when someone saved in between.
     fn update_asked<R: Send>(
