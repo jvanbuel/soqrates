@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "number": 66,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-15T08:45:10.661388052Z",
+      "carried": false,
+      "concepts": [
+        "soqrates.delivery.answer-feedback-lifecycle",
+        "diff.unified.new-side-hunks",
+        "fs.locking.advisory-directory-lock",
+        "concurrency.deadlock.lock-ordering",
+        "fs.atomic-write.unique-temp-rename"
+      ],
+      "head": "2340fab82cf0fa13b57313e2d3636cf6b555025b",
+      "session": "jvanbuel/soqrates#66@2340fab82cf0fa13b57313e2d3636cf6b555025b"
+    }
+  ]
+}

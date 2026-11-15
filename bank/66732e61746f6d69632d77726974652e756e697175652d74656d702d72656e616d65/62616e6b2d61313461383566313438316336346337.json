@@ -1,0 +1,36 @@
+{
+  "added_at": "2026-11-15T08:45:10.660123779Z",
+  "asked": 1,
+  "id": "bank-a14a85f1481c64c7",
+  "level": "Intermediate",
+  "question": {
+    "body": {
+      "MultipleChoice": {
+        "correct": 2,
+        "options": [
+          "A crash during the write would leave a half-written final file, because the temp file name is no longer unique.",
+          "Nothing would go wrong, because the operating system serializes writes to the same path, so the second writer would simply wait for the first.",
+          "Both threads would open the same temp path, so their bytes could interleave or overwrite each other. The file renamed into place could then hold a mix of the two documents, or the second rename could fail because the temp file has already been moved.",
+          "The counter is there only so that the last writer to start is the one that wins, giving a deterministic order of updates.",
+          "Rename would stop being atomic, because two threads in one process would be renaming files with the same process id in their names."
+        ],
+        "prompt": "A store writes each document by creating a temp file in the target directory, writing and syncing it, then renaming it over the final path. In the first version the temp file was named from the target file name and the process id only. Two threads of the same process then save the same key at nearly the same moment. What is the real problem with that naming, and why does adding a per-write atomic counter fix it?",
+        "reasons": [
+          "A crash cannot damage the final file, because the data only reaches the final path through the rename. Name collisions cause mixed content from concurrent writers, not crash corruption.",
+          "Opening a file for writing takes no exclusive lock by default. Two handles to the same path can write at the same time and overwrite or interleave each other's data.",
+          "The process id is the same for every thread in a process, so it cannot tell two writers apart. A per-write counter gives each writer its own temp file. Each rename then publishes one complete document.",
+          "The counter only makes names unique. It does not order the renames, so which writer wins is still decided by which rename runs last.",
+          "Atomicity of rename comes from the filesystem and does not depend on the temp file's name. The problem is that the two writers share one temp file before the rename happens."
+        ]
+      }
+    },
+    "checked": true,
+    "concept": "fs.atomic-write.unique-temp-rename",
+    "explanation": "The process id is the same for every thread in a process, so it cannot tell two writers apart. A per-write counter gives each writer its own temp file. Each rename then publishes one complete document.",
+    "id": "fs.atomic-write.unique-temp-rename/mc",
+    "kind": "Scenario",
+    "scope": "General"
+  },
+  "retired": false,
+  "version": 1
+}

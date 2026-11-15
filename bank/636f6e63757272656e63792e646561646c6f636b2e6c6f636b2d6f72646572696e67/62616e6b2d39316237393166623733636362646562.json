@@ -1,0 +1,39 @@
+{
+  "added_at": "2026-11-15T08:44:57.064886009Z",
+  "asked": 1,
+  "id": "bank-91b791fb73ccbdeb",
+  "level": "Intermediate",
+  "question": {
+    "body": {
+      "MultipleChoice": {
+        "code": {
+          "language": "rust",
+          "origin": "General",
+          "text": "use tokio::sync::Mutex;\n\nasync fn claim(locks: &[Mutex<()>], from: usize, to: usize) {\n    let (first, second) = if from <= to { (from, to) } else { (to, from) };\n    let _a = locks[first].lock().await;\n    let _b = locks[second].lock().await;\n    // move the document from `from` to `to`\n}\n\n// elsewhere, with no other task running:\n// claim(&locks, 2, 2).await;"
+        },
+        "correct": 3,
+        "options": [
+          "It completes normally, because the ordering step makes the two lock acquisitions safe even when both indices match.",
+          "It panics at the second `lock()` with a poisoned-lock error.",
+          "It returns an error from the second `lock()` because the lock is already held, and the function carries on.",
+          "It hangs forever: the task holds the lock for index 2 and then waits for that same lock, which only it could release."
+        ],
+        "prompt": "The function takes two locks in a fixed order, smaller index first, so two concurrent claims can't each hold one lock and wait for the other. What happens when the function is called with `from` and `to` both equal to 2, and no other task is running?",
+        "reasons": [
+          "Ordering only prevents a cycle between two different locks. It does nothing when the same lock is requested twice by one task.",
+          "Poisoning happens when a thread panics while holding a std mutex. Tokio's mutex has no poisoning, and nothing has panicked here.",
+          "Awaiting `lock()` never fails with an error for an already-held lock. It waits until the lock is free, which never happens here.",
+          "Tokio's mutex is not reentrant. With equal indices, the second `lock().await` waits on a lock the same task already holds, so it self-deadlocks. This is why the real change skips the second lock when both kinds are the same."
+        ]
+      }
+    },
+    "checked": true,
+    "concept": "concurrency.deadlock.lock-ordering",
+    "explanation": "Tokio's mutex is not reentrant. With equal indices, the second `lock().await` waits on a lock the same task already holds, so it self-deadlocks. This is why the real change skips the second lock when both kinds are the same.",
+    "id": "concurrency.deadlock.lock-ordering/mc",
+    "kind": "PredictOutcome",
+    "scope": "General"
+  },
+  "retired": false,
+  "version": 1
+}
