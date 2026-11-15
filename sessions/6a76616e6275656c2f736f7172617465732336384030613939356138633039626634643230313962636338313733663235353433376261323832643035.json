@@ -1,0 +1,157 @@
+{
+  "author": "github.com:16427728",
+  "created_at": "2026-11-15T09:45:28.713967066Z",
+  "key": "jvanbuel/soqrates#68@0a995a8c09bf4d2019bcc8173f255437ba282d05",
+  "questions": [
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "// Agent setup: the final answer is requested as structured output.\n// Rig may deliver it as a native schema, or as a special output tool.\nstruct Limit { spent: Arc<AtomicBool> }\n\nimpl Hook for Limit {\n    fn on_model_call(&self, ev: CallEvent) -> Action {\n        let done = ev.turn > MAX_READ_TURNS\n            || self.spent.load(Ordering::SeqCst);\n        if done {\n            Action::patch(Patch::new().tool_choice(ToolChoice::None))\n        } else {\n            Action::continue_run()\n        }\n    }\n}"
+          },
+          "correct": 3,
+          "options": [
+            "The hook patches the request on every call, so it should return `continue_run()` once the limit is reached and let the model decide whether to keep reading.",
+            "The condition uses `>` instead of `>=`, so the model gets one reading turn too many before the tools are removed.",
+            "Reading `self.spent` with `Ordering::SeqCst` is too weak, because the budget flag is set from another task and could be missed by the hook.",
+            "Forbidding all tool use with tool_choice none also blocks the output tool, so when the structured answer is delivered through that tool, the model can no longer give its answer. The hook should instead leave only the output tool callable by emptying the list of active reading tools."
+          ],
+          "prompt": "A hook is meant to stop an agent from reading with tools once its reading turns or its budget are spent, so that the model answers. Which line of the hook is flawed, and why?",
+          "reasons": [
+            "Continuing unchanged would leave the reading tools on offer, so the model could keep calling them past the budget. The hook exists to enforce that limit.",
+            "The comparison is not the subtle defect here. The turn budget also reserves an extra turn to answer in, so the boundary is not the reason the run fails.",
+            "SeqCst is the strongest ordering, so it is not too weak. The flag is correctly shared through an Arc and an atomic.",
+            "The hook should stop reading without touching the answer channel. Emptying the active tools removes the reading tools, and Rig's own output tool stays callable. Disabling every tool can leave the model unable to produce the structured answer."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "rig.agent.hooks-tool-limiting",
+      "explanation": "The hook should stop reading without touching the answer channel. Emptying the active tools removes the reading tools, and Rig's own output tool stays callable. Disabling every tool can leave the model unable to produce the structured answer.",
+      "id": "rig.agent.hooks-tool-limiting/mc",
+      "kind": "SpotTheBug",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "correct": 3,
+          "options": [
+            "Tool calls would block the async runtime if they ran inside the agent. The channel moves the codebase reads to a separate OS thread.",
+            "Each tool could hold an `Arc` of the codebase directly, but the channel is needed so the tools can be cloned for every registered tool.",
+            "The model may issue several tool calls at once, and a channel is the only way to make them run in parallel instead of one after another.",
+            "The agent and its tools must be `'static`, so they cannot capture the borrowed codebase. Sending each call over a channel lets `run`, which holds the borrow, answer the call while it polls the agent's future."
+          ],
+          "prompt": "In the examiner's reading agent, the tools given to the Rig agent do not read the codebase themselves. Each tool sends a call message over an unbounded channel, and the `run` function answers it from the codebase. Why is the code built this way?",
+          "reasons": [
+            "No thread is involved. `run` answers the calls in the same task by selecting between the agent future and the call stream. The channel exists to get around a lifetime constraint, not to offload blocking work.",
+            "The codebase is only a borrowed `&impl Codebase`, so it cannot be put in an `Arc` without owning it or requiring `'static`. Cloning is easy either way, because the `Bridge` sender is itself cheap to clone. The problem is the borrow, not the cloning.",
+            "The channel does not add parallelism. `run` handles one call at a time in its loop, and the budget is counted sequentially. The design is about ownership and lifetimes.",
+            "A `'static` value cannot contain a non-`'static` reference. The tools hold only an owned sender. The borrow stays in `run`, which serves each call from the codebase and replies on the call's own one-shot channel."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "rust.async.channel-bridge-static-tools",
+      "explanation": "A `'static` value cannot contain a non-`'static` reference. The tools hold only an owned sender. The borrow stays in `run`, which serves each call from the codebase and replies on the call's own one-shot channel.",
+      "id": "rust.async.channel-bridge-static-tools/mc",
+      "kind": "Scenario",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "/// [`update`], refusing a record that `key_of` says has another key than\n/// the one updated: an update changes one record, it doesn't move it.\nasync fn update_keyed<D, T, R>(\n    d: &D,\n    kind: Kind,\n    key: &str,\n    key_of: impl Fn(&T) -> String + Send + Sync,\n    mut change: impl FnMut(Option<T>) -> Result<Decision<T, R>> + Send,\n) -> Result<R>\nwhere\n    D: DocumentStore,\n    T: Serialize + DeserializeOwned + Send,\n    R: Send,\n{\n    update(d, kind, key, |current| {"
+          },
+          "correct": 1,
+          "options": [
+            "Checking after `update` returns would give the same result. The closure is only there to avoid repeating the call to `change`.",
+            "The closure runs before the compare-and-swap write, so a mismatched key is rejected before anything is stored. It also runs again on every retry against a newer value, so each candidate record is checked.",
+            "The closure makes the key check run only once, however many times the swap loses a race, so contention costs nothing extra.",
+            "The closure holds a lock on the document while the key is checked, so no other writer can change it between the check and the write."
+          ],
+          "prompt": "In this change, `update_keyed` wraps the caller's `change` in a new closure that validates the key of a `Decision::Put` record, and passes that closure to `update`. Why does this validation have to live inside the closure given to `update`, rather than being done on the value after `update` returns?",
+          "reasons": [
+            "After `update` returns, the swap has already succeeded and the record with the wrong key is already stored. An error at that point would report the problem but could not undo the write.",
+            "`update` writes the record as soon as the swap succeeds, so the key check has to run inside the closure to veto the write. Putting it there also means every retried decision is validated, not only the first one.",
+            "The closure is called again on every retry, because each attempt reloads and calls `change` again. Running the check each time is the point, since a retry can produce a different record.",
+            "Nothing in this code takes a lock. Safety comes from the optimistic swap, which fails if the stored document changed, and the closure only decides what to write."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "concurrency.optimistic-concurrency.compare-and-swap",
+      "explanation": "`update` writes the record as soon as the swap succeeds, so the key check has to run inside the closure to veto the write. Putting it there also means every retried decision is validated, not only the first one.",
+      "id": "concurrency.optimistic-concurrency.compare-and-swap/mc",
+      "kind": "ExplainYourChange",
+      "scope": "General"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "let mut calls = 0;\nlet code = store\n    .update_link_code(id, |current| {\n        calls += 1;\n        let mut c = current.ok_or(Rejection::Unknown)?;\n        c.redeem(&me)?;\n        Ok(Decision::Put(c.clone(), c))\n    })\n    .await?;\nprintln!(\"{calls}\");\n\n// Between this update's load and its save, another run saves a\n// change to the same code that does not redeem it. After that,\n// nobody else touches the code."
+          },
+          "correct": 2,
+          "options": [
+            "It prints 2: the closure is called a second time, but it fails with a rejection, because the code was already modified and so counts as redeemed.",
+            "It prints 1: the closure runs once, and its `Put` overwrites the other run's change, because the last writer wins.",
+            "It prints 2: the first save is rejected because the stored code changed, so the closure is called again with the newer code, and that attempt's `Put` is saved.",
+            "It prints 1: the closure is called once, and the save fails with an error because the stored code changed since it was loaded."
+          ],
+          "prompt": "The snippet redeems a link code through an update closure. The update loads the code, calls the closure, and saves what `Decision::Put` carries only if the stored code is still the one it loaded. Assume the race described in the trailing comment happens exactly once. What does the snippet print, and why?",
+          "reasons": [
+            "The other run changed the code without redeeming it. The second call sees an unredeemed code and redeems it normally. The closure would fail only if the other run had redeemed it.",
+            "The save only happens if the stored document is still the one that was loaded. Blindly overwriting is what the update API exists to prevent.",
+            "The update saves only if the stored document is still the one loaded. After losing the race it reloads and calls the closure again with what the other run saved. The closure therefore has to be repeatable, and it must keep any other effects out of itself and return them in the result.",
+            "A lost race is not an error. The update reloads and decides again, and it gives up with an error only after many failed attempts."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "design.state-store.decision-closure-update",
+      "explanation": "The update saves only if the stored document is still the one loaded. After losing the race it reloads and calls the closure again with what the other run saved. The closure therefore has to be repeatable, and it must keep any other effects out of itself and return them in the result.",
+      "id": "design.state-store.decision-closure-update/mc",
+      "kind": "PredictOutcome",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "    pub async fn present_link_code(&self, author: &AuthorId, code: &str) -> Result<LearnerId> {\n        let stores = self.stores().strict().await?;\n        let presenter = author.identity()?;\n        let now = self.clock.now();\n        // Redeemed with an update: of two presenters of one code, the second\n        // finds it redeemed and is rejected (D2).\n        let link_code = stores\n            .learner_store()\n            .update_link_code(code, |current| {\n                let mut link_code = current.ok_or(LinkRejection::UnknownCode)?;\n                link_code.redeem(&presenter, now)?;\n                Ok(Decision::Put(link_code.clone(), link_code))\n            })\n            .await?;\n        let target = self"
+          },
+          "correct": 0,
+          "options": [
+            "Two presenters could both read the code as unredeemed, both redeem it in memory and both succeed. The last save would win, so one code would link two identities.",
+            "The redeemed code would not be persisted, because only a closure can return a `Decision::Put` that writes to the store.",
+            "The redemption would still be correct, but slower. An update only saves a round trip to the store and does not change the outcome.",
+            "The stored code would be deleted after the first read, so the second presenter would get an unknown-code error even when the first redemption failed."
+          ],
+          "prompt": "In `present_link_code`, the code is redeemed inside an `update_link_code` closure. The alternative is to read the link code, call `redeem` on it, and then save it. What would go wrong with that alternative when two authors present the same code at nearly the same moment?",
+          "reasons": [
+            "Redeeming inside the update means the check \"is it already redeemed?\" is made against the code as stored at save time. The second presenter then sees it as redeemed and is rejected. A separate read and write leaves a gap in which both pass the check.",
+            "A plain read followed by a write would persist the redeemed code. The problem is that the read may be stale by the time of the write, so a second presenter's redemption is not rejected.",
+            "The update changes the outcome, not just the speed. Without it, the check and the write are separate steps, so concurrent presenters can interleave between them and both pass the check.",
+            "Reading a code does not delete it. The real risk of a separate read and write is that two presenters both succeed, not that the code disappears."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "design.concurrency.race-safe-domain-operations",
+      "explanation": "Redeeming inside the update means the check \"is it already redeemed?\" is made against the code as stored at save time. The second presenter then sees it as redeemed and is rejected. A separate read and write leaves a gap in which both pass the check.",
+      "id": "design.concurrency.race-safe-domain-operations/mc",
+      "kind": "ExplainYourChange",
+      "scope": "Project"
+    }
+  ]
+}

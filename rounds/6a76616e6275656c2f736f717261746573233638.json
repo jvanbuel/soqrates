@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "number": 68,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-15T09:45:28.713967066Z",
+      "carried": false,
+      "concepts": [
+        "rig.agent.hooks-tool-limiting",
+        "rust.async.channel-bridge-static-tools",
+        "concurrency.optimistic-concurrency.compare-and-swap",
+        "design.state-store.decision-closure-update",
+        "design.concurrency.race-safe-domain-operations"
+      ],
+      "head": "0a995a8c09bf4d2019bcc8173f255437ba282d05",
+      "session": "jvanbuel/soqrates#68@0a995a8c09bf4d2019bcc8173f255437ba282d05"
+    }
+  ]
+}
