@@ -225,15 +225,30 @@ impl SeenQuestions {
         self.last_seen.get(id).copied()
     }
 
-    /// Record that `id` was shown in round `round`.
+    /// Record that `id` was shown in round `round`. Only ever moves
+    /// forward: a round recorded late, after a later round showed `id`
+    /// too, leaves the later one, so that records of concurrent rounds can
+    /// be merged in any order.
     pub fn show(&mut self, id: &BankId, round: u64) {
-        self.last_seen.insert(id.clone(), round);
+        let last = self.last_seen.entry(id.clone()).or_insert(round);
+        *last = (*last).max(round);
         self.rounds = self.rounds.max(round);
     }
 
     /// Record that round `round` took place, whatever it showed.
     pub fn end_round(&mut self, round: u64) {
         self.rounds = self.rounds.max(round);
+    }
+
+    /// Add what `other`, a record of the same learner, says was shown:
+    /// for each question the later round, and the later round count. So
+    /// the records of rounds composed at the same time combine without
+    /// losing what either showed, in any order.
+    pub fn merge(&mut self, other: &SeenQuestions) {
+        for (id, round) in &other.last_seen {
+            self.show(id, *round);
+        }
+        self.rounds = self.rounds.max(other.rounds);
     }
 
     /// Whether `id` may be shown in round `round` without showing it twice
@@ -393,6 +408,37 @@ mod tests {
     }
 
     // @adr-0009-d4 @adr-0009-d5
+    // @adr-0009-d5 @adr-0002-d6
+    #[test]
+    fn records_of_concurrent_rounds_merge_in_any_order() {
+        let learner = LearnerId("ada".into());
+        let (a, b, c) = (BankId("a".into()), BankId("b".into()), BankId("c".into()));
+        // Two rounds composed from the same record, numbered 3 and 4.
+        let mut base = SeenQuestions::new(learner.clone());
+        base.show(&a, 1);
+        base.end_round(2);
+        let mut third = base.clone();
+        third.show(&b, 3);
+        third.show(&a, 3);
+        let mut fourth = base.clone();
+        fourth.show(&c, 4);
+        fourth.show(&a, 4);
+        let mut one = base.clone();
+        one.merge(&third);
+        one.merge(&fourth);
+        let mut other = base.clone();
+        other.merge(&fourth);
+        other.merge(&third);
+        assert_eq!(one, other, "the order of merging doesn't matter");
+        assert_eq!(one.last_seen(&a), Some(4), "the later round stands");
+        assert_eq!(one.last_seen(&b), Some(3));
+        assert_eq!(one.last_seen(&c), Some(4));
+        assert_eq!(one.next_round(), 5);
+        // Showing in an earlier round never moves a question back.
+        one.show(&a, 2);
+        assert_eq!(one.last_seen(&a), Some(4));
+    }
+
     #[test]
     fn unseen_questions_come_first_then_the_least_recently_seen() {
         let a = BankedQuestion::new(&question("c", "A?"), Level::Novice, at(1)).unwrap();

@@ -5,6 +5,7 @@ mod answer_commands;
 mod ci_check;
 mod codebase;
 mod common;
+mod concurrent_writes;
 mod domain_model;
 mod feedback;
 mod follow_ups;

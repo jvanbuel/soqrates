@@ -486,6 +486,31 @@ mod tests {
                     .await
             }
         }
+        /// Creates the session if no session with its key is pending.
+        fn put_session(
+            &self,
+            session: &Session,
+        ) -> impl Future<Output = soqrates_core::Result<()>> + Send {
+            async move { self.create_session(session).await.map(|_| ()) }
+        }
+        fn put_rounds(
+            &self,
+            rounds: &PrRounds,
+        ) -> impl Future<Output = soqrates_core::Result<()>> + Send {
+            async move {
+                self.update_rounds(rounds.pr(), |_| Ok(Decision::Put(rounds.clone(), ())))
+                    .await
+            }
+        }
+        fn put_seen(
+            &self,
+            seen: &SeenQuestions,
+        ) -> impl Future<Output = soqrates_core::Result<()>> + Send {
+            async move {
+                self.update_seen(seen.learner(), |_| Ok(Decision::Put(seen.clone(), ())))
+                    .await
+            }
+        }
     }
 
     impl<S: StateStore> Put for S {}
@@ -526,7 +551,7 @@ mod tests {
     /// (ADR-0002 D6).
     async fn exactly_one_claim<S: StateStore + 'static>(store: Arc<S>) {
         let key = session().key().clone();
-        store.save_session(&session()).await.unwrap();
+        store.put_session(&session()).await.unwrap();
         let handles: Vec<_> = (0..16)
             .map(|i| {
                 let store = store.clone();
@@ -777,8 +802,8 @@ mod tests {
 
         // Sessions and graded records.
         let s = session();
-        store.save_session(&s).await.unwrap();
-        store.save_session(&s).await.unwrap();
+        store.put_session(&s).await.unwrap();
+        store.put_session(&s).await.unwrap();
         let loaded = store.load_session(s.key()).await.unwrap().unwrap();
         assert_eq!(json(&loaded), json(&s));
         store.delete_session(s.key()).await.unwrap();
@@ -789,7 +814,7 @@ mod tests {
         let j = journal(&s, "ada");
         assert!(!store.begin_grading(&j).await.unwrap());
         assert!(store.load_grading(s.key()).await.unwrap().is_none());
-        store.save_session(&s).await.unwrap();
+        store.put_session(&s).await.unwrap();
         assert!(store.begin_grading(&j).await.unwrap());
         assert!(store.load_session(s.key()).await.unwrap().is_none());
         assert_eq!(store.load_grading(s.key()).await.unwrap(), Some(j.clone()));
@@ -797,7 +822,7 @@ mod tests {
         assert!(!store.begin_grading(&j).await.unwrap());
         // While it is being graded, the session can't be claimed again, even
         // if it is saved again.
-        store.save_session(&s).await.unwrap();
+        store.put_session(&s).await.unwrap();
         assert!(!store.begin_grading(&j).await.unwrap());
         assert!(store.load_session(s.key()).await.unwrap().is_some());
         store.delete_session(s.key()).await.unwrap();
@@ -831,8 +856,8 @@ mod tests {
             vec![soqrates_core::ConceptId("rust.traits".into())],
             now,
         ));
-        store.save_rounds(&rounds).await.unwrap();
-        store.save_rounds(&rounds).await.unwrap();
+        store.put_rounds(&rounds).await.unwrap();
+        store.put_rounds(&rounds).await.unwrap();
         assert_eq!(
             store.load_rounds(&pr("o/r", 1)).await.unwrap(),
             Some(rounds)
@@ -926,9 +951,9 @@ mod tests {
         assert!(store.load_seen(&cy).await.unwrap().is_none());
         let mut seen = SeenQuestions::new(cy.clone());
         seen.show(first.id(), 1);
-        store.save_seen(&seen).await.unwrap();
+        store.put_seen(&seen).await.unwrap();
         seen.show(second.id(), 2);
-        store.save_seen(&seen).await.unwrap();
+        store.put_seen(&seen).await.unwrap();
         assert_eq!(store.load_seen(&cy).await.unwrap(), Some(seen));
         store.delete_learner(&cy).await.unwrap();
         assert!(store.load_seen(&cy).await.unwrap().is_none());
@@ -1013,7 +1038,7 @@ mod tests {
                 now,
             )
             .unwrap();
-            store.save_session(&s).await.unwrap();
+            store.put_session(&s).await.unwrap();
         }
         for key in ["o/r#1@abc", "o/r#1@abc ", "O/R#1@ABC", "o/r#1@ab'c"] {
             let got = store.load_session(&SessionKey(key.into())).await.unwrap();
@@ -1777,7 +1802,7 @@ mod tests {
         let code = LinkCode::issue("K7Q-29XZ".into(), forge("2"), ada.clone(), now);
         store.put_link_code(&code).await.unwrap();
         let s = session();
-        store.save_session(&s).await.unwrap();
+        store.put_session(&s).await.unwrap();
         let other = Session::open(
             SessionKey("o/r#2@def".into()),
             s.author().clone(),
@@ -1786,7 +1811,7 @@ mod tests {
             now,
         )
         .unwrap();
-        store.save_session(&other).await.unwrap();
+        store.put_session(&other).await.unwrap();
         assert!(store.begin_grading(&journal(&other, "ada")).await.unwrap());
         store
             .save_graded(&GradedSession {
@@ -1803,13 +1828,13 @@ mod tests {
             repo: "o/r".into(),
             number: 1,
         };
-        store.save_rounds(&PrRounds::new(pr)).await.unwrap();
+        store.put_rounds(&PrRounds::new(pr)).await.unwrap();
         store
             .save_bank_question(&banked("rust.traits", "First?", now))
             .await
             .unwrap();
         store
-            .save_seen(&SeenQuestions::new(LearnerId("cy".into())))
+            .put_seen(&SeenQuestions::new(LearnerId("cy".into())))
             .await
             .unwrap();
     }
@@ -1994,7 +2019,7 @@ mod tests {
         let dir = temp_dir("claim-lock");
         let store = Arc::new(FileStore::new(&dir));
         let s = session();
-        store.save_session(&s).await.unwrap();
+        store.put_session(&s).await.unwrap();
         let doc = serde_json::to_value(journal(&s, "ada")).unwrap();
         let st = store.clone();
         let key = s.key().0.clone();
@@ -2065,7 +2090,7 @@ mod tests {
             std::fs::create_dir_all(&dir).unwrap();
             let store = SqlStore::connect(&url(&dir)).await.unwrap();
             conforms(&store).await;
-            store.save_session(&session()).await.unwrap();
+            store.put_session(&session()).await.unwrap();
             drop(store);
             // Connecting again finds the schema and the data.
             let store = SqlStore::connect(&url(&dir)).await.unwrap();

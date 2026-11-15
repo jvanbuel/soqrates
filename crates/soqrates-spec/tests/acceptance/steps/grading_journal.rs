@@ -28,6 +28,7 @@ async fn graded_together(w: &mut SpecWorld) {
         allowed: 0,
         failing: 0,
         meet: Some(meet.clone()),
+        meet_on: soqrates_core::ports::Kind::Profile,
     });
     let answers = |s: &soqrates_core::Session| -> Vec<_> {
         s.questions()

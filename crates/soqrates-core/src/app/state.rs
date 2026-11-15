@@ -239,8 +239,21 @@ impl<D: DocumentStore> StateStore for D {
     async fn load_session(&self, key: &SessionKey) -> Result<Option<Session>> {
         get(self, Kind::Session, &key.0).await
     }
-    async fn save_session(&self, session: &Session) -> Result<()> {
-        put(self, Kind::Session, &session.key().0, session).await
+    async fn create_session(&self, session: &Session) -> Result<bool> {
+        let key = &session.key().0;
+        update_keyed(
+            self,
+            Kind::Session,
+            key,
+            |s: &Session| s.key().0.clone(),
+            |current| {
+                Ok(match current {
+                    None => Decision::Put(session.clone(), true),
+                    Some(_) => Decision::Keep(false),
+                })
+            },
+        )
+        .await
     }
     async fn delete_session(&self, key: &SessionKey) -> Result<()> {
         self.remove(&[Removal::Key(Kind::Session, &key.0)]).await
@@ -275,8 +288,19 @@ impl<D: DocumentStore> StateStore for D {
     async fn load_rounds(&self, pr: &PrRef) -> Result<Option<PrRounds>> {
         get(self, Kind::Rounds, &pr.id()).await
     }
-    async fn save_rounds(&self, rounds: &PrRounds) -> Result<()> {
-        put(self, Kind::Rounds, &rounds.pr().id(), rounds).await
+    async fn update_rounds<R: Send>(
+        &self,
+        pr: &PrRef,
+        change: impl FnMut(Option<PrRounds>) -> Result<Decision<PrRounds, R>> + Send,
+    ) -> Result<R> {
+        update_keyed(
+            self,
+            Kind::Rounds,
+            &pr.id(),
+            |r: &PrRounds| r.pr().id(),
+            change,
+        )
+        .await
     }
 
     async fn bank_questions(&self, concept: &ConceptId) -> Result<Vec<BankedQuestion>> {
@@ -297,7 +321,12 @@ impl<D: DocumentStore> StateStore for D {
         all(self, Kind::Asked, None).await
     }
 
-    async fn save_seen(&self, seen: &SeenQuestions) -> Result<()> {
-        put(self, Kind::Seen, &seen.learner().0, seen).await
+    async fn update_seen<R: Send>(
+        &self,
+        learner: &LearnerId,
+        change: impl FnMut(Option<SeenQuestions>) -> Result<Decision<SeenQuestions, R>> + Send,
+    ) -> Result<R> {
+        let key_of = |s: &SeenQuestions| s.learner().0.clone();
+        update_keyed(self, Kind::Seen, &learner.0, key_of, change).await
     }
 }

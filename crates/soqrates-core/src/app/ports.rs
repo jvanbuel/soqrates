@@ -191,10 +191,11 @@ pub enum Decision<T, R> {
     Keep(R),
 }
 
-/// Profiles, identity links, link codes, asked sessions and bank questions
-/// may be written by several runs at once, so they are only ever changed
-/// with an update (see [`Decision`]), never saved blindly over whatever is
-/// stored.
+/// Profiles, identity links, link codes, asked sessions, bank questions,
+/// the rounds of a pull request and what a learner was shown may be written
+/// by several runs at once, so they are only ever changed with an update
+/// (see [`Decision`]), never saved blindly over whatever is stored. A
+/// pending session is created only if there is none with its key.
 ///
 /// Persists the records of Soqrates: learner profiles, identity links, link
 /// codes, sessions, grading journals, graded records, PR rounds and the
@@ -253,7 +254,10 @@ pub trait StateStore: Send + Sync {
         &self,
         key: &SessionKey,
     ) -> impl Future<Output = Result<Option<Session>>> + Send;
-    fn save_session(&self, session: &Session) -> impl Future<Output = Result<()>> + Send;
+    /// Store `session` as pending only if no session with its key is
+    /// pending: `false`, storing nothing, when one is. Two runs that open
+    /// the same session at once can't both store theirs.
+    fn create_session(&self, session: &Session) -> impl Future<Output = Result<bool>> + Send;
     fn delete_session(&self, key: &SessionKey) -> impl Future<Output = Result<()>> + Send;
     /// Every pending session in this store, in any order. Sessions being
     /// graded are not pending: their journals hold them ([`gradings`]).
@@ -284,8 +288,13 @@ pub trait StateStore: Send + Sync {
 
     /// The rounds asked on `pr` so far (ADR-0002 D9).
     fn load_rounds(&self, pr: &PrRef) -> impl Future<Output = Result<Option<PrRounds>>> + Send;
-    /// Create or replace the rounds of `rounds.pr()`.
-    fn save_rounds(&self, rounds: &PrRounds) -> impl Future<Output = Result<()>> + Send;
+    /// Change the rounds of `pr` with `change` (see [`Decision`]), calling
+    /// it again on the newer ones when someone saved in between.
+    fn update_rounds<R: Send>(
+        &self,
+        pr: &PrRef,
+        change: impl FnMut(Option<PrRounds>) -> Result<Decision<PrRounds, R>> + Send,
+    ) -> impl Future<Output = Result<R>> + Send;
 
     /// The question bank's questions about `concept`, retired ones
     /// included, in the order they were banked (ADR-0009 D1).
@@ -303,8 +312,13 @@ pub trait StateStore: Send + Sync {
         &self,
         learner: &LearnerId,
     ) -> impl Future<Output = Result<Option<SeenQuestions>>> + Send;
-    /// Create or replace what `seen.learner()` was shown.
-    fn save_seen(&self, seen: &SeenQuestions) -> impl Future<Output = Result<()>> + Send;
+    /// Change what `learner` was shown with `change` (see [`Decision`]),
+    /// calling it again on the newer record when someone saved in between.
+    fn update_seen<R: Send>(
+        &self,
+        learner: &LearnerId,
+        change: impl FnMut(Option<SeenQuestions>) -> Result<Decision<SeenQuestions, R>> + Send,
+    ) -> impl Future<Output = Result<R>> + Send;
 
     /// The questions of the graded session `key`, kept for feedback
     /// (ADR-0011 D1).
