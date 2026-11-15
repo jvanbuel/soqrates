@@ -1,13 +1,13 @@
 //! Identities: which learner is behind an author, and linking, unlinking
 //! and deleting learners (ADR-0003).
 
-use crate::Result;
 use crate::app::engine::Soqrates;
-use crate::app::ports::{Clock, Examiner, StateStore};
+use crate::app::ports::{Clock, Decision, Examiner, StateStore};
 use crate::app::stores::change_bank_entry;
 use crate::app::stores::{Access, ProfileLocation};
 use crate::ids::{AuthorId, Identity, LearnerId};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode, LinkRejection};
+use crate::{Error, Result};
 
 impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// Where `author`'s profile lives right now (ADR-0003 D4).
@@ -30,7 +30,15 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let identity = author.identity()?;
         let learner = stores.resolve_in(&identity, stores.learner_store()).await?;
         let code = LinkCode::issue(code, identity, learner, self.clock.now());
-        stores.learner_store().save_link_code(&code).await?;
+        // A code is issued once: one that is in use already is refused, not
+        // replaced, so a code someone holds can't be taken over.
+        stores
+            .learner_store()
+            .update_link_code(code.code(), |current| match current {
+                None => Ok(Decision::Put(code.clone(), ())),
+                Some(_) => Err(Error::Invalid("that link code is already in use".into())),
+            })
+            .await?;
         Ok(code)
     }
 
@@ -40,13 +48,17 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     pub async fn present_link_code(&self, author: &AuthorId, code: &str) -> Result<LearnerId> {
         let stores = self.stores().strict().await?;
         let presenter = author.identity()?;
-        let mut link_code = self
-            .store
-            .load_link_code(code)
-            .await?
-            .ok_or(LinkRejection::UnknownCode)?;
-        link_code.redeem(&presenter, self.clock.now())?;
-        stores.learner_store().save_link_code(&link_code).await?;
+        let now = self.clock.now();
+        // Redeemed with an update: of two presenters of one code, the second
+        // finds it redeemed and is rejected (D2).
+        let link_code = stores
+            .learner_store()
+            .update_link_code(code, |current| {
+                let mut link_code = current.ok_or(LinkRejection::UnknownCode)?;
+                link_code.redeem(&presenter, now)?;
+                Ok(Decision::Put(link_code.clone(), link_code))
+            })
+            .await?;
         let target = self
             .store
             .learner_of(link_code.requested_by())
@@ -98,28 +110,47 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             // the learner is deleted with all that is theirs (ADR-0011 D4,
             // D8): open disputes stay resolvable and on the bank.
             for asked in store.asked_sessions().await? {
-                if *asked.learner() == other {
-                    store.save_asked(&asked.owned_by(target.clone())).await?;
+                if *asked.learner() != other {
+                    continue;
                 }
+                // Feedback given meanwhile moves along with it.
+                store
+                    .update_asked(asked.key(), |current| {
+                        Ok(match current {
+                            Some(asked) if *asked.learner() == other => {
+                                Decision::Put(asked.owned_by(target.clone()), ())
+                            }
+                            _ => Decision::Keep(()),
+                        })
+                    })
+                    .await?;
             }
-            let a = store.load_profile(target).await?;
-            let b = store.load_profile(&other).await?;
-            if a.is_none() && b.is_none() {
-                continue;
-            }
-            let parts: Vec<LearnerProfile> = a.into_iter().chain(b).collect();
+            let theirs = store.load_profile(&other).await?;
             store.delete_learner(&other).await?;
+            // Merged into the target's profile as it is when saved, so that
+            // reviews graded for the target meanwhile are kept.
             store
-                .save_profile(&LearnerProfile::merged(target.clone(), &parts))
+                .update_profile(target, |current| {
+                    if current.is_none() && theirs.is_none() {
+                        return Ok(Decision::Keep(()));
+                    }
+                    let parts: Vec<LearnerProfile> =
+                        current.into_iter().chain(theirs.clone()).collect();
+                    Ok(Decision::Put(
+                        LearnerProfile::merged(target.clone(), &parts),
+                        (),
+                    ))
+                })
                 .await?;
         }
+        let link = IdentityLink {
+            identity: identity.clone(),
+            learner: target.clone(),
+            since: self.clock.now(),
+        };
         stores
             .learner_store()
-            .save_link(&IdentityLink {
-                identity: identity.clone(),
-                learner: target.clone(),
-                since: self.clock.now(),
-            })
+            .update_link(identity, |_| Ok(Decision::Put(link.clone(), ())))
             .await?;
         Ok(target.clone())
     }
@@ -137,19 +168,41 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             .fresh_learner_id(&identity, stores.learner_store())
             .await?;
         for store in stores.all() {
-            if let Some(profile) = store.load_profile(&learner).await? {
-                let (remaining, split_off) = profile.split(&identity, new_learner.clone());
-                store.save_profile(&remaining).await?;
-                store.save_profile(&split_off).await?;
+            // Split from the profile as it is when saved, so that reviews
+            // graded meanwhile end up on one of the two parts.
+            let split_off = store
+                .update_profile(&learner, |current| {
+                    Ok(match current {
+                        None => Decision::Keep(None),
+                        Some(profile) => {
+                            let (remaining, split_off) =
+                                profile.split(&identity, new_learner.clone());
+                            Decision::Put(remaining, Some(split_off))
+                        }
+                    })
+                })
+                .await?;
+            if let Some(split_off) = split_off {
+                // The new learner is fresh: nobody else writes its profile.
+                store
+                    .update_profile(&new_learner, |current| match current {
+                        None => Ok(Decision::Put(split_off.clone(), ())),
+                        Some(_) => Err(Error::Invalid(format!(
+                            "learner {:?} has a profile already",
+                            new_learner.0
+                        ))),
+                    })
+                    .await?;
             }
         }
+        let link = IdentityLink {
+            identity: identity.clone(),
+            learner: new_learner.clone(),
+            since: self.clock.now(),
+        };
         stores
             .learner_store()
-            .save_link(&IdentityLink {
-                identity,
-                learner: new_learner.clone(),
-                since: self.clock.now(),
-            })
+            .update_link(&identity, |_| Ok(Decision::Put(link.clone(), ())))
             .await?;
         Ok(new_learner)
     }

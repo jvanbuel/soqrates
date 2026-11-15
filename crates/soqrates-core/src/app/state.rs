@@ -99,70 +99,108 @@ where
     )))
 }
 
+/// [`update`], refusing a record that `key_of` says has another key than
+/// the one updated: an update changes one record, it doesn't move it.
+async fn update_keyed<D, T, R>(
+    d: &D,
+    kind: Kind,
+    key: &str,
+    key_of: impl Fn(&T) -> String + Send + Sync,
+    mut change: impl FnMut(Option<T>) -> Result<Decision<T, R>> + Send,
+) -> Result<R>
+where
+    D: DocumentStore,
+    T: Serialize + DeserializeOwned + Send,
+    R: Send,
+{
+    update(d, kind, key, |current| {
+        let decision = change(current)?;
+        if let Decision::Put(record, _) = &decision {
+            let put = key_of(record);
+            if put != key {
+                return Err(Error::Invalid(format!(
+                    "an update of {} {key:?} put {put:?}",
+                    kind.label()
+                )));
+            }
+        }
+        Ok(decision)
+    })
+    .await
+}
+
 impl<D: DocumentStore> StateStore for D {
     async fn update_bank_question<R: Send>(
         &self,
         id: &BankId,
-        mut change: impl FnMut(Option<BankedQuestion>) -> Result<Decision<BankedQuestion, R>> + Send,
+        change: impl FnMut(Option<BankedQuestion>) -> Result<Decision<BankedQuestion, R>> + Send,
     ) -> Result<R> {
-        update(self, Kind::Bank, &id.0, |current| {
-            let decision = change(current)?;
-            if let Decision::Put(question, _) = &decision
-                && question.id() != id
-            {
-                return Err(Error::Invalid(format!(
-                    "an update of bank question {:?} put {:?}",
-                    id.0,
-                    question.id().0
-                )));
-            }
-            Ok(decision)
-        })
+        update_keyed(
+            self,
+            Kind::Bank,
+            &id.0,
+            |q: &BankedQuestion| q.id().0.clone(),
+            change,
+        )
         .await
     }
     async fn update_asked<R: Send>(
         &self,
         key: &SessionKey,
-        mut change: impl FnMut(Option<AskedSession>) -> Result<Decision<AskedSession, R>> + Send,
+        change: impl FnMut(Option<AskedSession>) -> Result<Decision<AskedSession, R>> + Send,
     ) -> Result<R> {
-        update(self, Kind::Asked, &key.0, |current| {
-            let decision = change(current)?;
-            if let Decision::Put(asked, _) = &decision
-                && asked.key() != key
-            {
-                return Err(Error::Invalid(format!(
-                    "an update of asked session {:?} put {:?}",
-                    key.0,
-                    asked.key().0
-                )));
-            }
-            Ok(decision)
-        })
+        update_keyed(
+            self,
+            Kind::Asked,
+            &key.0,
+            |a: &AskedSession| a.key().0.clone(),
+            change,
+        )
+        .await
+    }
+    async fn update_link<R: Send>(
+        &self,
+        identity: &Identity,
+        change: impl FnMut(Option<IdentityLink>) -> Result<Decision<IdentityLink, R>> + Send,
+    ) -> Result<R> {
+        let key = identity.to_string();
+        update_keyed(
+            self,
+            Kind::Link,
+            &key,
+            |l: &IdentityLink| l.identity.to_string(),
+            change,
+        )
+        .await
+    }
+    async fn update_link_code<R: Send>(
+        &self,
+        code: &str,
+        change: impl FnMut(Option<LinkCode>) -> Result<Decision<LinkCode, R>> + Send,
+    ) -> Result<R> {
+        update_keyed(
+            self,
+            Kind::LinkCode,
+            code,
+            |c: &LinkCode| c.code().to_string(),
+            change,
+        )
         .await
     }
 
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
         get(self, Kind::Profile, &learner.0).await
     }
-    async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
-        put(self, Kind::Profile, &profile.learner().0, profile).await
-    }
     async fn update_profile<R: Send>(
         &self,
         learner: &LearnerId,
         mut change: impl FnMut(Option<LearnerProfile>) -> Result<Decision<LearnerProfile, R>> + Send,
     ) -> Result<R> {
-        update(self, Kind::Profile, &learner.0, |current| {
+        let key_of = |p: &LearnerProfile| p.learner().0.clone();
+        update_keyed(self, Kind::Profile, &learner.0, key_of, |current| {
             let version = current.as_ref().map_or(0, LearnerProfile::version);
             Ok(match change(current)? {
                 Decision::Put(profile, result) => {
-                    if profile.learner() != learner {
-                        return Err(Error::Invalid(format!(
-                            "an update of the profile of {:?} put that of {:?}",
-                            learner.0,
-                            profile.learner().0
-                        )));
-                    }
                     Decision::Put(profile.with_version(version + 1), result)
                 }
                 keep => keep,
@@ -184,9 +222,6 @@ impl<D: DocumentStore> StateStore for D {
         let link: Option<IdentityLink> = get(self, Kind::Link, &identity.to_string()).await?;
         Ok(link.map(|l| l.learner))
     }
-    async fn save_link(&self, link: &IdentityLink) -> Result<()> {
-        put(self, Kind::Link, &link.identity.to_string(), link).await
-    }
     async fn delete_link(&self, identity: &Identity) -> Result<()> {
         self.remove(&[Removal::Key(Kind::Link, &identity.to_string())])
             .await
@@ -197,9 +232,6 @@ impl<D: DocumentStore> StateStore for D {
         Ok(links)
     }
 
-    async fn save_link_code(&self, code: &LinkCode) -> Result<()> {
-        put(self, Kind::LinkCode, code.code(), code).await
-    }
     async fn load_link_code(&self, code: &str) -> Result<Option<LinkCode>> {
         get(self, Kind::LinkCode, code).await
     }
@@ -260,9 +292,6 @@ impl<D: DocumentStore> StateStore for D {
     }
     async fn load_asked(&self, key: &SessionKey) -> Result<Option<AskedSession>> {
         get(self, Kind::Asked, &key.0).await
-    }
-    async fn save_asked(&self, asked: &AskedSession) -> Result<()> {
-        put(self, Kind::Asked, &asked.key().0, asked).await
     }
     async fn asked_sessions(&self) -> Result<Vec<AskedSession>> {
         all(self, Kind::Asked, None).await

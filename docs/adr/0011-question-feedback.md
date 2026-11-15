@@ -47,7 +47,7 @@ feedback (`QuestionFeedback`) to the [ADR-0002 glossary](0002-domain-model.md#gl
 Grading a session also keeps its questions, as asked, with the author's
 answer, the grade and the explanation the author was shown: an
 `AskedSession`, one per graded session, behind the `StateStore` port
-(`load_asked`, `save_asked`, `asked_sessions`). It is written by the grading
+(`load_asked`, `update_asked`, `asked_sessions`). It is written by the grading
 journal (ADR-0002 D6), so it exists exactly when the session is graded. The
 file store keeps it under `asked/`, the SQL store in the table
 `soqrates_asked` (`session_key`, `learner`, `doc`), within schema version 1

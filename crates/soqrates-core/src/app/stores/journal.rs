@@ -73,7 +73,11 @@ impl<S: StateStore, C: Clock> Access<'_, S, C> {
                 // profiles. Saving them again could undo later reviews, but
                 // the graded record, written last, tells whether it was.
                 for (id, profile) in &journal.profiles {
-                    self.by_id(id)?.save_profile(profile).await?;
+                    self.by_id(id)?
+                        .update_profile(profile.learner(), |_| {
+                            Ok(Decision::Put(profile.clone(), ()))
+                        })
+                        .await?;
                 }
             } else {
                 recorded = self.record_reviews(journal).await?;

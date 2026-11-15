@@ -445,6 +445,51 @@ mod tests {
 
     use super::*;
 
+    /// Plain writes for setting up tests: the port has none for records
+    /// that several writers change, so these put through the update.
+    trait Put: StateStore {
+        fn put_profile(
+            &self,
+            profile: &LearnerProfile,
+        ) -> impl Future<Output = soqrates_core::Result<()>> + Send {
+            async move {
+                self.update_profile(profile.learner(), |_| {
+                    Ok(Decision::Put(profile.clone(), ()))
+                })
+                .await
+            }
+        }
+        fn put_link(
+            &self,
+            link: &IdentityLink,
+        ) -> impl Future<Output = soqrates_core::Result<()>> + Send {
+            async move {
+                self.update_link(&link.identity, |_| Ok(Decision::Put(link.clone(), ())))
+                    .await
+            }
+        }
+        fn put_link_code(
+            &self,
+            code: &LinkCode,
+        ) -> impl Future<Output = soqrates_core::Result<()>> + Send {
+            async move {
+                self.update_link_code(code.code(), |_| Ok(Decision::Put(code.clone(), ())))
+                    .await
+            }
+        }
+        fn put_asked(
+            &self,
+            asked: &AskedSession,
+        ) -> impl Future<Output = soqrates_core::Result<()>> + Send {
+            async move {
+                self.update_asked(asked.key(), |_| Ok(Decision::Put(asked.clone(), ())))
+                    .await
+            }
+        }
+    }
+
+    impl<S: StateStore> Put for S {}
+
     fn session() -> Session {
         Session::open(
             SessionKey("o/r#1@abc".into()),
@@ -670,12 +715,13 @@ mod tests {
         // Profiles.
         assert!(store.load_profile(&ada).await.unwrap().is_none());
         let profile = LearnerProfile::new(ada.clone());
-        store.save_profile(&profile).await.unwrap();
-        store.save_profile(&profile).await.unwrap();
+        store.put_profile(&profile).await.unwrap();
+        store.put_profile(&profile).await.unwrap();
         let loaded = store.load_profile(&ada).await.unwrap().unwrap();
-        assert_eq!(json(&loaded), json(&profile));
+        // Each update saves one version later.
+        assert_eq!(json(&loaded), json(&profile.clone().with_version(2)));
         store
-            .save_profile(&LearnerProfile::new(bob.clone()))
+            .put_profile(&LearnerProfile::new(bob.clone()))
             .await
             .unwrap();
 
@@ -685,13 +731,13 @@ mod tests {
             learner: learner.clone(),
             since: now,
         };
-        store.save_link(&link(forge("1"), &ada)).await.unwrap();
+        store.put_link(&link(forge("1"), &ada)).await.unwrap();
         store
-            .save_link(&link(Identity::Email("ada@example.com".into()), &ada))
+            .put_link(&link(Identity::Email("ada@example.com".into()), &ada))
             .await
             .unwrap();
-        store.save_link(&link(forge("2"), &ada)).await.unwrap();
-        store.save_link(&link(forge("2"), &bob)).await.unwrap();
+        store.put_link(&link(forge("2"), &ada)).await.unwrap();
+        store.put_link(&link(forge("2"), &bob)).await.unwrap();
         assert_eq!(
             store.learner_of(&forge("1")).await.unwrap(),
             Some(ada.clone())
@@ -724,7 +770,7 @@ mod tests {
 
         // Link codes.
         let code = LinkCode::issue("K7Q-29XZ".into(), forge("2"), bob.clone(), now);
-        store.save_link_code(&code).await.unwrap();
+        store.put_link_code(&code).await.unwrap();
         let loaded = store.load_link_code("K7Q-29XZ").await.unwrap().unwrap();
         assert_eq!(loaded, code);
         assert!(store.load_link_code("nope").await.unwrap().is_none());
@@ -902,9 +948,9 @@ mod tests {
         let mine = asked_by("o/r#2@abc", &cy);
         let theirs = asked_by("o/r#2@def", &dee);
         assert!(store.load_asked(mine.key()).await.unwrap().is_none());
-        store.save_asked(&mine).await.unwrap();
-        store.save_asked(&mine).await.unwrap();
-        store.save_asked(&theirs).await.unwrap();
+        store.put_asked(&mine).await.unwrap();
+        store.put_asked(&mine).await.unwrap();
+        store.put_asked(&theirs).await.unwrap();
         assert_eq!(
             store.load_asked(mine.key()).await.unwrap(),
             Some(mine.clone())
@@ -1035,7 +1081,7 @@ mod tests {
             &[bank.question()],
             &[],
         );
-        store.save_asked(&asked).await.unwrap();
+        store.put_asked(&asked).await.unwrap();
         let app = Soqrates::new(store, StoreExaminer, TestClock, Default::default());
         // Prevent the bank lock from opening after the session is saved.
         // Saving the bank question above created the lock file.
@@ -1079,6 +1125,187 @@ mod tests {
         assert!(recovered.is_retired());
         assert!(!recovered.is_disputed());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A store in which another writer gets in first, once: just before the
+    /// first swap of the armed document, `rival` is saved in its place, as
+    /// if a concurrent run had written it between this run's load and save.
+    struct Rival {
+        inner: InMemoryStore,
+        armed: std::sync::Mutex<Option<(Kind, String, Doc)>>,
+    }
+
+    impl Rival {
+        fn new() -> Self {
+            Self {
+                inner: InMemoryStore::new(),
+                armed: std::sync::Mutex::new(None),
+            }
+        }
+        fn arm(&self, kind: Kind, key: &str, rival: Doc) {
+            *self.armed.lock().unwrap() = Some((kind, key.to_string(), rival));
+        }
+        fn fired(&self) -> bool {
+            self.armed.lock().unwrap().is_none()
+        }
+    }
+
+    impl DocumentStore for Rival {
+        async fn load(&self, kind: Kind, key: &str) -> Result<Option<Doc>> {
+            self.inner.load(kind, key).await
+        }
+        async fn save(&self, kind: Kind, key: &str, doc: &Doc) -> Result<()> {
+            self.inner.save(kind, key, doc).await
+        }
+        async fn list(&self, kind: Kind, group: Option<&str>) -> Result<Vec<Doc>> {
+            self.inner.list(kind, group).await
+        }
+        async fn remove(&self, removals: &[Removal<'_>]) -> Result<()> {
+            self.inner.remove(removals).await
+        }
+        async fn swap(
+            &self,
+            kind: Kind,
+            key: &str,
+            expected: Option<&Doc>,
+            new: &Doc,
+        ) -> Result<bool> {
+            let rival = {
+                let mut armed = self.armed.lock().unwrap();
+                match &*armed {
+                    Some((k, at, _)) if *k == kind && at == key => armed.take(),
+                    _ => None,
+                }
+            };
+            if let Some((_, _, doc)) = rival {
+                self.inner.save(kind, key, &doc).await?;
+            }
+            self.inner.swap(kind, key, expected, new).await
+        }
+        async fn claim(&self, from: Kind, to: Kind, key: &str, doc: &Doc) -> Result<bool> {
+            self.inner.claim(from, to, key, doc).await
+        }
+    }
+
+    fn engine(store: Rival) -> soqrates_core::Soqrates<Rival, StoreExaminer, TestClock> {
+        soqrates_core::Soqrates::new(store, StoreExaminer, TestClock, Default::default())
+    }
+
+    /// The profile of `learner` with the review of session `i` on it.
+    async fn reviewed(store: &Rival, learner: &LearnerId, i: usize) -> LearnerProfile {
+        store
+            .load_profile(learner)
+            .await
+            .unwrap()
+            .unwrap_or_else(|| LearnerProfile::new(learner.clone()))
+            .with_session_reviews(&format!("session-{i}"), &[review(i)])
+            .expect("not recorded yet")
+            .0
+    }
+
+    // @adr-0003-d3 @adr-0002-d6
+    #[tokio::test]
+    async fn a_merge_keeps_a_review_graded_for_the_target_meanwhile() {
+        let app = engine(Rival::new());
+        let (a, b) = (
+            soqrates_core::AuthorId("github.com:1".into()),
+            soqrates_core::AuthorId("github.com:2".into()),
+        );
+        let target = app.learner_of(&a).await.unwrap();
+        let other = app.learner_of(&b).await.unwrap();
+        let mine = reviewed(&app.store, &target, 1).await;
+        app.store.put_profile(&mine).await.unwrap();
+        let theirs = reviewed(&app.store, &other, 2).await;
+        app.store.put_profile(&theirs).await.unwrap();
+        // A grading of the target lands while the merge is being made.
+        let graded = reviewed(&app.store, &target, 3).await;
+        app.store.arm(
+            Kind::Profile,
+            &target.0,
+            serde_json::to_value(&graded).unwrap(),
+        );
+        app.request_link_code(&a, "K7Q-29XZ".into()).await.unwrap();
+        app.present_link_code(&b, "K7Q-29XZ").await.unwrap();
+        assert!(app.store.fired(), "the merge raced the grading");
+        let merged = app.store.load_profile(&target).await.unwrap().unwrap();
+        for i in 1..=3 {
+            assert!(
+                merged
+                    .history()
+                    .iter()
+                    .any(|r| r.concept.0 == format!("concept-{i}")),
+                "the review of session {i} was lost"
+            );
+        }
+        assert!(merged.has_applied("session-3"));
+    }
+
+    // @adr-0003-d2
+    #[tokio::test]
+    async fn a_link_code_presented_twice_at_once_links_only_once() {
+        let app = engine(Rival::new());
+        let (a, b) = (
+            soqrates_core::AuthorId("github.com:1".into()),
+            soqrates_core::AuthorId("github.com:2".into()),
+        );
+        let code = app.request_link_code(&a, "K7Q-29XZ".into()).await.unwrap();
+        // Another identity redeems the code between this load and save.
+        let mut redeemed = code.clone();
+        redeemed
+            .redeem(&forge("3"), chrono::Utc::now())
+            .expect("redeemable");
+        app.store.arm(
+            Kind::LinkCode,
+            code.code(),
+            serde_json::to_value(&redeemed).unwrap(),
+        );
+        let presented = app.present_link_code(&b, code.code()).await;
+        assert!(app.store.fired(), "the presentations raced");
+        assert!(
+            matches!(
+                presented,
+                Err(soqrates_core::Error::Link(
+                    soqrates_core::LinkRejection::AlreadyUsed
+                ))
+            ),
+            "got {presented:?}"
+        );
+        assert_eq!(
+            app.store.load_link_code(code.code()).await.unwrap(),
+            Some(redeemed),
+            "the first redemption stands"
+        );
+        // And a code is issued once: asking for one in use is refused.
+        assert!(app.request_link_code(&b, "K7Q-29XZ".into()).await.is_err());
+    }
+
+    // @adr-0003-d1
+    #[tokio::test]
+    async fn a_new_identity_seen_twice_at_once_gets_one_learner() {
+        let app = engine(Rival::new());
+        let identity = forge("7");
+        let author = soqrates_core::AuthorId(identity.to_string());
+        // Another run links the identity between this run's lookup and save.
+        let theirs = IdentityLink {
+            identity: identity.clone(),
+            learner: LearnerId("learner-theirs".into()),
+            since: chrono::Utc::now(),
+        };
+        app.store.arm(
+            Kind::Link,
+            &identity.to_string(),
+            serde_json::to_value(&theirs).unwrap(),
+        );
+        let learner = app.learner_of(&author).await.unwrap();
+        assert!(app.store.fired(), "the lookups raced");
+        assert_eq!(learner, theirs.learner, "the first link wins");
+        assert_eq!(
+            app.store.links_of(&learner).await.unwrap(),
+            vec![theirs.clone()]
+        );
+        // No profile is left behind for a learner nobody links to.
+        let profiles = app.store.list(Kind::Profile, None).await.unwrap();
+        assert_eq!(profiles.len(), 1, "{profiles:?}");
     }
 
     #[tokio::test]
@@ -1137,7 +1364,7 @@ mod tests {
         let store = FileStore::new(&dir);
         let ada = LearnerId("ada".into());
         store
-            .save_profile(&LearnerProfile::new(ada.clone()))
+            .put_profile(&LearnerProfile::new(ada.clone()))
             .await
             .unwrap();
         let path = store.path(Kind::Profile, "ada", None);
@@ -1536,11 +1763,11 @@ mod tests {
         let now = chrono::Utc::now();
         let ada = LearnerId("ada".into());
         store
-            .save_profile(&LearnerProfile::new(ada.clone()))
+            .put_profile(&LearnerProfile::new(ada.clone()))
             .await
             .unwrap();
         store
-            .save_link(&IdentityLink {
+            .put_link(&IdentityLink {
                 identity: forge("1"),
                 learner: ada.clone(),
                 since: now,
@@ -1548,7 +1775,7 @@ mod tests {
             .await
             .unwrap();
         let code = LinkCode::issue("K7Q-29XZ".into(), forge("2"), ada.clone(), now);
-        store.save_link_code(&code).await.unwrap();
+        store.put_link_code(&code).await.unwrap();
         let s = session();
         store.save_session(&s).await.unwrap();
         let other = Session::open(
@@ -1894,8 +2121,8 @@ mod tests {
             let files = FileStore::new(dir.join("files"));
             let sql = SqlStore::connect(&url(&dir)).await.unwrap();
             let profile = LearnerProfile::new(LearnerId("ada".into()));
-            files.save_profile(&profile).await.unwrap();
-            sql.save_profile(&profile).await.unwrap();
+            files.put_profile(&profile).await.unwrap();
+            sql.put_profile(&profile).await.unwrap();
             let file_doc: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(files.path(Kind::Profile, "ada", None)).unwrap(),
             )

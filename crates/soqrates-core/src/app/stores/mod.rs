@@ -269,21 +269,34 @@ impl<'a, S: StateStore, C: Clock> Access<'a, S, C> {
     }
 
     /// Resolve `identity` in `store`, creating and linking a new learner the
-    /// first time it is seen (ADR-0003 D1).
+    /// first time it is seen (ADR-0003 D1). The link is created only if
+    /// there is none: of two runs that see a new identity at once, both end
+    /// up with the learner of the one that linked it first.
     pub async fn resolve_in(&self, identity: &Identity, store: &S) -> Result<LearnerId> {
         if let Some(learner) = store.learner_of(identity).await? {
             return Ok(learner);
         }
-        let learner = self.fresh_learner_id(identity, store).await?;
-        store
-            .save_link(&IdentityLink {
-                identity: identity.clone(),
-                learner: learner.clone(),
-                since: self.0.clock.now(),
+        let fresh = IdentityLink {
+            identity: identity.clone(),
+            learner: self.fresh_learner_id(identity, store).await?,
+            since: self.0.clock.now(),
+        };
+        let learner = store
+            .update_link(identity, |current| {
+                Ok(match current {
+                    None => Decision::Put(fresh.clone(), fresh.learner.clone()),
+                    Some(link) => Decision::Keep(link.learner),
+                })
             })
             .await?;
+        // Its profile, unless there is one already.
         store
-            .save_profile(&LearnerProfile::new(learner.clone()))
+            .update_profile(&learner, |current| {
+                Ok(match current {
+                    None => Decision::Put(LearnerProfile::new(learner.clone()), ()),
+                    Some(_) => Decision::Keep(()),
+                })
+            })
             .await?;
         Ok(learner)
     }

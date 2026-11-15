@@ -1240,9 +1240,10 @@ macro_rules! on_base {
     };
 }
 
-/// Faults are injected by `StateStore` method, as scenarios name them. A
-/// `StateStore` is the core's one implementation over the document port, so
-/// each write on the port is the write of one such method.
+/// Faults are injected by the name of a write, as scenarios name them. Each
+/// kind of record has one: `save_profile` is any write of a profile, be it
+/// a save or the swap of an update, which is how profiles, links, link
+/// codes, asked sessions and bank questions are written.
 fn write_method(removals: &[Removal<'_>]) -> &'static str {
     match removals {
         [Removal::Key(Kind::Session, _)] => "delete_session",
@@ -1294,8 +1295,7 @@ impl DocumentStore for AnyStore {
         delegate!(self, remove(removals))
     }
     async fn swap(&self, kind: Kind, key: &str, expected: Option<&Doc>, new: &Doc) -> Result<bool> {
-        // The conditional save of a profile is the same write to the
-        // learner as `save_profile`, for faults.
+        // The swap of an update is a write like any other, for faults.
         self.fault(save_method(kind))?;
         let meet = match self {
             AnyStore::Faulty(_, faults) if kind == Kind::Profile => {
