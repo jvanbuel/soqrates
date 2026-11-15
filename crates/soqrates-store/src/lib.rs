@@ -195,11 +195,11 @@ impl FileStore {
         // Write then rename, so a crash never leaves a half-written file.
         // Every write has a temp file of its own: two writers of one key
         // must not write into the same file, or the renamed file could hold
-        // a mix of both. The temp file doesn't end in `.json`, so listing
-        // never reads it.
+        // a mix of both. The temp file's name is short and independent of
+        // the key, so that it fits wherever the document's name fits, and
+        // doesn't end in `.json`, so listing never reads it.
         let tmp = dir.join(format!(
-            ".{}.{}-{}.tmp",
-            path.file_name().expect("has a file name").to_string_lossy(),
+            ".tmp-{}-{}",
             std::process::id(),
             TEMP_FILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
@@ -1593,9 +1593,23 @@ mod tests {
         let left: Vec<_> = std::fs::read_dir(dir.join("rounds"))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name.ends_with(".tmp"))
+            .filter(|name| name.starts_with(".tmp-"))
             .collect();
         assert!(left.is_empty(), "temp files left behind: {left:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    // @adr-0001-d5
+    #[tokio::test]
+    async fn a_key_whose_file_name_just_fits_can_be_saved() {
+        let dir = temp_dir("long-key");
+        let store = FileStore::new(&dir);
+        // 123 bytes hex-encode to 246, plus `.json`: 251 of the 255 bytes
+        // most file systems allow in a name.
+        let key = "k".repeat(123);
+        let doc = serde_json::json!({"key": key});
+        store.save(Kind::Rounds, &key, &doc).await.unwrap();
+        assert_eq!(store.load(Kind::Rounds, &key).await.unwrap(), Some(doc));
         let _ = std::fs::remove_dir_all(dir);
     }
 
