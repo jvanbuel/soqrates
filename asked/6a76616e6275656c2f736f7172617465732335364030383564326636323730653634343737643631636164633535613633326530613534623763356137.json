@@ -1,0 +1,204 @@
+{
+  "at": "2026-11-15T07:56:30.334627803Z",
+  "key": "jvanbuel/soqrates#56@085d2f6270e64477d61cadc55a632e0a54b7c5a7",
+  "learner": "learner-88c2e1c14d5497f4",
+  "questions": [
+    {
+      "answer": {
+        "Choice": 3
+      },
+      "grade": "Again",
+      "number": 1,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "use std::future::Future;\n\ntrait Store {\n    fn load(&self) -> impl Future<Output = u32> + Send;\n\n    fn load_twice(&self) -> impl Future<Output = u32> + Send {\n        async { self.load().await + self.load().await }\n    }\n}"
+            },
+            "correct": 2,
+            "options": [
+              "Awaiting `self.load()` twice in a row moves the first future, so the second call uses a value that was already consumed.",
+              "A default body cannot satisfy `+ Send` with an async block; it must be an `async fn` so the compiler infers `Send` automatically.",
+              "The default body's future keeps `&self` alive across an await, so it is `Send` only if the implementing type is `Sync`; the trait doesn't require `Sync`, so the promised `+ Send` can't be met.",
+              "The async block should be `async move`, because without `move` the block cannot borrow `self` across an await.",
+              "A default method cannot call another trait method that returns `impl Future`; it would have to be a required method."
+            ],
+            "prompt": "A trait declares its async-style methods as returning `impl Future<Output = ...> + Send`, and gives one of them a default body. The trait has no supertraits. The code does not compile. Which line is the problem, and why?",
+            "reasons": [
+              "Each call to `self.load()` creates a new future, and the first is dropped after its await completes. Nothing is reused or moved twice.",
+              "An `async fn` in a trait does not promise that its future is `Send`, so it would make the guarantee weaker, not stronger. Writing a plain `fn` that returns an async block is the way to keep the `Send` promise.",
+              "A future that holds `&Self` across an await is `Send` only when `Self: Sync`. The declared return type promises `Send` for every implementer, so the compiler rejects the default body. A `Send + Sync` supertrait on the trait, as the other async-returning traits in this codebase have, fixes it.",
+              "An async block may borrow `self` across an await. `async move` would still capture the same reference, so the `Send` problem would remain.",
+              "Default methods can call other methods of the trait, including ones that return `impl Future`. The failure is in the `Send` bound on the combined future, not in the call."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "rust.traits.default-methods-async",
+        "explanation": "A future that holds `&Self` across an await is `Send` only when `Self: Sync`. The declared return type promises `Send` for every implementer, so the compiler rejects the default body. A `Send + Sync` supertrait on the trait, as the other async-returning traits in this codebase have, fixes it.",
+        "id": "rust.traits.default-methods-async/mc",
+        "kind": "SpotTheBug",
+        "scope": "Project"
+      },
+      "shown": "An async block may borrow `self` across an await. `async move` would still capture the same reference, so the `Send` problem would remain. A future that holds `&Self` across an await is `Send` only when `Self: Sync`. The declared return type promises `Send` for every implementer, so the compiler rejects the default body. A `Send + Sync` supertrait on the trait, as the other async-returning traits in this codebase have, fixes it."
+    },
+    {
+      "answer": {
+        "Choice": 3
+      },
+      "grade": "Good",
+      "number": 2,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "use std::collections::BTreeSet;\n\nfn validate(questions: &[u32], answers: &[u32]) -> Result<(), String> {\n    for a in answers {\n        let mut seen = BTreeSet::new();\n        if !questions.contains(a) {\n            return Err(format!(\"unknown question {a}\"));\n        }\n        if !seen.insert(a) {\n            return Err(format!(\"two answers to question {a}\"));\n        }\n    }\n    Ok(())\n}"
+            },
+            "correct": 3,
+            "options": [
+              "fn validate(questions: &[u32], answers: &[u32]) -> Result<(), String> {\n    for a in answers {\n        let mut seen = BTreeSet::new();\n        if !seen.insert(a) {\n            return Err(format!(\"two answers to question {a}\"));\n        }\n        if !questions.contains(a) {\n            return Err(format!(\"unknown question {a}\"));\n        }\n    }\n    Ok(())\n}",
+              "fn validate(questions: &[u32], answers: &[u32]) -> Result<(), String> {\n    for a in answers {\n        let mut seen = BTreeSet::new();\n        if !questions.contains(a) {\n            return Err(format!(\"unknown question {a}\"));\n        }\n        if seen.contains(a) {\n            return Err(format!(\"two answers to question {a}\"));\n        }\n        seen.insert(a);\n    }\n    Ok(())\n}",
+              "fn validate(questions: &[u32], answers: &[u32]) -> Result<(), String> {\n    if answers.len() > questions.len() {\n        return Err(\"too many answers\".to_string());\n    }\n    for a in answers {\n        if !questions.contains(a) {\n            return Err(format!(\"unknown question {a}\"));\n        }\n    }\n    Ok(())\n}",
+              "fn validate(questions: &[u32], answers: &[u32]) -> Result<(), String> {\n    let mut seen = BTreeSet::new();\n    for a in answers {\n        if !questions.contains(a) {\n            return Err(format!(\"unknown question {a}\"));\n        }\n        if !seen.insert(a) {\n            return Err(format!(\"two answers to question {a}\"));\n        }\n    }\n    Ok(())\n}"
+            ],
+            "options_language": "rust",
+            "prompt": "This function checks that a submitted set of answers is valid before grading: every answer must refer to a question in the session, and there must be at most one answer per question. A test submitting two answers to the same question unexpectedly passes validation. Which version fixes it while keeping both checks?",
+            "reasons": [
+              "Reordering the two checks changes nothing about the bug. The set is still re-created each iteration, so `insert` always succeeds and a repeated answer is never caught.",
+              "This only rewrites the membership test. The set is still created fresh on every iteration, so it is always empty when checked and duplicates still pass.",
+              "Comparing counts only catches duplicates when there are more answers than questions. Two answers to the same question in a session with several questions still pass, because the total stays within the limit.",
+              "The set of already-answered questions must live across iterations. Declared once before the loop, `insert` returns false the second time the same question appears, so a duplicate answer is rejected."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "soqrates.ci.answer-validity",
+        "explanation": "The set of already-answered questions must live across iterations. Declared once before the loop, `insert` returns false the second time the same question appears, so a duplicate answer is rejected.",
+        "id": "soqrates.ci.answer-validity/mc",
+        "kind": "ChooseTheFix",
+        "scope": "Project"
+      },
+      "shown": "The set of already-answered questions must live across iterations. Declared once before the loop, `insert` returns false the second time the same question appears, so a duplicate answer is rejected."
+    },
+    {
+      "answer": {
+        "Choice": 0
+      },
+      "grade": "Good",
+      "number": 3,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "let due = [\"a\", \"b\"];          // reviews due for the learner\nlet held = [\"a\"];              // asked by another pending session\nlet touched = [\"a\", \"c\"];      // concepts found in this change\n\nlet reviews: Vec<_> = due\n    .iter()\n    .filter(|id| !held.contains(id))\n    .collect();\nlet new: Vec<_> = touched\n    .iter()\n    .filter(|id| !held.contains(id) && !reviews.contains(id))\n    .collect();\nprintln!(\"{reviews:?} {new:?}\");"
+            },
+            "correct": 0,
+            "options": [
+              "reviews is [\"b\"] and new is [\"c\"]",
+              "reviews is [\"a\", \"b\"] and new is [\"c\"]",
+              "reviews is [\"b\"] and new is []",
+              "reviews is [\"b\"] and new is [\"a\", \"c\"]"
+            ],
+            "prompt": "A learner has two due reviews, \"a\" and \"b\". Another of their pending sessions already asks \"a\", and the hold window has not expired. The learner now submits a change that touches concepts \"a\" and \"c\". The snippet mirrors how a session is composed. What does it print?",
+            "reasons": [
+              "The held concept \"a\" is dropped from the reviews. It is also excluded from the asked-set used for new concepts, so the touched \"a\" is not asked in a second form. Only \"b\" as a review and \"c\" as a new concept remain.",
+              "This ignores the hold. A due review that another pending session already asks is left out of this session's reviews, so the scheduler does not count it twice.",
+              "This wrongly assumes that holding \"a\" blocks every new concept. The hold only affects the held concept. \"c\" is neither held nor due, so it is still asked as new.",
+              "This assumes the hold only filters the review list. If the held concept were not also in the asked-set, the touched \"a\" would come back as a new concept. The duplicate the hold prevents would just return by another route."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "spaced-repetition.review-scheduling.pending-hold",
+        "explanation": "The held concept \"a\" is dropped from the reviews. It is also excluded from the asked-set used for new concepts, so the touched \"a\" is not asked in a second form. Only \"b\" as a review and \"c\" as a new concept remain.",
+        "id": "spaced-repetition.review-scheduling.pending-hold/mc",
+        "kind": "PredictOutcome",
+        "scope": "Project"
+      },
+      "shown": "The held concept \"a\" is dropped from the reviews. It is also excluded from the asked-set used for new concepts, so the touched \"a\" is not asked in a second form. Only \"b\" as a review and \"c\" as a new concept remain."
+    },
+    {
+      "answer": {
+        "Choice": 0
+      },
+      "grade": "Good",
+      "number": 4,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "correct": 0,
+            "options": [
+              "The call fails with that store's error. Silently returning a partial set could let the learner be given a concept they are already being asked about, so only the learner store's unreachability is tolerated.",
+              "The call retries the failing store until it answers, and only then returns the combined concepts.",
+              "The call returns an empty set, because one unreadable store means the learner's held state cannot be trusted.",
+              "The call returns the concepts found in the learner store and the other organisation store, skipping the failing store, because every store is read with the same tolerance."
+            ],
+            "prompt": "A learner has linked identities. Their learner store is reachable, and there are two organisation stores. The first organisation store holds a pending session of theirs, opened after the cutoff, covering concept X. While `held_concepts` is computing the held set, the second organisation store fails with an I/O error. What happens, and why is that the right design?",
+            "reasons": [
+              "Only the learner store is tolerated, and only where organisation stores exist to cover for it. A failing organisation store may hold the very sessions that need to be held, so its error is propagated rather than hidden. ```",
+              "The code does no retrying. It reads each store once and either tolerates the error (learner store only) or returns it.",
+              "The function never discards the results of the stores it did read to compensate. A failure surfaces as an error, not as a misleading empty result.",
+              "Tolerance applies only to the learner store, which is read first. Skipping an organisation store would drop its held concepts and risk a duplicate question."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "project.state.held-concepts-aggregation",
+        "explanation": "Only the learner store is tolerated, and only where organisation stores exist to cover for it. A failing organisation store may hold the very sessions that need to be held, so its error is propagated rather than hidden. ```",
+        "id": "project.state.held-concepts-aggregation/mc",
+        "kind": "Scenario",
+        "scope": "Project"
+      },
+      "shown": "Only the learner store is tolerated, and only where organisation stores exist to cover for it. A failing organisation store may hold the very sessions that need to be held, so its error is propagated rather than hidden. ```"
+    },
+    {
+      "answer": {
+        "Choice": 1
+      },
+      "grade": "Good",
+      "number": 5,
+      "question": {
+        "banked": {
+          "id": "bank-0f34701a9aed0c0e",
+          "version": 1
+        },
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "use std::collections::BTreeSet;\n\nlet due: Vec<(String, u32)> = load_due();\nlet held: BTreeSet<String> = load_held();\nlet held_due: BTreeSet<&String> = due\n    .iter()\n    .map(|(id, _)| id)\n    .filter(|id| held.contains(*id))\n    .collect();\nlet rest: Vec<(String, u32)> = due\n    .into_iter()\n    .filter(|(id, _)| !held_due.contains(id))\n    .collect();"
+            },
+            "correct": 1,
+            "options": [
+              "A `BTreeSet` of references cannot be queried with `contains`, because `&String` does not implement `Borrow<String>`.",
+              "The map step yields references into `due`, so the set borrows `due`. Consuming `due` with `into_iter` while that set is still used later is a borrow error. The ids need to be cloned into an owned set.",
+              "The set is built from `due.iter()`, so it is empty at runtime: `iter` only peeks at the elements and does not hand them to `collect`.",
+              "The filter closure receives a double reference, so `held.contains(*id)` cannot compile because it needs `**id`."
+            ],
+            "prompt": "This code builds a set of the due ids that are already held elsewhere, then uses that set to filter the due list. It fails to compile. Which line is flawed, and why?",
+            "reasons": [
+              "The standard library implements `Borrow<T>` for `&T`, so querying a set of `&String` with a `&String` compiles. The failure is that the set keeps `due` borrowed.",
+              "The set holds `&String` values that point into `due`. `due.into_iter()` moves `due` while `held_due` is still live in the filter, so the borrow checker rejects it. Cloning the ids, for example with `.cloned()` before `collect`, gives an owned `BTreeSet<String>` that does not borrow `due`.",
+              "`iter()` yields references that `collect` gathers into the set just as well. The code is rejected at compile time because of the borrow, so it never runs.",
+              "Here `id` in the filter is `&&String`, so `*id` is `&String`. That is exactly what `contains` expects, so this line is fine. The real problem is the lifetime of the borrowed elements."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "rust.collections.set-filtering-ownership",
+        "explanation": "The set holds `&String` values that point into `due`. `due.into_iter()` moves `due` while `held_due` is still live in the filter, so the borrow checker rejects it. Cloning the ids, for example with `.cloned()` before `collect`, gives an owned `BTreeSet<String>` that does not borrow `due`.",
+        "id": "rust.collections.set-filtering-ownership/mc",
+        "kind": "SpotTheBug",
+        "scope": "General"
+      },
+      "shown": "The set holds `&String` values that point into `due`. `due.into_iter()` moves `due` while `held_due` is still live in the filter, so the borrow checker rejects it. Cloning the ids, for example with `.cloned()` before `collect`, gives an owned `BTreeSet<String>` that does not borrow `due`."
+    }
+  ]
+}

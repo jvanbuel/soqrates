@@ -1,0 +1,46 @@
+{
+  "author": "github.com:16427728",
+  "created_at": "2026-11-15T07:56:56.746940066Z",
+  "follow_up": {
+    "round": 2,
+    "settled": 4,
+    "total": 5
+  },
+  "key": "jvanbuel/soqrates#56@085d2f6270e64477d61cadc55a632e0a54b7c5a7#2",
+  "questions": [
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "use std::future::Future;\n\ntrait Cache {\n    fn get(&self, key: u32) -> impl Future<Output = Option<String>> + Send;\n\n    fn get_or(&self, key: u32, dflt: String) -> impl Future<Output = String> + Send {\n        async move { self.get(key).await.unwrap_or(dflt) }\n    }\n}\n\n// Implementors do not override `get_or`; callers run it with tokio::spawn."
+          },
+          "correct": 4,
+          "options": [
+            "trait Cache: Send {",
+            "trait Cache: Clone {",
+            "trait Cache: Unpin {",
+            "trait Cache: 'static {",
+            "trait Cache: Sync {"
+          ],
+          "options_language": "rust",
+          "prompt": "The trait below fails to compile. The error says the future returned by the default method `get_or` is not `Send`, because `Self` cannot be shared between threads safely. The default body must keep the `+ Send` promise, because callers spawn the future on a multi-threaded runtime. Which replacement for the flawed line fixes the error without weakening that promise?",
+          "reasons": [
+            "This is a common mix-up. `Send` on `Self` means the value can move to another thread, but the future holds `&Self`. A shared reference is `Send` only when the type is `Sync`, so the error remains.",
+            "`Clone` lets you duplicate `Self`, but the default body still captures `&Self` and never clones it. Without `Sync`, that reference still can't be `Send`.",
+            "`Unpin` is about whether a value may be moved after being pinned. It is unrelated to thread-safety auto traits, so the error stays.",
+            "`'static` limits the lifetimes of references that `Self` contains. It says nothing about whether `&Self` may cross threads, so the `Send` error stays.",
+            "The default body's future holds `&Self`, and `&Self` is `Send` only if `Self: Sync`. With `Sync` as a supertrait, the default body can meet its promised `+ Send` for every implementor. The `String` it moves in is already `Send`."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "rust.traits.default-methods-async",
+      "explanation": "The default body's future holds `&Self`, and `&Self` is `Send` only if `Self: Sync`. With `Sync` as a supertrait, the default body can meet its promised `+ Send` for every implementor. The `String` it moves in is already `Send`.",
+      "id": "rust.traits.default-methods-async/follow-up",
+      "kind": "ChooseTheFix",
+      "scope": "Project"
+    }
+  ]
+}
