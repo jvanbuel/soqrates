@@ -1,0 +1,159 @@
+{
+  "author": "github.com:16427728",
+  "created_at": "2026-11-15T09:35:00.005957461Z",
+  "key": "jvanbuel/soqrates#67@eab5a851ab0ec2e964100c2693aaf6f6b3b8f11a",
+  "questions": [
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "fn push_fenced(code: &str, language: &str, out: &mut String) {\n    let fence = \"```\";\n    out.push_str(&format!(\"{fence}{language}\\n\"));\n    out.push_str(code.trim_end());\n    out.push('\\n');\n    out.push_str(fence);\n    out.push('\\n');\n}"
+          },
+          "correct": 2,
+          "options": [
+            "The language tag is interpolated into the fence line as given, so the only risk is that an unknown language disables syntax highlighting.",
+            "The code is written without escaping `<` and `>`, so HTML such as `</details>` inside it would still be interpreted inside the block.",
+            "The fence is always three backticks, so a snippet that contains a run of three or more backticks closes the block early. The rest of the snippet is then read as live markdown, such as mentions, task boxes or markers.",
+            "`trim_end()` on the code can remove meaningful trailing whitespace, which changes what the snippet means."
+          ],
+          "prompt": "This function renders a code snippet that came from untrusted input, such as a diff or model output, into a GitHub comment. The comment is later scanned for task boxes and hidden markers, and it must treat everything in the snippet as inert text. Which line is flawed, and why?",
+          "reasons": [
+            "An unknown language tag is harmless. The real problem is the fence line itself. The tag should also be restricted, but the flawed line is the fixed fence length.",
+            "Inside a fenced block, markdown treats HTML as plain text, so escaping is unnecessary. The real risk is the block being closed from inside, not HTML being interpreted within it.",
+            "The fence has to be longer than any run of backticks in the code. Then nothing inside the code can close the block, and the code stays inert. A fixed-length fence lets untrusted code break out of the block.",
+            "Trailing whitespace at the end of a snippet carries no meaning for display and is normally trimmed. It cannot make untrusted code break out of the block."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "security.untrusted-input.inert-code",
+      "explanation": "The fence has to be longer than any run of backticks in the code. Then nothing inside the code can close the block, and the code stays inert. A fixed-length fence lets untrusted code break out of the block.",
+      "id": "security.untrusted-input.inert-code/mc",
+      "kind": "SpotTheBug",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "correct": 2,
+          "options": [
+            "The staged version of `src/billing.rs`, but `src/notes.md` is still readable, because git also reads untracked files in the working directory.",
+            "The version of `src/billing.rs` at `HEAD`, the last commit, because the change isn't committed yet and so can't be read from git.",
+            "The staged version of `src/billing.rs`, without the unstaged edit. `src/notes.md` is not found at all, because the index doesn't list it.",
+            "The working-tree version of `src/billing.rs`, including the unstaged edit, because the hook runs in the checkout directory and the examiner opens files from there."
+          ],
+          "prompt": "A developer stages `src/billing.rs`. They then edit the same file again without staging that edit. They also create a new, untracked file `src/notes.md`. They run `git commit`, and the pre-commit hook starts Soqrates. The examiner reads the codebase to write questions about the change. What does it see?",
+          "reasons": [
+            "Reads go through the index rather than the filesystem, so an untracked file is not listed and cannot be read. This is also why a local `.env` is never exposed.",
+            "Staged content is already stored in git's object database, and the index names it. It is read directly, so the examiner does not fall back to `HEAD`. `HEAD` is only where history lookups start.",
+            "On the pre-commit surface the examiner reads the index with object names like `:path` and lists files from the index. It therefore sees exactly what the commit will contain. The unstaged edit and the untracked file are not part of that.",
+            "The examiner never opens files from the working tree. It asks git for objects, so unstaged edits are invisible to it."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "git.object-database.reading-revisions",
+      "explanation": "On the pre-commit surface the examiner reads the index with object names like `:path` and lists files from the index. It therefore sees exactly what the commit will contain. The unstaged edit and the untracked file are not part of that.",
+      "id": "git.object-database.reading-revisions/mc",
+      "kind": "Scenario",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "/// What the `change` of an update (e.g. [`StateStore::update_profile`])\n/// decides about the record it was given, and what the update returns.\n///\n/// An update loads the record, calls `change` with it and, for `Put`, saves\n/// the new record only if the stored one is still what was loaded, as one\n/// step. Otherwise someone saved in between, and `change` is called again\n/// with what they saved. So `change` may run more than once and must not\n/// have effects of its own beyond computing its decision; whatever it\n/// wants done afterwards goes in `R`. An update that keeps losing to other\n/// writers gives up with [`Error::Port`].\n#[derive(Debug, Clone, PartialEq)]\npub enum Decision<T, R> {\n    /// Save this record, then return `R`.\n    Put(T, R),\n    /// Leave the record as it is and return `R`."
+          },
+          "correct": 2,
+          "options": [
+            "The swap compares the stored document with the one loaded, so an effect inside `change` could modify that document and make the swap fail every time.",
+            "The stored record is locked while `change` runs, so a slow or effectful `change` would block every other writer of that record.",
+            "If the swap loses a race, the loop reloads and calls `change` again. An effect done inside `change` (sending a message, say) would be repeated once per attempt, including attempts whose result was never saved.",
+            "`change` takes `FnMut` and runs on an async executor, so any effect inside it would make the future non-`Send` and fail to compile."
+          ],
+          "prompt": "This doc comment says an update may call `change` more than once, so `change` must not have effects of its own beyond computing its decision, and anything to be done afterwards goes in `R`. Why is that rule needed?",
+          "reasons": [
+            "This is not the main risk. `change` only receives a decoded copy of the record, and the swap compares against the originally loaded document. The real problem is that effects repeat when the loop retries, whether or not they touch the record.",
+            "There is no lock. The scheme is optimistic: nothing is held while `change` runs, and conflicts are caught only at the swap. Holding a lock is what the compare-and-swap design avoids.",
+            "The helper retries by calling `change` again on the freshly loaded record. Any side effect inside it can therefore run several times, and some of those runs belong to attempts that were discarded. Returning the follow-up work in `R` means it happens once, after the save has succeeded.",
+            "The rule is about retries, not about the type system. Effects such as logging or sending a message are perfectly compatible with `FnMut` and `Send`. The code would compile and still misbehave under contention."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "concurrency.optimistic-concurrency.compare-and-swap-retry",
+      "explanation": "The helper retries by calling `change` again on the freshly loaded record. Any side effect inside it can therefore run several times, and some of those runs belong to attempts that were discarded. Returning the follow-up work in `R` means it happens once, after the save has succeeded.",
+      "id": "concurrency.optimistic-concurrency.compare-and-swap-retry/mc",
+      "kind": "ExplainYourChange",
+      "scope": "General"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "General",
+            "text": "let mut calls = 0;\nlet out = store\n    .update_profile(|profile| {\n        calls += 1;\n        println!(\"sending email\");\n        Ok(Decision::Put(profile.with_review(r.clone()), calls))\n    })\n    .await?;\n// Between the update's load and its first save, another writer\n// saves a newer version of the profile. No one writes after that.\n// What happens, and what is `out`?"
+          },
+          "correct": 0,
+          "options": [
+            "The closure runs twice, so \"sending email\" prints twice. The second run gets the other writer's profile, its save succeeds, and `out` is 2.",
+            "The closure runs once and its save overwrites the other writer's profile, so `out` is 1.",
+            "The closure runs twice, but both runs see the originally loaded profile, so the second save is built from the same stale record and `out` is 2.",
+            "The closure runs twice but \"sending email\" prints only once, because the output of the discarded first run is rolled back.",
+            "The closure runs once, the save is rejected, and the update returns `Error::Port` straight away."
+          ],
+          "prompt": "An update such as `update_profile` takes a closure that returns a `Decision`: `Put(record, R)` to save and return `R`, or `Keep(R)` to save nothing. It saves with a check that the stored record is still the one it loaded. In the snippet, another writer saves a newer profile once after the update loads and before it saves. What happens?",
+          "reasons": [
+            "The save only happens if the stored record is still the one that was loaded. After the conflict, `change` is called again with the newer record. The closure's own effects, such as the print, are not undone, so they should be returned in `R` and done after the update.",
+            "The update does not blindly overwrite. It saves only if the stored record is unchanged since it was loaded, so a concurrent save causes a retry rather than a lost update.",
+            "The retry reloads the record. The second call receives what the other writer saved, so their changes are not lost.",
+            "Nothing rolls back the effects of a closure. The print happens on every call, so the first, discarded run still sent its email.",
+            "A single lost race does not make the update fail. It retries with the newly saved record and only gives up with `Error::Port` if it keeps losing to other writers."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "rust.enums.decision-type-generics",
+      "explanation": "The save only happens if the stored record is still the one that was loaded. After the conflict, `change` is called again with the newer record. The closure's own effects, such as the print, are not undone, so they should be returned in `R` and done after the update.",
+      "id": "rust.enums.decision-type-generics/mc",
+      "kind": "PredictOutcome",
+      "scope": "Project"
+    },
+    {
+      "body": {
+        "MultipleChoice": {
+          "code": {
+            "language": "rust",
+            "origin": "Change",
+            "text": "            match taken {\n                Some(mut q) => {\n                    q.scope = concept.scope;\n                    seen.show(&id, round);\n                    return Ok(q);\n                }\n                None => gone.push(id),\n            }\n        }\n        // A question that was retired, or is disputed, is not asked again\n        // by being written again word for word (ADR-0011 D6, D7): another\n        // one is written instead.\n        const WRITES: usize = 3;\n        for _ in 0..WRITES {\n            let mut q = self.written(concept, brief, code).await?;"
+          },
+          "correct": 2,
+          "options": [
+            "The call is placed after the `match` only to save the cost of recording it when the question turns out to be missing.",
+            "The closure is `FnMut`, and a closure of that kind cannot borrow `seen` mutably, so the call has to be made outside it.",
+            "The closure given to `update_bank_question` can be called again if another writer saved in between, so it must not have effects of its own. The question is returned in the result value, and `seen.show` runs once, after the update has settled.",
+            "The closure runs on another thread, and `seen` is not `Send`, so the call can only be made on the calling task."
+          ],
+          "prompt": "In this change the bank question is taken inside the closure passed to `update_bank_question`, which returns `Decision::Put(entry, Some(question))`. Only after the update returns does the code call `seen.show(&id, round)` and return the question. Why is `seen.show` kept out of the closure?",
+          "reasons": [
+            "Skipping the call when nothing was taken is a side benefit. It is not why the call is outside the closure, since the closure could skip it just as well. The real issue is that the closure may run more than once.",
+            "An `FnMut` closure can mutate captured state, including through a mutable borrow. The reason to keep the call outside is that the closure may be retried, not a borrowing limit.",
+            "An update that loses the race calls `change` again with the newly saved record. An effect inside the closure could therefore run several times, or for a save that never took place. Returning what is needed in `R` and acting after the update avoids that.",
+            "The `Send` bounds keep the returned futures `Send`. They have nothing to do with where the closure runs, and they do not decide where `seen.show` can be called."
+          ]
+        }
+      },
+      "checked": true,
+      "concept": "rust.closures.fnmut-retry-purity",
+      "explanation": "An update that loses the race calls `change` again with the newly saved record. An effect inside the closure could therefore run several times, or for a save that never took place. Returning what is needed in `R` and acting after the update avoids that.",
+      "id": "rust.closures.fnmut-retry-purity/mc",
+      "kind": "ExplainYourChange",
+      "scope": "General"
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "pr": {
+    "number": 67,
+    "repo": "jvanbuel/soqrates"
+  },
+  "rounds": [
+    {
+      "at": "2026-11-15T09:35:00.005957461Z",
+      "carried": false,
+      "concepts": [
+        "security.untrusted-input.inert-code",
+        "git.object-database.reading-revisions",
+        "concurrency.optimistic-concurrency.compare-and-swap-retry",
+        "rust.enums.decision-type-generics",
+        "rust.closures.fnmut-retry-purity"
+      ],
+      "head": "eab5a851ab0ec2e964100c2693aaf6f6b3b8f11a",
+      "session": "jvanbuel/soqrates#67@eab5a851ab0ec2e964100c2693aaf6f6b3b8f11a"
+    }
+  ]
+}
