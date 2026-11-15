@@ -313,19 +313,27 @@ where
             let latest = app.latest_follow_up(&standing).await?;
             if let Some(status) = self.report(pr, pull, &latest).await? {
                 // Nothing new: the latest round still stands (ADR-0002 D9).
-                rounds.record(Round::carrying(
-                    pull.head_sha.clone(),
-                    standing,
-                    app.clock.now(),
-                ));
-                app.save_rounds(&pull.author, &rounds).await?;
+                let round = Round::carrying(pull.head_sha.clone(), standing, app.clock.now());
+                app.record_round(pr, &pull.author, round).await?;
                 return Ok(status);
             }
         }
 
-        let session = app
+        let Some(session) = app
             .open_session(key.clone(), &pull.author, questions, carried.len())
-            .await?;
+            .await?
+        else {
+            // Another run opened the session for this head while this one
+            // was composing, e.g. for the same push: theirs stands and is
+            // reported on, rather than posting a second question comment
+            // (ADR-0002 D6).
+            return self.report(pr, pull, &key).await?.ok_or_else(|| {
+                Error::Port(format!(
+                    "the session {:?} that another run opened is gone; run the check again",
+                    key.0
+                ))
+            });
+        };
         // Also when there is nothing to ask: the comment then says so, and
         // earlier question comments can point to it (ADR-0004 D7).
         if let Err(e) = scm.publish_questions(pr, &session).await {
@@ -403,7 +411,7 @@ where
         pull: &PullRequest,
         session: &Session,
     ) -> Result<()> {
-        rounds.record(Round::own(
+        let round = Round::own(
             pull.head_sha.clone(),
             session.key().clone(),
             session
@@ -412,8 +420,11 @@ where
                 .map(|q| q.concept.clone())
                 .collect(),
             session.created_at(),
-        ));
-        self.app.save_rounds(&pull.author, rounds).await
+        );
+        // Recorded on the rounds as stored by now, which then stand here
+        // too: a round another run recorded meanwhile is kept.
+        *rounds = self.app.record_round(&pull.pr, &pull.author, round).await?;
+        Ok(())
     }
 
     /// Freeze the question comments of `pr` that `current` superseded and

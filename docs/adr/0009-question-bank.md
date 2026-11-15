@@ -135,6 +135,14 @@ in it counts as shown. A bank question is shown to a learner at most once
 within `Config::reask_after_rounds` rounds (10 by default). Carried
 questions (ADR-0002 D9) are not shown again.
 
+A round takes its number when it starts, with an update of
+`SeenQuestions`, so two rounds of one learner composed at the same time
+(two pull requests, a hook next to CI) get different numbers. What it
+showed is merged into the record as stored when it ends: for each question
+the later round, so neither round's marks are lost (ADR-0002 D6). A round
+that fails after taking its number leaves that number unused, which only
+makes the gap a little shorter.
+
 `SeenQuestions` lives with the bank it refers to (D2), never in the learner
 store, and holds bank ids and round numbers only, no question text.
 Deleting a learner deletes it too (ADR-0003 D6).

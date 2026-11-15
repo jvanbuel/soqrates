@@ -1127,13 +1127,15 @@ pub struct Faults {
     pub allowed: usize,
     /// Writes that fail after those; `usize::MAX` for all of them.
     pub failing: usize,
-    /// Makes the first two conditional profile saves collide (ADR-0002 D6).
+    /// Makes the first two swaps of `meet_on` collide (ADR-0002 D6).
     pub meet: Option<Arc<Meeting>>,
+    /// The kind of record whose swaps `meet` holds back.
+    pub meet_on: Kind,
 }
 
-/// Holds back the first of two conditional profile saves until the second
-/// arrives, so that both were loaded before either is saved: two sessions
-/// of one learner graded at the same moment.
+/// Holds back the first of two swaps of one kind of record until the
+/// second arrives, so that both were loaded before either is saved: two
+/// runs that write the same record at the same moment.
 #[derive(Debug, Default)]
 pub struct Meeting {
     arrived: AtomicUsize,
@@ -1298,8 +1300,9 @@ impl DocumentStore for AnyStore {
         // The swap of an update is a write like any other, for faults.
         self.fault(save_method(kind))?;
         let meet = match self {
-            AnyStore::Faulty(_, faults) if kind == Kind::Profile => {
-                faults.lock().unwrap().meet.clone()
+            AnyStore::Faulty(_, faults) => {
+                let faults = faults.lock().unwrap();
+                faults.meet.clone().filter(|_| faults.meet_on == kind)
             }
             _ => None,
         };

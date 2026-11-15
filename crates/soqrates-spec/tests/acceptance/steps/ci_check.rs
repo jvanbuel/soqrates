@@ -107,6 +107,7 @@ fn write_fails(w: &mut SpecWorld, what: String, how: String) {
             allowed: 0,
             failing,
             meet: None,
+            meet_on: soqrates_core::ports::Kind::Profile,
         },
     );
 }
@@ -120,6 +121,7 @@ fn stops_after(w: &mut SpecWorld, n: usize) {
             allowed: n,
             failing: usize::MAX,
             meet: None,
+            meet_on: soqrates_core::ports::Kind::Profile,
         },
     );
 }

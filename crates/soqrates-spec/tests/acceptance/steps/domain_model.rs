@@ -487,7 +487,8 @@ async fn engine_opens_session(w: &mut SpecWorld, id: String, carried: usize) {
     let opened = w
         .app
         .open_session(session_key(&who), &who, questions, carried)
-        .await;
+        .await
+        .map(|s| s.expect("no session with this key is open yet"));
     w.domain.opened = Some(opened);
 }
 

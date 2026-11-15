@@ -13,7 +13,9 @@ use crate::app::stores::{Placement, load_or_new};
 use crate::assessment::{
     Answer, Concept, Diff, Question, QuestionBrief, QuestionFormat, QuestionKind, Weight,
 };
-use crate::delivery::{BankedQuestion, FollowUp, PrRef, PrRounds, SeenQuestions, Session, pick};
+use crate::delivery::{
+    BankedQuestion, FollowUp, PrRef, PrRounds, Round, SeenQuestions, Session, pick,
+};
 use crate::ids::{AuthorId, BankId, ConceptId, SessionKey};
 use crate::learner::{Level, policy};
 use crate::{Error, Result};
@@ -34,7 +36,10 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let questions = self
             .compose_questions(author, diff, &BTreeSet::new(), &[], code)
             .await?;
-        self.open_session(key, author, questions, 0).await
+        let what = key.0.clone();
+        self.open_session(key, author, questions, 0)
+            .await?
+            .ok_or_else(|| Error::Invalid(format!("session {what:?} was opened already")))
     }
 
     /// The questions a session for `author` about `diff` asks (ADR-0002
@@ -130,17 +135,25 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             true => stores.bank_store(author)?,
             false => None,
         };
-        let mut bank = match bank_store {
-            Some(store) => {
-                let seen = store
-                    .load_seen(&place.learner)
-                    .await?
-                    .unwrap_or_else(|| SeenQuestions::new(place.learner.clone()));
-                Some((store, seen))
-            }
-            None => None,
-        };
-        let round = bank.as_ref().map_or(0, |(_, seen)| seen.next_round());
+        let learner = &place.learner;
+        let fresh = || SeenQuestions::new(learner.clone());
+        // The round's number is taken before any question is written, with
+        // an update: rounds of the learner composed at the same time get
+        // different numbers (ADR-0009 D5).
+        let mut bank = None;
+        let mut round = 0;
+        if let Some(store) = bank_store {
+            let (number, seen) = store
+                .update_seen(learner, |current| {
+                    let mut seen = current.unwrap_or_else(fresh);
+                    let number = seen.next_round();
+                    seen.end_round(number);
+                    Ok(Decision::Put(seen.clone(), (number, seen)))
+                })
+                .await?;
+            round = number;
+            bank = Some((store, seen));
+        }
         for concept in concepts {
             // The format follows the level (ADR-0002 D5); the kind is the
             // examiner's choice among those the level allows, and the
@@ -167,9 +180,16 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             };
             questions.push(q);
         }
-        if let Some((store, mut seen)) = bank {
-            seen.end_round(round);
-            store.save_seen(&seen).await?;
+        // What this round showed is merged into what is stored by then, so
+        // that what a concurrent round showed is kept too.
+        if let Some((store, seen)) = bank {
+            store
+                .update_seen(learner, |current| {
+                    let mut merged = current.unwrap_or_else(fresh);
+                    merged.merge(&seen);
+                    Ok(Decision::Put(merged, ()))
+                })
+                .await?;
         }
         Ok(questions)
     }
@@ -304,18 +324,33 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
     /// (ADR-0002 D9). At most `config.max_questions` questions, or
     /// `carried` if that is more: carried questions are never dropped, even
     /// if the cap was lowered since they were asked (ADR-0002 D6, D10).
+    ///
+    /// `None`, storing nothing, when a session with that key is pending,
+    /// being graded or graded already: another run opened it first, while
+    /// this one was composing. That run's session stands (ADR-0002 D6).
     pub async fn open_session(
         &self,
         key: SessionKey,
         author: &AuthorId,
         questions: Vec<Question>,
         carried: usize,
-    ) -> Result<Session> {
+    ) -> Result<Option<Session>> {
         let stores = self.stores().strict().await?;
         let cap = self.config.max_questions.max(carried);
         let session = Session::open(key, author.clone(), questions, cap, self.clock.now())?;
-        stores.session_store(author)?.save_session(&session).await?;
-        Ok(session)
+        let store = stores.session_store(author)?;
+        if !store.create_session(&session).await? {
+            return Ok(None);
+        }
+        // A session leaves the pending ones when it is graded, so one that
+        // the other run already graded is not caught by creating: take ours
+        // back, theirs stands.
+        let key = session.key();
+        if store.load_grading(key).await?.is_some() || store.load_graded(key).await?.is_some() {
+            store.delete_session(key).await?;
+            return Ok(None);
+        }
+        Ok(Some(session))
     }
 
     /// Open and persist the follow-up round after `session`, graded with
@@ -409,10 +444,18 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             },
             self.clock.now(),
         )?;
-        stores
+        // Only the run that graded `session` gets here (ADR-0002 D6), so
+        // nobody else opens this follow-up.
+        if !stores
             .session_store(session.author())?
-            .save_session(&follow_up)
-            .await?;
+            .create_session(&follow_up)
+            .await?
+        {
+            return Err(Error::Invalid(format!(
+                "follow-up {:?} was opened already",
+                follow_up.key().0
+            )));
+        }
         Ok(Some(follow_up))
     }
 
@@ -428,10 +471,25 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
             .unwrap_or_else(|| PrRounds::new(pr.clone())))
     }
 
-    /// Persist `rounds` of a pull request by `author`.
-    pub async fn save_rounds(&self, author: &AuthorId, rounds: &PrRounds) -> Result<()> {
+    /// Record `round` among the rounds of `pr`, by `author`, replacing any
+    /// round for its head, and return the rounds as stored now. Recorded
+    /// with an update, so that a round another run recorded meanwhile,
+    /// e.g. for another push, is kept (ADR-0002 D9).
+    pub async fn record_round(
+        &self,
+        pr: &PrRef,
+        author: &AuthorId,
+        round: Round,
+    ) -> Result<PrRounds> {
         let stores = self.stores().without_recovery();
-        stores.session_store(author)?.save_rounds(rounds).await
+        stores
+            .session_store(author)?
+            .update_rounds(pr, |current| {
+                let mut rounds = current.unwrap_or_else(|| PrRounds::new(pr.clone()));
+                rounds.record(round.clone());
+                Ok(Decision::Put(rounds.clone(), rounds))
+            })
+            .await
     }
 }
 

@@ -213,12 +213,17 @@ journal kept with the session.
    stored profile is still the one it loaded (an optimistic check, one
    step in every store). Otherwise it loads, records and saves again, so
    of several sessions of one learner graded at the same moment all
-   reviews end up on the profile. Every record that several writers
-   change (profiles, asked sessions, bank questions) is changed this way,
-   through one update that retries, never by a hand-written loop. The profile also keeps an opaque mark of every
-   session whose reviews it holds, and records the reviews of a session
-   only if its mark is not there yet, so applying again records nothing
-   twice. The marks are opaque so that the learner store holds no PR
+   reviews end up on the profile. Every record that several runs may
+   write (profiles, identity links, link codes, asked sessions, bank
+   questions, the rounds of a pull request, what a learner was shown) is
+   changed this way, through one update that retries, never by a
+   hand-written loop or a blind save. A pending session is created only
+   if none with its key is pending, being graded or graded: of two runs
+   that compose the same session at once, the second reports on the
+   first one's instead of posting its own. The profile also keeps an
+   opaque mark of every session whose reviews it holds, and records the
+   reviews of a session only if its mark is not there yet, so applying
+   again records nothing twice. The marks are opaque so that the learner store holds no PR
    reference (ADR-0003 D5); they are never removed, one per graded session
    per profile, which is acceptable for now. Then the session is removed if
    a file store still holds it, then the graded record.
