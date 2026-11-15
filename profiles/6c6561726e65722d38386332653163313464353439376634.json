@@ -3,6 +3,7 @@
     "266af793782e39a3e73da30c23e9d3ed",
     "283f1237330d939c7cea0782b068e4b6",
     "2b7e606d084b6a23eefd4d4950b94915",
+    "4b70820b08ec990b98ff91bd4ab8a679",
     "7a813861d5851f111e3d69990410a907",
     "7a9d64f428176ed8a39d72835d4e78da",
     "8fc0b22b22c83aba7743212de71634a4",
@@ -48,6 +49,19 @@
         "state": "Review"
       }
     },
+    "concurrency.deadlock.lock-ordering": {
+      "card": {
+        "difficulty": 5.314577829570867,
+        "due": "2026-11-18T09:15:46.464125062Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-15T09:15:46.464125062Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
+      }
+    },
     "delivery.answer-command.forgiving-parsing": {
       "card": {
         "difficulty": 9.198653481986169,
@@ -76,14 +90,14 @@
     },
     "diff.unified.new-side-hunks": {
       "card": {
-        "difficulty": 7.2102,
-        "due": "2026-11-09T19:05:13.474387986Z",
-        "elapsed_days": 0,
+        "difficulty": 7.118300161986166,
+        "due": "2026-11-22T09:15:46.464125062Z",
+        "elapsed_days": 6,
         "lapses": 0,
-        "last_review": "2026-11-08T19:05:13.474387986Z",
-        "reps": 1,
-        "scheduled_days": 1,
-        "stability": 0.4072,
+        "last_review": "2026-11-15T09:15:46.464125062Z",
+        "reps": 2,
+        "scheduled_days": 7,
+        "stability": 7.2566894767541275,
         "state": "Review"
       }
     },
@@ -110,6 +124,32 @@
         "reps": 2,
         "scheduled_days": 7,
         "stability": 7.256689476754128,
+        "state": "Review"
+      }
+    },
+    "fs.atomic-write.unique-temp-rename": {
+      "card": {
+        "difficulty": 5.314577829570867,
+        "due": "2026-11-18T09:15:46.464125062Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-15T09:15:46.464125062Z",
+        "reps": 1,
+        "scheduled_days": 3,
+        "stability": 3.1262,
+        "state": "Review"
+      }
+    },
+    "fs.locking.advisory-directory-lock": {
+      "card": {
+        "difficulty": 7.2102,
+        "due": "2026-11-16T09:15:46.464125062Z",
+        "elapsed_days": 0,
+        "lapses": 0,
+        "last_review": "2026-11-15T09:15:46.464125062Z",
+        "reps": 1,
+        "scheduled_days": 1,
+        "stability": 0.4072,
         "state": "Review"
       }
     },
@@ -843,7 +883,7 @@
     },
     "rust.traits.default-methods-async": {
       "card": {
-        "difficulty": 9.198653481986167,
+        "difficulty": 9.198653481986169,
         "due": "2026-11-16T07:56:30.334627803Z",
         "elapsed_days": 6,
         "lapses": 1,
@@ -954,7 +994,7 @@
         "last_review": "2026-11-15T07:56:30.334627803Z",
         "reps": 2,
         "scheduled_days": 7,
-        "stability": 7.2566894767541275,
+        "stability": 7.256689476754128,
         "state": "Review"
       }
     },
@@ -1038,14 +1078,14 @@
     },
     "soqrates.delivery.answer-feedback-lifecycle": {
       "card": {
-        "difficulty": 7.2102,
-        "due": "2026-11-09T17:46:07.459156615Z",
-        "elapsed_days": 0,
+        "difficulty": 7.118300161986166,
+        "due": "2026-11-22T09:15:46.464125062Z",
+        "elapsed_days": 6,
         "lapses": 0,
-        "last_review": "2026-11-08T17:46:07.459156615Z",
-        "reps": 1,
-        "scheduled_days": 1,
-        "stability": 0.4072,
+        "last_review": "2026-11-15T09:15:46.464125062Z",
+        "reps": 2,
+        "scheduled_days": 7,
+        "stability": 7.2566894767541275,
         "state": "Review"
       }
     },
@@ -1891,11 +1931,46 @@
       "format": "MultipleChoice",
       "grade": "Good",
       "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-15T09:15:46.464125062Z",
+      "concept": "soqrates.delivery.answer-feedback-lifecycle",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-15T09:15:46.464125062Z",
+      "concept": "diff.unified.new-side-hunks",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-15T09:15:46.464125062Z",
+      "concept": "fs.locking.advisory-directory-lock",
+      "format": "MultipleChoice",
+      "grade": "Again",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-15T09:15:46.464125062Z",
+      "concept": "concurrency.deadlock.lock-ordering",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
+    },
+    {
+      "at": "2026-11-15T09:15:46.464125062Z",
+      "concept": "fs.atomic-write.unique-temp-rename",
+      "format": "MultipleChoice",
+      "grade": "Good",
+      "via": "github.com:16427728"
     }
   ],
   "learner": "learner-88c2e1c14d5497f4",
-  "level": "Intermediate",
-  "level_since": 103,
+  "level": "Expert",
+  "level_since": 111,
   "starting_level": "Novice",
-  "version": 7
+  "version": 8
 }

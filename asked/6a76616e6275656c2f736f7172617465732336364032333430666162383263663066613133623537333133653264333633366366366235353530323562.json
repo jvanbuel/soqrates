@@ -1,0 +1,210 @@
+{
+  "at": "2026-11-15T09:15:46.464125062Z",
+  "key": "jvanbuel/soqrates#66@2340fab82cf0fa13b57313e2d3636cf6b555025b",
+  "learner": "learner-88c2e1c14d5497f4",
+  "questions": [
+    {
+      "answer": {
+        "Choice": 4
+      },
+      "grade": "Good",
+      "number": 1,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "async fn take_feedback(&self, pr: &PrRef, author: &AuthorId) -> Result<()> {\n    // Commands of the author that have no answer comment yet.\n    for command in self.scm.feedback_commands(pr, author).await? {\n        self.scm.answer_feedback(pr, &command, \"Recorded.\").await?;\n        let request = command.request.clone().map_err(Error::Invalid)?;\n        let key = command.session.clone().ok_or(Error::Invalid(\"no results\".into()))?;\n        self.app\n            .give_feedback(Some(author), &key, &request, Some(&command.source))\n            .await?;\n    }\n    Ok(())\n}"
+            },
+            "correct": 4,
+            "options": [
+              "The answer is posted once per command, so a command that is run again later would be answered twice.",
+              "The answer should quote the author's feedback text so the author can see which comment was handled.",
+              "Feedback commands should be handled concurrently, because answering them one by one lets a slow answer delay recording the others.",
+              "The answer should be posted by the author's account, so that it is trusted when the next run looks for answered commands.",
+              "The command is answered before it is recorded. The answer comment is what makes the command count as handled on later runs, so if recording then fails, the feedback is lost while the author was told it was recorded."
+            ],
+            "prompt": "This loop handles the PR author's feedback commands on a pull request, on every run of the check. Which line is the bug, and why?",
+            "reasons": [
+              "Posting one answer per command is the intent: once an answer exists, the command is no longer listed as unanswered. The problem is the order of answering and recording, not the number of answers.",
+              "The note is deliberately Soqrates' own text and quotes nothing of the author's comment, so that author-controlled text is not echoed back. A quote is not needed to identify the comment, since the note links to it.",
+              "Handling the commands one by one in order, oldest first, is fine and keeps the notes in order. Concurrency would not fix any bug in this loop, and it is not what makes the line wrong.",
+              "The reverse holds: an answer counts only if posted by the account that posts Soqrates' own comments. An answer posted by the author's account would be ignored when deciding what is answered, and so would let anyone fake one.",
+              "Whether a command still needs handling is derived from the answer comment having been posted. Answering first means a failure in recording is never retried, and the note is false. Recording first, then answering with the real outcome, keeps the answer honest and makes a failed answer retryable."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "soqrates.delivery.answer-feedback-lifecycle",
+        "explanation": "Whether a command still needs handling is derived from the answer comment having been posted. Answering first means a failure in recording is never retried, and the note is false. Recording first, then answering with the real outcome, keeps the answer honest and makes a failed answer retryable.",
+        "id": "soqrates.delivery.answer-feedback-lifecycle/mc",
+        "kind": "SpotTheBug",
+        "scope": "Project"
+      },
+      "shown": "Whether a command still needs handling is derived from the answer comment having been posted. Answering first means a failure in recording is never retried, and the note is false. Recording first, then answering with the real outcome, keeps the answer honest and makes a failed answer retryable."
+    },
+    {
+      "answer": {
+        "Choice": 3
+      },
+      "grade": "Good",
+      "number": 2,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "python",
+              "origin": "General",
+              "text": "def new_side_lines(hunk_lines, new_start):\n    # hunk_lines: the body of one unified-diff hunk, each line\n    # prefixed with \"+\", \"-\" or a space.\n    # new_start: the number after the plus sign in the hunk header.\n    out = []\n    n = new_start\n    for line in hunk_lines:\n        if line.startswith((\"+\", \" \")):\n            out.append((n, line[1:]))\n        n += 1\n    return out"
+            },
+            "correct": 3,
+            "options": [
+              "def new_side_lines(hunk_lines, new_start):\n    out = []\n    n = new_start\n    for line in hunk_lines:\n        if line.startswith((\"+\", \" \")):\n            out.append((n, line[1:]))\n        if line.startswith(\"+\"):\n            n += 1\n    return out",
+              "def new_side_lines(hunk_lines, new_start):\n    out = []\n    n = new_start\n    for line in hunk_lines:\n        if line.startswith((\"+\", \" \")):\n            out.append((n, line[1:]))\n        if line.startswith(\"-\"):\n            n += 1\n    return out",
+              "def new_side_lines(hunk_lines, new_start):\n    out = []\n    n = new_start\n    for line in hunk_lines:\n        if line.startswith((\"+\", \" \")):\n            out.append((n, line[1:]))\n        if not line.startswith(\"+\"):\n            n += 1\n    return out",
+              "def new_side_lines(hunk_lines, new_start):\n    out = []\n    n = new_start\n    for line in hunk_lines:\n        if line.startswith((\"+\", \" \")):\n            out.append((n, line[1:]))\n            n += 1\n    return out"
+            ],
+            "options_language": "python",
+            "prompt": "This helper is meant to pair each line of a unified-diff hunk with its line number in the file as it is after the change (the new side), so that questions can point at where code lives now. Run on a hunk that contains removed lines, it reports line numbers that are too high for every line after the first removal. Which replacement fixes the function?",
+            "reasons": [
+              "Counting only added lines forgets that unchanged context lines also occupy a line of the new file. Any context line would get the same number as the line after it, and numbers would drift behind the real ones.",
+              "This inverts the rule: it advances only on removed lines, which do not exist in the new file, and never on kept lines. Every kept line would get the same number.",
+              "Advancing on context and removed lines but not on added lines counts old-side numbers. Added lines would all share one number, and removed lines would still shift later lines.",
+              "Only added and context lines exist in the file after the change, so only they advance the new-side line number. Removed lines are skipped without moving the counter, which keeps every later line number correct."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "diff.unified.new-side-hunks",
+        "explanation": "Only added and context lines exist in the file after the change, so only they advance the new-side line number. Removed lines are skipped without moving the counter, which keeps every later line number correct.",
+        "id": "diff.unified.new-side-hunks/mc",
+        "kind": "ChooseTheFix",
+        "scope": "Project"
+      },
+      "shown": "Only added and context lines exist in the file after the change, so only they advance the new-side line number. Removed lines are skipped without moving the counter, which keeps every later line number correct."
+    },
+    {
+      "answer": {
+        "Choice": 0
+      },
+      "grade": "Again",
+      "number": 3,
+      "question": {
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "fn swap(&self, key: &str, expected: &str, new: &str) -> io::Result<bool> {\n    // lock() opens <dir>/.lock and takes an exclusive advisory\n    // lock on it; the lock lasts as long as the returned File lives.\n    let _ = self.lock()?;\n    let stored = self.read(key)?;\n    if stored != expected {\n        return Ok(false);\n    }\n    self.write(key, new)?;\n    Ok(true)\n}"
+            },
+            "correct": 1,
+            "options": [
+              "An advisory lock on a file only stops other threads of the same process, so it cannot guard against other processes writing the key.",
+              "Binding the guard to `_` drops the lock file at once, so the lock is released before the read. Another process can write between the check and the write, and this swap still returns true.",
+              "The early `return Ok(false)` leaves the lock held forever, because the lock is only released by an explicit unlock call.",
+              "The lock is taken before the read. It should be taken after the comparison, just before the write, to keep the critical section short."
+            ],
+            "prompt": "This function is meant to make a check-and-write atomic between processes: it replaces the stored value only if it still equals `expected`. Every writer of the store is supposed to take the same per-directory lock. One line defeats that purpose. Which line is it, and why?",
+            "reasons": [
+              "This has it backwards. An advisory file lock coordinates between processes that all take it, and the OS releases it if the process stops. The bug is in how long the guard lives.",
+              "A bare `_` pattern does not bind the value, so the returned file is dropped at the end of that statement and the OS lock goes with it. The read-compare-write then runs unprotected. Binding it to a name such as `_lock` keeps it alive until the function returns.",
+              "The lock is released when the file handle is dropped, including on early returns and on `?` errors. There is no leak here. The real problem is that the handle is dropped too early.",
+              "Locking only around the write would leave the check unprotected, so a concurrent save could still land between the check and the write. The lock has to cover both."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "fs.locking.advisory-directory-lock",
+        "explanation": "A bare `_` pattern does not bind the value, so the returned file is dropped at the end of that statement and the OS lock goes with it. The read-compare-write then runs unprotected. Binding it to a name such as `_lock` keeps it alive until the function returns.",
+        "id": "fs.locking.advisory-directory-lock/mc",
+        "kind": "SpotTheBug",
+        "scope": "Project"
+      },
+      "shown": "This has it backwards. An advisory file lock coordinates between processes that all take it, and the OS releases it if the process stops. The bug is in how long the guard lives. A bare `_` pattern does not bind the value, so the returned file is dropped at the end of that statement and the OS lock goes with it. The read-compare-write then runs unprotected. Binding it to a name such as `_lock` keeps it alive until the function returns."
+    },
+    {
+      "answer": {
+        "Choice": 3
+      },
+      "grade": "Good",
+      "number": 4,
+      "question": {
+        "banked": {
+          "id": "bank-91b791fb73ccbdeb",
+          "version": 1
+        },
+        "body": {
+          "MultipleChoice": {
+            "code": {
+              "language": "rust",
+              "origin": "General",
+              "text": "use tokio::sync::Mutex;\n\nasync fn claim(locks: &[Mutex<()>], from: usize, to: usize) {\n    let (first, second) = if from <= to { (from, to) } else { (to, from) };\n    let _a = locks[first].lock().await;\n    let _b = locks[second].lock().await;\n    // move the document from `from` to `to`\n}\n\n// elsewhere, with no other task running:\n// claim(&locks, 2, 2).await;"
+            },
+            "correct": 3,
+            "options": [
+              "It completes normally, because the ordering step makes the two lock acquisitions safe even when both indices match.",
+              "It panics at the second `lock()` with a poisoned-lock error.",
+              "It returns an error from the second `lock()` because the lock is already held, and the function carries on.",
+              "It hangs forever: the task holds the lock for index 2 and then waits for that same lock, which only it could release."
+            ],
+            "prompt": "The function takes two locks in a fixed order, smaller index first, so two concurrent claims can't each hold one lock and wait for the other. What happens when the function is called with `from` and `to` both equal to 2, and no other task is running?",
+            "reasons": [
+              "Ordering only prevents a cycle between two different locks. It does nothing when the same lock is requested twice by one task.",
+              "Poisoning happens when a thread panics while holding a std mutex. Tokio's mutex has no poisoning, and nothing has panicked here.",
+              "Awaiting `lock()` never fails with an error for an already-held lock. It waits until the lock is free, which never happens here.",
+              "Tokio's mutex is not reentrant. With equal indices, the second `lock().await` waits on a lock the same task already holds, so it self-deadlocks. This is why the real change skips the second lock when both kinds are the same."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "concurrency.deadlock.lock-ordering",
+        "explanation": "Tokio's mutex is not reentrant. With equal indices, the second `lock().await` waits on a lock the same task already holds, so it self-deadlocks. This is why the real change skips the second lock when both kinds are the same.",
+        "id": "concurrency.deadlock.lock-ordering/mc",
+        "kind": "PredictOutcome",
+        "scope": "General"
+      },
+      "shown": "Tokio's mutex is not reentrant. With equal indices, the second `lock().await` waits on a lock the same task already holds, so it self-deadlocks. This is why the real change skips the second lock when both kinds are the same."
+    },
+    {
+      "answer": {
+        "Choice": 2
+      },
+      "grade": "Good",
+      "number": 5,
+      "question": {
+        "banked": {
+          "id": "bank-a14a85f1481c64c7",
+          "version": 1
+        },
+        "body": {
+          "MultipleChoice": {
+            "correct": 2,
+            "options": [
+              "A crash during the write would leave a half-written final file, because the temp file name is no longer unique.",
+              "Nothing would go wrong, because the operating system serializes writes to the same path, so the second writer would simply wait for the first.",
+              "Both threads would open the same temp path, so their bytes could interleave or overwrite each other. The file renamed into place could then hold a mix of the two documents, or the second rename could fail because the temp file has already been moved.",
+              "The counter is there only so that the last writer to start is the one that wins, giving a deterministic order of updates.",
+              "Rename would stop being atomic, because two threads in one process would be renaming files with the same process id in their names."
+            ],
+            "prompt": "A store writes each document by creating a temp file in the target directory, writing and syncing it, then renaming it over the final path. In the first version the temp file was named from the target file name and the process id only. Two threads of the same process then save the same key at nearly the same moment. What is the real problem with that naming, and why does adding a per-write atomic counter fix it?",
+            "reasons": [
+              "A crash cannot damage the final file, because the data only reaches the final path through the rename. Name collisions cause mixed content from concurrent writers, not crash corruption.",
+              "Opening a file for writing takes no exclusive lock by default. Two handles to the same path can write at the same time and overwrite or interleave each other's data.",
+              "The process id is the same for every thread in a process, so it cannot tell two writers apart. A per-write counter gives each writer its own temp file. Each rename then publishes one complete document.",
+              "The counter only makes names unique. It does not order the renames, so which writer wins is still decided by which rename runs last.",
+              "Atomicity of rename comes from the filesystem and does not depend on the temp file's name. The problem is that the two writers share one temp file before the rename happens."
+            ]
+          }
+        },
+        "checked": true,
+        "concept": "fs.atomic-write.unique-temp-rename",
+        "explanation": "The process id is the same for every thread in a process, so it cannot tell two writers apart. A per-write counter gives each writer its own temp file. Each rename then publishes one complete document.",
+        "id": "fs.atomic-write.unique-temp-rename/mc",
+        "kind": "Scenario",
+        "scope": "General"
+      },
+      "shown": "The process id is the same for every thread in a process, so it cannot tell two writers apart. A per-write counter gives each writer its own temp file. Each rename then publishes one complete document."
+    }
+  ]
+}
