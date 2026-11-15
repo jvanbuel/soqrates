@@ -46,13 +46,19 @@ pub fn kinds_for(
 }
 
 /// How `open` slots of a session are split between `reviews` due reviews
-/// and `new` concepts from the change (ADR-0002 D10): new concepts are
-/// guaranteed half the slots, rounded up (or all of them if fewer), due
-/// reviews take what that leaves, and new concepts take any slots the
-/// reviews don't use. Returns `(reviews, new)` to ask.
-pub fn split_slots(open: usize, reviews: usize, new: usize) -> (usize, usize) {
+/// and `new` concepts from the change (ADR-0002 D10). The first `related`
+/// reviews are concepts the change also touches. New concepts are
+/// guaranteed half the slots, rounded up (or all of them if fewer). Due
+/// reviews take what that leaves, but reviews the change doesn't touch
+/// never outnumber the concepts it does (new or related), with one allowed
+/// when there are none, so a small change is not filled up with reviews.
+/// New concepts take any slots the reviews don't use. Returns
+/// `(reviews, new)` to ask.
+pub fn split_slots(open: usize, reviews: usize, related: usize, new: usize) -> (usize, usize) {
+    let related = related.min(reviews);
     let reserved = new.min(open.div_ceil(2));
-    let reviews = reviews.min(open - reserved);
+    let unrelated = (reviews - related).min((new + related).max(1));
+    let reviews = (related + unrelated).min(open - reserved);
     let new = new.min(open - reviews);
     (reviews, new)
 }
@@ -128,26 +134,36 @@ mod tests {
 
     // @adr-0002-d10
     #[test]
-    fn new_concepts_keep_half_the_slots_and_reviews_fill_the_rest() {
-        // (open, reviews, new) -> (reviews, new)
-        for (open, reviews, new, want) in [
-            (5, 0, 0, (0, 0)),
-            (5, 0, 7, (0, 5)),
-            (5, 7, 0, (5, 0)),
+    fn new_concepts_keep_half_the_slots_and_reviews_follow_the_change() {
+        // (open, reviews, related, new) -> (reviews, new)
+        for (open, reviews, related, new, want) in [
+            (5, 0, 0, 0, (0, 0)),
+            (5, 0, 0, 7, (0, 5)),
             // Half of the slots, rounded up, are kept for the change.
-            (5, 7, 7, (2, 3)),
-            (2, 2, 2, (1, 1)),
-            (3, 1, 3, (1, 2)),
-            // Reviews use what the change doesn't need, and vice versa.
-            (5, 7, 1, (4, 1)),
-            (5, 1, 7, (1, 4)),
-            (1, 3, 3, (0, 1)),
-            (0, 3, 3, (0, 0)),
+            (5, 7, 0, 7, (2, 3)),
+            (5, 7, 0, 3, (2, 3)),
+            (2, 2, 0, 2, (1, 1)),
+            (3, 1, 0, 3, (1, 2)),
+            (5, 7, 7, 7, (2, 3)),
+            // Unrelated reviews never outnumber the change's concepts...
+            (5, 7, 0, 1, (1, 1)),
+            (5, 7, 0, 2, (2, 2)),
+            (5, 2, 0, 1, (1, 1)),
+            (5, 7, 1, 0, (2, 0)),
+            (5, 7, 1, 1, (3, 1)),
+            (5, 2, 2, 0, (2, 0)),
+            // ...but a change with nothing new still asks one review.
+            (5, 7, 0, 0, (1, 0)),
+            (1, 7, 0, 0, (1, 0)),
+            // New concepts use what the reviews don't need.
+            (5, 1, 0, 7, (1, 4)),
+            (1, 3, 0, 3, (0, 1)),
+            (0, 3, 0, 3, (0, 0)),
         ] {
             assert_eq!(
-                split_slots(open, reviews, new),
+                split_slots(open, reviews, related, new),
                 want,
-                "{open} {reviews} {new}"
+                "{open} {reviews} {related} {new}"
             );
         }
     }

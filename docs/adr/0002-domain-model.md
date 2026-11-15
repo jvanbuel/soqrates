@@ -357,11 +357,23 @@ is built from four sources, in this order:
    right time (ADR-0001 D6).
 
 After the carried questions, due reviews and new concepts share the
-remaining slots. New concepts are guaranteed half of them, rounded up, or
-as many as there are if fewer; due reviews take what they leave; new
-concepts take any slots the reviews don't use. So reviews come first but
-never crowd out the change, and a change with nothing new still gets its
-reviews.
+remaining slots. Due reviews of concepts the change also touches (extracted
+and not incidental) are *related* and come before the other due reviews.
+New concepts are guaranteed half of the slots, rounded up, or as many as
+there are if fewer. Due reviews take what they leave, but the unrelated
+ones never outnumber the concepts of the change, new or related, except
+that one is allowed when there are none. New concepts take any slots the
+reviews don't use. So reviews come first but never crowd out the change,
+and a small change is not filled up to the cap with reviews about other
+things: one new concept brings at most one unrelated review, and a change
+with nothing new (a rename, a version bump) asks a single review. With the
+default cap, a change with three or more new concepts asks two reviews, as
+before.
+
+A review that is not asked stays due and comes up in a later session. The
+cost is that due cards wait longer for an author who opens few or small
+changes; a backlog is better worked through outside a pull request, e.g.
+with the MCP `due_reviews` tool, than on whichever change comes next.
 
 Zero questions is a valid outcome: a change whose concepts are all
 incidental, or known and not due, asks nothing (ADR-0004 D7). An empty
