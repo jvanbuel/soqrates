@@ -7,12 +7,12 @@ use serde::de::DeserializeOwned;
 
 use crate::Error;
 use crate::Result;
-use crate::app::ports::{Doc, DocumentStore, Kind, Removal, StateStore};
+use crate::app::ports::{Decision, Doc, DocumentStore, Kind, Removal, StateStore};
 use crate::delivery::{
     AskedSession, BankedQuestion, GradedSession, GradingJournal, PrRef, PrRounds, SeenQuestions,
     Session,
 };
-use crate::ids::{ConceptId, Identity, LearnerId, SessionKey};
+use crate::ids::{BankId, ConceptId, Identity, LearnerId, SessionKey};
 use crate::learner::{IdentityLink, LearnerProfile, LinkCode};
 
 fn encode<T: Serialize>(kind: Kind, record: &T) -> Result<Doc> {
@@ -56,39 +56,89 @@ async fn all<D: DocumentStore, T: DeserializeOwned>(
         .collect()
 }
 
-async fn compare_put<D: DocumentStore, T: Serialize + DeserializeOwned + PartialEq>(
+/// How many times an update may lose to another writer before it gives up.
+/// Each attempt reloads at once: the core has no clock to back off with
+/// (ADR-0001 D2), and contention on one document is rare and brief.
+const UPDATE_ATTEMPTS: usize = 100;
+
+/// The one way a record that several writers may change is changed: load
+/// it, let `change` decide, and save what it puts only if the stored
+/// document is still the one loaded ([`DocumentStore::swap`]). Lost races
+/// reload and decide again. See [`Decision`].
+async fn update<D, T, R>(
     d: &D,
     kind: Kind,
     key: &str,
-    value: &T,
-    expected: Option<&T>,
-) -> Result<bool> {
-    let stored = d.load(kind, key).await?;
-    let decoded = stored
-        .clone()
-        .map(|doc| decode::<T>(kind, key, doc))
-        .transpose()?;
-    if decoded.as_ref() != expected {
-        return Ok(false);
+    mut change: impl FnMut(Option<T>) -> Result<Decision<T, R>> + Send,
+) -> Result<R>
+where
+    D: DocumentStore,
+    T: Serialize + DeserializeOwned + Send,
+    R: Send,
+{
+    for _ in 0..UPDATE_ATTEMPTS {
+        let stored = d.load(kind, key).await?;
+        let current = stored
+            .clone()
+            .map(|doc| decode::<T>(kind, key, doc))
+            .transpose()?;
+        match change(current)? {
+            Decision::Keep(result) => return Ok(result),
+            Decision::Put(record, result) => {
+                if d.swap(kind, key, stored.as_ref(), &encode(kind, &record)?)
+                    .await?
+                {
+                    return Ok(result);
+                }
+            }
+        }
     }
-    d.swap(kind, key, stored.as_ref(), &encode(kind, value)?)
-        .await
+    Err(Error::Port(format!(
+        "{} {key:?} kept changing",
+        kind.label()
+    )))
 }
 
 impl<D: DocumentStore> StateStore for D {
-    async fn save_bank_question_if_current(
+    async fn update_bank_question<R: Send>(
         &self,
-        value: &BankedQuestion,
-        expected: Option<&BankedQuestion>,
-    ) -> Result<bool> {
-        compare_put(self, Kind::Bank, &value.id().0, value, expected).await
+        id: &BankId,
+        mut change: impl FnMut(Option<BankedQuestion>) -> Result<Decision<BankedQuestion, R>> + Send,
+    ) -> Result<R> {
+        update(self, Kind::Bank, &id.0, |current| {
+            let decision = change(current)?;
+            if let Decision::Put(question, _) = &decision
+                && question.id() != id
+            {
+                return Err(Error::Invalid(format!(
+                    "an update of bank question {:?} put {:?}",
+                    id.0,
+                    question.id().0
+                )));
+            }
+            Ok(decision)
+        })
+        .await
     }
-    async fn save_asked_if_current(
+    async fn update_asked<R: Send>(
         &self,
-        value: &AskedSession,
-        expected: Option<&AskedSession>,
-    ) -> Result<bool> {
-        compare_put(self, Kind::Asked, &value.key().0, value, expected).await
+        key: &SessionKey,
+        mut change: impl FnMut(Option<AskedSession>) -> Result<Decision<AskedSession, R>> + Send,
+    ) -> Result<R> {
+        update(self, Kind::Asked, &key.0, |current| {
+            let decision = change(current)?;
+            if let Decision::Put(asked, _) = &decision
+                && asked.key() != key
+            {
+                return Err(Error::Invalid(format!(
+                    "an update of asked session {:?} put {:?}",
+                    key.0,
+                    asked.key().0
+                )));
+            }
+            Ok(decision)
+        })
+        .await
     }
 
     async fn load_profile(&self, learner: &LearnerId) -> Result<Option<LearnerProfile>> {
@@ -97,18 +147,28 @@ impl<D: DocumentStore> StateStore for D {
     async fn save_profile(&self, profile: &LearnerProfile) -> Result<()> {
         put(self, Kind::Profile, &profile.learner().0, profile).await
     }
-    async fn save_profile_if_current(&self, profile: &LearnerProfile) -> Result<bool> {
-        let key = &profile.learner().0;
-        let stored = self.load(Kind::Profile, key).await?;
-        let version = match &stored {
-            Some(doc) => decode::<LearnerProfile>(Kind::Profile, key, doc.clone())?.version(),
-            None => 0,
-        };
-        if version != profile.version() {
-            return Ok(false);
-        }
-        let next = encode(Kind::Profile, &profile.clone().with_version(version + 1))?;
-        self.swap(Kind::Profile, key, stored.as_ref(), &next).await
+    async fn update_profile<R: Send>(
+        &self,
+        learner: &LearnerId,
+        mut change: impl FnMut(Option<LearnerProfile>) -> Result<Decision<LearnerProfile, R>> + Send,
+    ) -> Result<R> {
+        update(self, Kind::Profile, &learner.0, |current| {
+            let version = current.as_ref().map_or(0, LearnerProfile::version);
+            Ok(match change(current)? {
+                Decision::Put(profile, result) => {
+                    if profile.learner() != learner {
+                        return Err(Error::Invalid(format!(
+                            "an update of the profile of {:?} put that of {:?}",
+                            learner.0,
+                            profile.learner().0
+                        )));
+                    }
+                    Decision::Put(profile.with_version(version + 1), result)
+                }
+                keep => keep,
+            })
+        })
+        .await
     }
     async fn delete_learner(&self, learner: &LearnerId) -> Result<()> {
         self.remove(&[

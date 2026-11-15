@@ -29,7 +29,7 @@ use std::future::Future;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::app::ports::{Clock, StateStore};
+use crate::app::ports::{Clock, Decision, StateStore};
 use crate::delivery::{
     AskedQuestion, AskedSession, BankedQuestion, GradedSession, Session, StoreId,
 };
@@ -511,25 +511,24 @@ pub(in crate::app) fn opaque_id(text: &str) -> String {
 pub(in crate::app) async fn change_bank_entry<S: StateStore>(
     bank: &S,
     asked: &AskedQuestion,
-    change: impl Fn(&mut BankedQuestion),
+    change: impl Fn(&mut BankedQuestion) + Send + Sync,
 ) -> Result<()> {
     let Some(reference) = asked.bank() else {
         return Ok(());
     };
-    for _ in 0..100 {
-        let entries = bank.bank_questions(&asked.question.concept).await?;
-        let Some(previous) = entries.iter().find(|e| *e.id() == reference.id) else {
-            return Ok(());
-        };
-        let mut entry = previous.clone();
-        change(&mut entry);
-        if entry == *previous
-            || bank
-                .save_bank_question_if_current(&entry, Some(previous))
-                .await?
-        {
-            return Ok(());
-        }
-    }
-    Err(Error::Port("bank question kept changing".into()))
+    bank.update_bank_question(&reference.id, |current| {
+        Ok(match current {
+            // Gone from the bank: nothing to note.
+            None => Decision::Keep(()),
+            Some(mut entry) => {
+                let before = entry.clone();
+                change(&mut entry);
+                match entry == before {
+                    true => Decision::Keep(()),
+                    false => Decision::Put(entry, ()),
+                }
+            }
+        })
+    })
+    .await
 }

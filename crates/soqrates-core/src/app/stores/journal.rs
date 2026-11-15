@@ -4,13 +4,13 @@
 
 use std::collections::BTreeMap;
 
-use super::{Access, load_or_new, opaque_id};
+use super::{Access, opaque_id};
+use crate::Result;
 use crate::app::events::DomainEvent;
-use crate::app::ports::{Clock, StateStore};
+use crate::app::ports::{Clock, Decision, StateStore};
 use crate::delivery::{GradingJournal, StoreId};
 use crate::ids::SessionKey;
-use crate::learner::{GradedAnswer, LearnerEvent, Level};
-use crate::{Error, Result};
+use crate::learner::{GradedAnswer, LearnerEvent, LearnerProfile, Level};
 
 /// What recording the reviews of one grading did to the profiles.
 #[derive(Debug, Default)]
@@ -85,7 +85,14 @@ impl<S: StateStore, C: Clock> Access<'_, S, C> {
                 // undo feedback given since.
                 let identity = journal.session.author().identity()?;
                 let kept_in = self.feedback_store(&identity)?.unwrap_or(store);
-                kept_in.save_asked_if_current(asked, None).await?;
+                kept_in
+                    .update_asked(asked.key(), |current| {
+                        Ok(match current {
+                            None => Decision::Put(asked.clone(), ()),
+                            Some(_) => Decision::Keep(()),
+                        })
+                    })
+                    .await?;
             }
             store.delete_session(key).await?;
             store.save_graded(&journal.graded).await?;
@@ -100,10 +107,7 @@ impl<S: StateStore, C: Clock> Access<'_, S, C> {
     /// recorded on top of theirs (ADR-0002 D6). `None` if every profile
     /// had the reviews already.
     async fn record_reviews(&self, journal: &GradingJournal) -> Result<Option<Recorded>> {
-        /// How often one profile may change under us before giving up.
-        const ATTEMPTS: usize = 100;
         let mark = grading_mark(journal.key());
-        let key = journal.key();
         let mut recorded = Recorded::default();
         let mut any = false;
         for (id, learner) in journal.review_targets() {
@@ -113,26 +117,23 @@ impl<S: StateStore, C: Clock> Access<'_, S, C> {
                 .iter()
                 .map(|&i| journal.reviews[i].review.clone())
                 .collect();
-            let mut done = false;
-            for _ in 0..ATTEMPTS {
-                let profile = load_or_new(store, &learner).await?;
-                let Some((next, events)) = profile.with_session_reviews(&mark, &reviews) else {
-                    done = true;
-                    break;
-                };
-                if store.save_profile_if_current(&next).await? {
-                    recorded.add(&indices, events);
-                    recorded.levels.push((id.clone(), next.level()));
-                    any = true;
-                    done = true;
-                    break;
-                }
-            }
-            if !done {
-                return Err(Error::Port(format!(
-                    "the profile of {:?} kept changing while grading {:?}",
-                    learner.0, key.0
-                )));
+            let added = store
+                .update_profile(&learner, |current| {
+                    let profile = current.unwrap_or_else(|| LearnerProfile::new(learner.clone()));
+                    Ok(match profile.with_session_reviews(&mark, &reviews) {
+                        // The profile has this session's reviews already.
+                        None => Decision::Keep(None),
+                        Some((next, events)) => {
+                            let level = next.level();
+                            Decision::Put(next, Some((events, level)))
+                        }
+                    })
+                })
+                .await?;
+            if let Some((events, level)) = added {
+                recorded.add(&indices, events);
+                recorded.levels.push((id.clone(), level));
+                any = true;
             }
         }
         Ok(any.then_some(recorded))

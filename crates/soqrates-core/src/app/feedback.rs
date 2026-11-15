@@ -2,7 +2,7 @@
 //! maintainer resolving it, and exporting what was asked (ADR-0011).
 
 use crate::app::engine::Soqrates;
-use crate::app::ports::{Clock, Examiner, StateStore};
+use crate::app::ports::{Clock, Decision, Examiner, StateStore};
 use crate::delivery::{
     AskedQuestion, FeedbackGiven, FeedbackId, FeedbackRequest, QuestionFeedback,
 };
@@ -35,7 +35,7 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 key.0
             ))
         };
-        let (store, mut asked, learner) = match by {
+        let (store, asked, learner) = match by {
             Some(author) => {
                 let store = stores
                     .feedback_store(&author.identity()?)?
@@ -57,16 +57,21 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
                 (store, asked, learner)
             }
         };
-        for _ in 0..100 {
-            let previous = asked.clone();
-            let given = asked.give(&learner, request, source, self.clock.now())?;
-            if !given.new || store.save_asked_if_current(&asked, Some(&previous)).await? {
-                stores.sync_feedback(store, &asked).await?;
-                return Ok(given);
-            }
-            asked = store.load_asked(key).await?.ok_or_else(not_graded)?;
-        }
-        Err(Error::Port("asked session kept changing".into()))
+        let now = self.clock.now();
+        let (given, asked) = store
+            .update_asked(asked.key(), |current| {
+                let mut asked = current.ok_or_else(not_graded)?;
+                let given = asked.give(&learner, request, source, now)?;
+                Ok(match given.new {
+                    true => Decision::Put(asked.clone(), (given, asked)),
+                    // Given before, e.g. by an earlier run: nothing to save,
+                    // but the bank is brought up to date all the same.
+                    false => Decision::Keep((given, asked)),
+                })
+            })
+            .await?;
+        stores.sync_feedback(store, &asked).await?;
+        Ok(given)
     }
 
     /// A maintainer accepts or rejects the feedback `id` (ADR-0011 D7). It
@@ -81,25 +86,25 @@ impl<S: StateStore, E: Examiner, C: Clock> Soqrates<S, E, C> {
         let stores = self.stores().strict().await?;
         stores.sync_all_feedback().await?;
         for store in stores.feedback_stores() {
-            for mut asked in store.asked_sessions().await? {
+            for asked in store.asked_sessions().await? {
                 if asked.find(id).is_none() {
                     continue;
                 }
-                for _ in 0..100 {
-                    let previous = asked.clone();
-                    let Some(result) = asked.resolve(id, accept) else {
-                        break;
-                    };
-                    if store.save_asked_if_current(&asked, Some(&previous)).await? {
-                        stores.sync_feedback(store, &asked).await?;
-                        return Ok(result);
-                    }
-                    asked = store
-                        .load_asked(previous.key())
-                        .await?
-                        .ok_or_else(|| Error::NotFound("asked session deleted".into()))?;
-                }
-                return Err(Error::Port("asked session kept changing".into()));
+                let resolved = store
+                    .update_asked(asked.key(), |current| {
+                        let mut asked = current
+                            .ok_or_else(|| Error::NotFound("asked session deleted".into()))?;
+                        Ok(match asked.resolve(id, accept) {
+                            Some(result) => Decision::Put(asked.clone(), Some((result, asked))),
+                            None => Decision::Keep(None),
+                        })
+                    })
+                    .await?;
+                let Some((result, asked)) = resolved else {
+                    break;
+                };
+                stores.sync_feedback(store, &asked).await?;
+                return Ok(result);
             }
         }
         Err(Error::NotFound(format!("feedback {:?}", id.0)))

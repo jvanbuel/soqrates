@@ -207,14 +207,15 @@ journal kept with the session.
    learner added meanwhile. Of concurrent submissions exactly one claims
    the session; the others fail with `NotFound`. A failure before this
    step leaves the session pending.
-3. **Apply.** For each profile the reviews go to, the engine loads it
-   fresh, records the journaled reviews on it and saves it with
-   `StateStore::save_profile_if_current`: a profile carries a version, and
-   the save is refused, saving nothing, if the stored profile is no longer
-   the version that was loaded (an optimistic check, one step in every
-   store). On a refusal the engine loads, records and saves again, so of
-   several sessions of one learner graded at the same moment all reviews
-   end up on the profile. The profile also keeps an opaque mark of every
+3. **Apply.** For each profile the reviews go to, the engine records the
+   journaled reviews with `StateStore::update_profile`: it loads the
+   profile fresh, records the reviews on it and saves it only if the
+   stored profile is still the one it loaded (an optimistic check, one
+   step in every store). Otherwise it loads, records and saves again, so
+   of several sessions of one learner graded at the same moment all
+   reviews end up on the profile. Every record that several writers
+   change (profiles, asked sessions, bank questions) is changed this way,
+   through one update that retries, never by a hand-written loop. The profile also keeps an opaque mark of every
    session whose reviews it holds, and records the reviews of a session
    only if its mark is not there yet, so applying again records nothing
    twice. The marks are opaque so that the learner store holds no PR
